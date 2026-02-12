@@ -1,0 +1,8 @@
+{
+  "projects": {
+    "default": "fco-planning-app",
+    "ventovaultlight": "ventovaultlight"
+  },
+  "targets": {},
+  "etags": {}
+}

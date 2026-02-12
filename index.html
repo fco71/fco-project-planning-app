@@ -1,0 +1,99 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <meta name="theme-color" content="#07090c" />
+    <meta name="apple-mobile-web-app-capable" content="yes" />
+    <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent" />
+    <meta name="apple-mobile-web-app-title" content="FCO Planning App" />
+    <link rel="apple-touch-icon" sizes="180x180" href="/apple-touch-icon.png" />
+    <link rel="icon" type="image/png" sizes="16x16" href="/icon-16.png" />
+    <link rel="icon" type="image/png" sizes="32x32" href="/icon-32.png" />
+    <link rel="icon" type="image/png" sizes="192x192" href="/icon-192.png" />
+    <link rel="icon" type="image/png" sizes="512x512" href="/icon-512.png" />
+    <link rel="shortcut icon" href="/icon-32.png" />
+    <title>FCO Planning App</title>
+    <style>
+      html, body { margin: 0; height: 100%; background: #07090c; }
+      #boot {
+        position: fixed;
+        inset: 0;
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        color: rgba(255,255,255,0.9);
+        font: 700 14px/1.4 ui-sans-serif, system-ui, -apple-system, Segoe UI, Roboto, Helvetica, Arial;
+        letter-spacing: 0.2px;
+      }
+      #fatal {
+        position: fixed;
+        left: 16px;
+        right: 16px;
+        bottom: 16px;
+        padding: 12px 14px;
+        border-radius: 12px;
+        border: 1px solid rgba(255,80,80,0.35);
+        background: rgba(255,80,80,0.12);
+        color: rgba(255,255,255,0.92);
+        font: 700 12px/1.45 ui-sans-serif, system-ui, -apple-system, Segoe UI, Roboto, Helvetica, Arial;
+        display: none;
+        white-space: pre-wrap;
+      }
+    </style>
+  </head>
+  <body>
+    <div id="boot">Booting FCO Planning App…</div>
+    <div id="fatal"></div>
+    <div id="root"></div>
+
+    <script>
+      // If anything crashes before React renders, show it on-screen.
+      (function () {
+        const fatal = document.getElementById("fatal");
+        const IGNORE_ERRORS = [/ResizeObserver loop/];
+        function shouldIgnoreError(e) {
+          const msg = String(e?.message || e?.error?.message || "");
+          return IGNORE_ERRORS.some((re) => re.test(msg));
+        }
+        function show(msg) {
+          if (!fatal) return;
+          fatal.style.display = "block";
+          fatal.textContent = String(msg || "Unknown error");
+        }
+        window.addEventListener("error", (e) => {
+          if (shouldIgnoreError(e)) {
+            e.preventDefault?.();
+            return;
+          }
+          show("window.onerror:\n" + (e?.error?.stack || e?.message || e));
+        });
+        window.addEventListener("unhandledrejection", (e) => {
+          const reason = e?.reason;
+          const reasonText = String(reason || "");
+          const reasonType =
+            reason && typeof reason === "object" && "type" in reason ? String(reason.type || "") : "";
+          const reasonTag = reason ? Object.prototype.toString.call(reason) : "";
+          const isCustomEvent =
+            reason instanceof CustomEvent
+            || reasonTag === "[object CustomEvent]"
+            || (reasonType && reasonTag === "[object Event]");
+          if (isCustomEvent || reasonType.startsWith("planner-") || reasonText === "[object CustomEvent]") {
+            e.preventDefault?.();
+            return;
+          }
+          show("unhandledrejection:\n" + (e?.reason?.stack || e?.reason || e));
+        });
+        // If React doesn't hide the boot banner in 5 seconds, show a hint.
+        setTimeout(() => {
+          const boot = document.getElementById("boot");
+          if (boot && boot.style.display !== "none") {
+            boot.textContent = "Still booting… (JS bundle may not be loading. Check Vercel output dir = dist.)";
+          }
+        }, 5000);
+      })();
+    </script>
+
+    <script type="module" src="/src/main.tsx"></script>
+  </body>
+</html>
