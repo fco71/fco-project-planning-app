@@ -24,6 +24,17 @@ import {
 } from "firebase/firestore";
 import type { User } from "firebase/auth";
 import { db } from "../firebase";
+import {
+  buildNodePath,
+  collectDescendants,
+  getMasterNodeFor,
+  normalizeCode,
+  initialsFromLabel,
+  type TreeNode,
+} from "../utils/treeUtils";
+import { adjustPortalPosition, buildTreeNodeBounds } from "../utils/portalUtils";
+import PlannerCanvas from "../components/Planner/PlannerCanvas";
+import PlannerSidebar from "../components/Planner/PlannerSidebar";
 import "reactflow/dist/style.css";
 
 type PlannerPageProps = {
@@ -38,8 +49,6 @@ type TreeNodeDoc = {
   y?: number;
 };
 
-type TreeNode = TreeNodeDoc & { id: string };
-
 type CrossRefDoc = {
   label: string;
   code: string;
@@ -52,65 +61,6 @@ type PortalData = {
   label: string;
   title: string;
 };
-
-function normalizeCode(input: string): string {
-  const cleaned = input.toUpperCase().replace(/[^A-Z0-9]/g, "").slice(0, 4);
-  return cleaned || "REF";
-}
-
-function initialsFromLabel(input: string): string {
-  const parts = input
-    .trim()
-    .split(/\s+/)
-    .filter(Boolean);
-  if (parts.length === 0) return "REF";
-  if (parts.length === 1) return normalizeCode(parts[0].slice(0, 4));
-  const code = `${parts[0][0] || ""}${parts[1][0] || ""}`;
-  return normalizeCode(code);
-}
-
-function buildNodePath(nodeId: string, nodesById: Map<string, TreeNode>): string {
-  const parts: string[] = [];
-  const seen = new Set<string>();
-  let cursorId: string | null = nodeId;
-  while (cursorId && !seen.has(cursorId)) {
-    seen.add(cursorId);
-    const node = nodesById.get(cursorId);
-    if (!node) break;
-    parts.unshift(node.title);
-    cursorId = node.parentId;
-  }
-  return parts.join(" / ");
-}
-
-function collectDescendants(startId: string, childrenByParent: Map<string, string[]>): string[] {
-  const ordered: string[] = [];
-  const stack = [startId];
-  const seen = new Set<string>();
-  while (stack.length > 0) {
-    const current = stack.pop();
-    if (!current || seen.has(current)) continue;
-    seen.add(current);
-    ordered.push(current);
-    const children = childrenByParent.get(current) || [];
-    for (let index = children.length - 1; index >= 0; index -= 1) {
-      stack.push(children[index]);
-    }
-  }
-  return ordered;
-}
-
-function getMasterNodeFor(nodeId: string, rootNodeId: string | null, nodesById: Map<string, TreeNode>): string {
-  if (!rootNodeId) return nodeId;
-  let cursor = nodesById.get(nodeId);
-  if (!cursor) return rootNodeId;
-  while (cursor.parentId && cursor.parentId !== rootNodeId) {
-    const parent = nodesById.get(cursor.parentId);
-    if (!parent) break;
-    cursor = parent;
-  }
-  return cursor.id || rootNodeId;
-}
 
 const PortalNode = memo(function PortalNode({ data }: NodeProps<PortalData>) {
   return (
@@ -363,6 +313,48 @@ export default function PlannerPage({ user }: PlannerPageProps) {
     }
   }, [selectedNodeId, currentRootId]);
 
+  useEffect(() => {
+    const handleKeyboard = (event: KeyboardEvent) => {
+      // Ignore if user is typing in an input/textarea
+      if (
+        event.target instanceof HTMLInputElement ||
+        event.target instanceof HTMLTextAreaElement ||
+        event.target instanceof HTMLSelectElement
+      ) {
+        return;
+      }
+
+      const key = event.key.toLowerCase();
+
+      // G: Grandmother view (main root)
+      if (key === "g" && rootNodeId) {
+        event.preventDefault();
+        setCurrentRootId(rootNodeId);
+        setActivePortalRefId(null);
+      }
+
+      // U: Up one level
+      if (key === "u" && currentRootId) {
+        const currentNode = nodesById.get(currentRootId);
+        if (currentNode?.parentId) {
+          event.preventDefault();
+          setCurrentRootId(currentNode.parentId);
+          setActivePortalRefId(null);
+        }
+      }
+
+      // O: Open selected as master
+      if (key === "o" && selectedNodeId) {
+        event.preventDefault();
+        setCurrentRootId(selectedNodeId);
+        setActivePortalRefId(null);
+      }
+    };
+
+    window.addEventListener("keydown", handleKeyboard);
+    return () => window.removeEventListener("keydown", handleKeyboard);
+  }, [rootNodeId, currentRootId, selectedNodeId, nodesById]);
+
   const selectedNode = useMemo(
     () => (selectedNodeId ? nodesById.get(selectedNodeId) || null : null),
     [selectedNodeId, nodesById]
@@ -481,14 +473,33 @@ export default function PlannerPage({ user }: PlannerPageProps) {
   }, [refs, visibleTreeIdSet]);
 
   const basePortalNodes = useMemo(() => {
+    // Build collision bounds for tree nodes
+    const treeNodeBounds = buildTreeNodeBounds(baseTreeNodes);
+    const portalSize = { width: 48, height: 48 };
+    const positionedPortals: Array<{ x: number; y: number }> = [];
+
     return visiblePortals.map((entry, index) => {
+      // Calculate initial position (no collision detection)
+      const initialPosition = {
+        x: treeBounds.maxX + 220,
+        y: treeBounds.minY + index * 84,
+      };
+
+      // Adjust position to avoid collisions with tree nodes and other portals
+      const adjustedPosition = adjustPortalPosition(
+        initialPosition,
+        portalSize,
+        treeNodeBounds,
+        positionedPortals
+      );
+
+      // Track this portal's position for future collision checks
+      positionedPortals.push(adjustedPosition);
+
       return {
         id: `portal:${entry.ref.id}`,
         type: "portal",
-        position: {
-          x: treeBounds.maxX + 220,
-          y: treeBounds.minY + index * 84,
-        },
+        position: adjustedPosition,
         data: {
           label: entry.ref.code,
           title: `${entry.ref.label} (${entry.ref.nodeIds.length} links)`,
@@ -510,7 +521,7 @@ export default function PlannerPage({ user }: PlannerPageProps) {
         selectable: true,
       } as Node<PortalData>;
     });
-  }, [treeBounds.maxX, treeBounds.minY, visiblePortals]);
+  }, [treeBounds.maxX, treeBounds.minY, visiblePortals, baseTreeNodes]);
 
   const basePortalEdges = useMemo(() => {
     return visiblePortals
@@ -594,7 +605,7 @@ export default function PlannerPage({ user }: PlannerPageProps) {
               ? "0 0 0 2px rgba(125,211,252,0.22), 0 14px 30px rgba(0,0,0,0.42)"
               : (node.style as React.CSSProperties)?.boxShadow,
           opacity: hoveredNodeId || hoveredEdgeId ? (isHoverRelated ? 1 : 0.4) : 1,
-          transition: "opacity 160ms ease, box-shadow 160ms ease, border-color 160ms ease",
+          transition: "opacity 200ms ease, box-shadow 200ms ease, border-color 200ms ease",
         },
       } as Node;
     });
@@ -633,7 +644,7 @@ export default function PlannerPage({ user }: PlannerPageProps) {
           stroke: isHoverRelated ? "rgba(255, 255, 255, 0.9)" : baseStroke,
           strokeWidth: isHoverRelated ? Math.max(baseWidth, 3) : baseWidth,
           opacity: hoveredNodeId || hoveredEdgeId ? (isHoverRelated ? 1 : 0.35) : 1,
-          transition: "opacity 160ms ease, stroke 160ms ease, stroke-width 160ms ease",
+          transition: "opacity 200ms ease, stroke 200ms ease, stroke-width 200ms ease",
         },
       } as Edge;
     });
@@ -645,7 +656,7 @@ export default function PlannerPage({ user }: PlannerPageProps) {
     if (lastFocusKeyRef.current === key) return;
     const target = flowNodes.find((node) => node.id === selectedNodeId);
     if (!target) return;
-    rfInstance.fitView({ nodes: [target], duration: 350, padding: 0.45 });
+    rfInstance.fitView({ nodes: [target], duration: 400, padding: 0.45 });
     lastFocusKeyRef.current = key;
   }, [currentRootId, flowNodes, rfInstance, selectedNodeId]);
 
@@ -876,6 +887,46 @@ export default function PlannerPage({ user }: PlannerPageProps) {
     [user.uid]
   );
 
+  const handleNodeClick = useCallback(
+    (_: React.MouseEvent, node: Node) => {
+      if (node.id.startsWith("portal:")) {
+        setActivePortalRefId(node.id.replace("portal:", ""));
+        return;
+      }
+      setSelectedNodeId(node.id);
+      setActivePortalRefId(null);
+    },
+    []
+  );
+
+  const handleNodeDoubleClick = useCallback(
+    (_: React.MouseEvent, node: Node) => {
+      if (node.id.startsWith("portal:")) return;
+      const hasChildren = (childrenByParent.get(node.id) || []).length > 0;
+      if (!hasChildren) return;
+      setCurrentRootId(node.id);
+      setSelectedNodeId(node.id);
+      setActivePortalRefId(null);
+    },
+    [childrenByParent]
+  );
+
+  const handleNodeMouseEnter = useCallback((_: React.MouseEvent, node: Node) => {
+    setHoveredNodeId(node.id);
+  }, []);
+
+  const handleNodeMouseLeave = useCallback(() => {
+    setHoveredNodeId(null);
+  }, []);
+
+  const handleEdgeMouseEnter = useCallback((_: React.MouseEvent, edge: Edge) => {
+    setHoveredEdgeId(edge.id);
+  }, []);
+
+  const handleEdgeMouseLeave = useCallback(() => {
+    setHoveredEdgeId(null);
+  }, []);
+
   if (!db) {
     return (
       <div className="planner-empty-state">
@@ -890,7 +941,7 @@ export default function PlannerPage({ user }: PlannerPageProps) {
 
   return (
     <div className="planner-shell">
-      <aside className="planner-sidebar">
+      <PlannerSidebar hasError={!!error}>
         <div className="planner-panel-block">
           <h2>{profileName || "Main Node"}</h2>
           <p className="planner-subtle">{user.email}</p>
@@ -1038,43 +1089,21 @@ export default function PlannerPage({ user }: PlannerPageProps) {
         ) : null}
 
         {error ? <div className="planner-error">{error}</div> : null}
-      </aside>
+      </PlannerSidebar>
 
-      <main className="planner-canvas">
-        <ReactFlow
-          nodes={flowNodes}
-          edges={flowEdges}
-          nodeTypes={nodeTypes}
-          fitView
-          fitViewOptions={{ padding: 0.3 }}
-          nodesConnectable={false}
-          onInit={setRfInstance}
-          onNodeClick={(_, node) => {
-            if (node.id.startsWith("portal:")) {
-              setActivePortalRefId(node.id.replace("portal:", ""));
-              return;
-            }
-            setSelectedNodeId(node.id);
-            setActivePortalRefId(null);
-          }}
-          onNodeDoubleClick={(_, node) => {
-            if (node.id.startsWith("portal:")) return;
-            const hasChildren = (childrenByParent.get(node.id) || []).length > 0;
-            if (!hasChildren) return;
-            setCurrentRootId(node.id);
-            setSelectedNodeId(node.id);
-            setActivePortalRefId(null);
-          }}
-          onNodeMouseEnter={(_, node) => setHoveredNodeId(node.id)}
-          onNodeMouseLeave={() => setHoveredNodeId(null)}
-          onEdgeMouseEnter={(_, edge) => setHoveredEdgeId(edge.id)}
-          onEdgeMouseLeave={() => setHoveredEdgeId(null)}
-          onNodeDragStop={onNodeDragStop}
-          minZoom={0.3}
-        >
-          <Background gap={22} size={1} />
-        </ReactFlow>
-      </main>
+      <PlannerCanvas
+        nodes={flowNodes}
+        edges={flowEdges}
+        nodeTypes={nodeTypes}
+        onInit={setRfInstance}
+        onNodeClick={handleNodeClick}
+        onNodeDoubleClick={handleNodeDoubleClick}
+        onNodeMouseEnter={handleNodeMouseEnter}
+        onNodeMouseLeave={handleNodeMouseLeave}
+        onEdgeMouseEnter={handleEdgeMouseEnter}
+        onEdgeMouseLeave={handleEdgeMouseLeave}
+        onNodeDragStop={onNodeDragStop}
+      />
     </div>
   );
 }

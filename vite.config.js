@@ -71,7 +71,9 @@ export default defineConfig({
         navigateFallback: "/index.html",
       },
       devOptions: {
-        enabled: true,
+        // Disable PWA in dev by default to avoid stale cache issues
+        // Set VITE_PWA_DEV_ENABLED=1 to enable in dev if needed
+        enabled: process.env.NODE_ENV === "production" || process.env.VITE_PWA_DEV_ENABLED === "1",
       },
     }),
   ],

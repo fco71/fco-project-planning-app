@@ -3,6 +3,44 @@ import { useAuth } from "../auth/AuthProvider";
 
 type Mode = "signin" | "signup";
 
+/**
+ * Maps Firebase auth error codes to user-friendly messages.
+ */
+function getFriendlyErrorMessage(error: unknown): string {
+  if (!(error instanceof Error)) return "Authentication failed. Please try again.";
+
+  const message = error.message.toLowerCase();
+
+  // Firebase error codes are in the format: "Firebase: Error (auth/error-code)."
+  if (message.includes("auth/wrong-password") || message.includes("auth/user-not-found")) {
+    return "Incorrect email or password. Please try again.";
+  }
+  if (message.includes("auth/email-already-in-use")) {
+    return "This email is already registered. Try signing in instead.";
+  }
+  if (message.includes("auth/weak-password")) {
+    return "Password is too weak. Please use at least 6 characters.";
+  }
+  if (message.includes("auth/invalid-email")) {
+    return "Invalid email address. Please check and try again.";
+  }
+  if (message.includes("auth/too-many-requests")) {
+    return "Too many attempts. Please wait a few minutes and try again.";
+  }
+  if (message.includes("auth/network-request-failed")) {
+    return "Network error. Please check your internet connection.";
+  }
+  if (message.includes("auth/user-disabled")) {
+    return "This account has been disabled. Please contact support.";
+  }
+  if (message.includes("auth/requires-recent-login")) {
+    return "Please sign out and sign in again to continue.";
+  }
+
+  // Default: show the original message but cleaned up
+  return error.message || "Authentication failed. Please try again.";
+}
+
 export default function LoginPage() {
   const { signIn, signUp, envOk, missingEnv } = useAuth();
   const [mode, setMode] = useState<Mode>("signin");
@@ -33,7 +71,7 @@ export default function LoginPage() {
         await signIn(cleanEmail, password);
       }
     } catch (error: unknown) {
-      setErr(error instanceof Error ? error.message : "Authentication failed.");
+      setErr(getFriendlyErrorMessage(error));
     } finally {
       setBusy(false);
     }
