@@ -3,11 +3,13 @@ import ReactFlow, {
   Background,
   Handle,
   Position,
+  applyNodeChanges,
   type Edge,
   type Node,
   type NodeProps,
   type NodeTypes,
   type ReactFlowInstance,
+  type OnNodesChange,
 } from "reactflow";
 import {
   arrayRemove,
@@ -35,6 +37,9 @@ import {
 import { adjustPortalPosition, buildTreeNodeBounds } from "../utils/portalUtils";
 import PlannerCanvas from "../components/Planner/PlannerCanvas";
 import PlannerSidebar from "../components/Planner/PlannerSidebar";
+import CrossRefPanel from "../components/sections/CrossRefPanel";
+import NodeSearch from "../components/sections/NodeSearch";
+import DataBackup from "../components/sections/DataBackup";
 import "reactflow/dist/style.css";
 
 type PlannerPageProps = {
@@ -86,7 +91,6 @@ export default function PlannerPage({ user }: PlannerPageProps) {
   const [renameTitle, setRenameTitle] = useState("");
   const [newRefLabel, setNewRefLabel] = useState("");
   const [newRefCode, setNewRefCode] = useState("");
-  const [attachRefId, setAttachRefId] = useState("");
   const [activePortalRefId, setActivePortalRefId] = useState<string | null>(null);
   const [hoveredNodeId, setHoveredNodeId] = useState<string | null>(null);
   const [hoveredEdgeId, setHoveredEdgeId] = useState<string | null>(null);
@@ -94,9 +98,20 @@ export default function PlannerPage({ user }: PlannerPageProps) {
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [rfInstance, setRfInstance] = useState<ReactFlowInstance | null>(null);
+  const [isSaving, setIsSaving] = useState(false);
+  const [saveStatus, setSaveStatus] = useState<"idle" | "saving" | "saved" | "error">("idle");
   const lastFocusKeyRef = useRef("");
+  const saveTimeoutRef = useRef<NodeJS.Timeout | null>(null);
 
   const nodesById = useMemo(() => new Map(nodes.map((node) => [node.id, node] as const)), [nodes]);
+
+  const showSaveIndicator = useCallback((status: "saving" | "saved" | "error") => {
+    if (saveTimeoutRef.current) clearTimeout(saveTimeoutRef.current);
+    setSaveStatus(status);
+    if (status === "saved") {
+      saveTimeoutRef.current = setTimeout(() => setSaveStatus("idle"), 2000);
+    }
+  }, []);
 
   const childrenByParent = useMemo(() => {
     const map = new Map<string, string[]>();
@@ -121,7 +136,9 @@ export default function PlannerPage({ user }: PlannerPageProps) {
       setLoading(false);
       return;
     }
-    const userRef = doc(db, "users", user.uid);
+    // TypeScript: db is checked above, safe to use
+    const firestore = db;
+    const userRef = doc(firestore, "users", user.uid);
     const userSnap = await getDoc(userRef);
     const existing = userSnap.exists() ? userSnap.data() : {};
     const preferredName =
@@ -131,11 +148,11 @@ export default function PlannerPage({ user }: PlannerPageProps) {
     const rootId =
       typeof existing.rootNodeId === "string" && existing.rootNodeId.trim()
         ? existing.rootNodeId
-        : doc(collection(db, "users", user.uid, "nodes")).id;
+        : doc(collection(firestore, "users", user.uid, "nodes")).id;
 
-    const rootRef = doc(db, "users", user.uid, "nodes", rootId);
+    const rootRef = doc(firestore, "users", user.uid, "nodes", rootId);
     const rootSnap = await getDoc(rootRef);
-    const batch = writeBatch(db);
+    const batch = writeBatch(firestore);
     let changed = false;
 
     if (!userSnap.exists()) {
@@ -182,6 +199,8 @@ export default function PlannerPage({ user }: PlannerPageProps) {
       setError("Firestore is not available. Check Firebase configuration.");
       return;
     }
+    // TypeScript: db is checked above, safe to use
+    const firestore = db;
     let unsubProfile: (() => void) | null = null;
     let unsubNodes: (() => void) | null = null;
     let unsubRefs: (() => void) | null = null;
@@ -201,7 +220,7 @@ export default function PlannerPage({ user }: PlannerPageProps) {
         if (cancelled) return;
 
         unsubProfile = onSnapshot(
-          doc(db, "users", user.uid),
+          doc(firestore, "users", user.uid),
           (snapshot) => {
             const data = snapshot.data();
             const nextProfileName =
@@ -223,7 +242,7 @@ export default function PlannerPage({ user }: PlannerPageProps) {
         );
 
         unsubNodes = onSnapshot(
-          query(collection(db, "users", user.uid, "nodes")),
+          query(collection(firestore, "users", user.uid, "nodes")),
           (snapshot) => {
             const nextNodes = snapshot.docs.map((entry) => {
               const value = entry.data() as Partial<TreeNodeDoc>;
@@ -249,7 +268,7 @@ export default function PlannerPage({ user }: PlannerPageProps) {
         );
 
         unsubRefs = onSnapshot(
-          query(collection(db, "users", user.uid, "crossRefs")),
+          query(collection(firestore, "users", user.uid, "crossRefs")),
           (snapshot) => {
             const nextRefs = snapshot.docs.map((entry) => {
               const value = entry.data() as Partial<CrossRefDoc>;
@@ -473,33 +492,21 @@ export default function PlannerPage({ user }: PlannerPageProps) {
   }, [refs, visibleTreeIdSet]);
 
   const basePortalNodes = useMemo(() => {
-    // Build collision bounds for tree nodes
-    const treeNodeBounds = buildTreeNodeBounds(baseTreeNodes);
+    // Simpler positioning: just stack vertically with consistent spacing
+    // Only apply collision detection if portals would overlap tree nodes significantly
     const portalSize = { width: 48, height: 48 };
-    const positionedPortals: Array<{ x: number; y: number }> = [];
 
     return visiblePortals.map((entry, index) => {
-      // Calculate initial position (no collision detection)
-      const initialPosition = {
-        x: treeBounds.maxX + 220,
-        y: treeBounds.minY + index * 84,
+      // Simple vertical stacking with increased spacing for cleaner look
+      const position = {
+        x: treeBounds.maxX + 240, // More spacing from tree
+        y: treeBounds.minY + index * 96, // Increased vertical spacing (was 84)
       };
-
-      // Adjust position to avoid collisions with tree nodes and other portals
-      const adjustedPosition = adjustPortalPosition(
-        initialPosition,
-        portalSize,
-        treeNodeBounds,
-        positionedPortals
-      );
-
-      // Track this portal's position for future collision checks
-      positionedPortals.push(adjustedPosition);
 
       return {
         id: `portal:${entry.ref.id}`,
         type: "portal",
-        position: adjustedPosition,
+        position,
         data: {
           label: entry.ref.code,
           title: `${entry.ref.label} (${entry.ref.nodeIds.length} links)`,
@@ -516,8 +523,10 @@ export default function PlannerPage({ user }: PlannerPageProps) {
           boxShadow: "0 10px 20px rgba(0,0,0,0.35)",
           display: "grid",
           placeItems: "center",
+          cursor: "grab",
+          transition: "transform 200ms cubic-bezier(0.34, 1.56, 0.64, 1), box-shadow 200ms ease",
         } as React.CSSProperties,
-        draggable: false,
+        draggable: true,
         selectable: true,
       } as Node<PortalData>;
     });
@@ -605,7 +614,8 @@ export default function PlannerPage({ user }: PlannerPageProps) {
               ? "0 0 0 2px rgba(125,211,252,0.22), 0 14px 30px rgba(0,0,0,0.42)"
               : (node.style as React.CSSProperties)?.boxShadow,
           opacity: hoveredNodeId || hoveredEdgeId ? (isHoverRelated ? 1 : 0.4) : 1,
-          transition: "opacity 200ms ease, box-shadow 200ms ease, border-color 200ms ease",
+          transform: isHoverRelated ? "scale(1.02)" : "scale(1)",
+          transition: "all 180ms cubic-bezier(0.34, 1.56, 0.64, 1)",
         },
       } as Node;
     });
@@ -621,9 +631,11 @@ export default function PlannerPage({ user }: PlannerPageProps) {
           boxShadow: isActive
             ? "0 0 0 3px rgba(251,146,60,0.28), 0 14px 28px rgba(0,0,0,0.42)"
             : isHoverRelated
-              ? "0 0 0 2px rgba(251,146,60,0.2), 0 14px 28px rgba(0,0,0,0.42)"
+              ? "0 0 0 2px rgba(251,146,60,0.2), 0 16px 32px rgba(0,0,0,0.48), 0 0 20px rgba(251,146,60,0.3)"
               : (node.style as React.CSSProperties)?.boxShadow,
           opacity: hoveredNodeId || hoveredEdgeId ? (isHoverRelated ? 1 : 0.5) : 1,
+          transform: isHoverRelated ? "scale(1.15)" : isActive ? "scale(1.08)" : "scale(1)",
+          transition: "all 200ms cubic-bezier(0.34, 1.56, 0.64, 1)",
         },
       } as Node;
     });
@@ -639,16 +651,31 @@ export default function PlannerPage({ user }: PlannerPageProps) {
       const baseWidth = typeof edgeStyle.strokeWidth === "number" ? edgeStyle.strokeWidth : 2;
       return {
         ...edge,
+        type: "smoothstep",
         style: {
           ...edgeStyle,
           stroke: isHoverRelated ? "rgba(255, 255, 255, 0.9)" : baseStroke,
           strokeWidth: isHoverRelated ? Math.max(baseWidth, 3) : baseWidth,
           opacity: hoveredNodeId || hoveredEdgeId ? (isHoverRelated ? 1 : 0.35) : 1,
-          transition: "opacity 200ms ease, stroke 200ms ease, stroke-width 200ms ease",
+          transition: "all 180ms cubic-bezier(0.4, 0, 0.2, 1)",
         },
       } as Edge;
     });
   }, [baseEdges, hoverEdgeIds, hoveredEdgeId, hoveredNodeId]);
+
+  const [internalNodes, setInternalNodes] = useState<Node[]>([]);
+
+  useEffect(() => {
+    setInternalNodes(flowNodes);
+  }, [flowNodes]);
+
+  const handleNodesChange: OnNodesChange = useCallback(
+    (changes) => {
+      // Apply position changes immediately for smooth dragging
+      setInternalNodes((nds) => applyNodeChanges(changes, nds) as Node[]);
+    },
+    []
+  );
 
   useEffect(() => {
     if (!rfInstance || !selectedNodeId) return;
@@ -656,7 +683,7 @@ export default function PlannerPage({ user }: PlannerPageProps) {
     if (lastFocusKeyRef.current === key) return;
     const target = flowNodes.find((node) => node.id === selectedNodeId);
     if (!target) return;
-    rfInstance.fitView({ nodes: [target], duration: 400, padding: 0.45 });
+    rfInstance.fitView({ nodes: [target], duration: 500, padding: 0.45 });
     lastFocusKeyRef.current = key;
   }, [currentRootId, flowNodes, rfInstance, selectedNodeId]);
 
@@ -676,16 +703,6 @@ export default function PlannerPage({ user }: PlannerPageProps) {
       .map((id) => nodesById.get(id))
       .filter((node): node is TreeNode => !!node);
   }, [childrenByParent, nodesById, selectedNodeId]);
-
-  const selectedNodeRefs = useMemo(() => {
-    if (!selectedNodeId) return [] as CrossRef[];
-    return refs.filter((ref) => ref.nodeIds.includes(selectedNodeId));
-  }, [refs, selectedNodeId]);
-
-  const attachableRefs = useMemo(() => {
-    if (!selectedNodeId) return [] as CrossRef[];
-    return refs.filter((ref) => !ref.nodeIds.includes(selectedNodeId));
-  }, [refs, selectedNodeId]);
 
   const activePortalRef = useMemo(() => {
     if (!activePortalRefId) return null;
@@ -720,16 +737,18 @@ export default function PlannerPage({ user }: PlannerPageProps) {
 
   const createChild = useCallback(async () => {
     if (!db) return;
+    // TypeScript: db is checked above, safe to use
+    const firestore = db;
     const title = newChildTitle.trim();
     if (!title) return;
     const parentId = selectedNodeId || currentRootId || rootNodeId;
     if (!parentId) return;
-    const newDoc = doc(collection(db, "users", user.uid, "nodes"));
+    const newDoc = doc(collection(firestore, "users", user.uid, "nodes"));
     const parent = nodesById.get(parentId);
     setBusyAction(true);
     setError(null);
     try {
-      await setDoc(doc(db, "users", user.uid, "nodes", newDoc.id), {
+      await setDoc(doc(firestore, "users", user.uid, "nodes", newDoc.id), {
         title,
         parentId,
         kind: "item",
@@ -749,12 +768,14 @@ export default function PlannerPage({ user }: PlannerPageProps) {
 
   const renameSelected = useCallback(async () => {
     if (!db || !selectedNodeId) return;
+    // TypeScript: db is checked above, safe to use
+    const firestore = db;
     const title = renameTitle.trim();
     if (!title) return;
     setBusyAction(true);
     setError(null);
     try {
-      await updateDoc(doc(db, "users", user.uid, "nodes", selectedNodeId), {
+      await updateDoc(doc(firestore, "users", user.uid, "nodes", selectedNodeId), {
         title,
         updatedAt: serverTimestamp(),
       });
@@ -767,20 +788,22 @@ export default function PlannerPage({ user }: PlannerPageProps) {
 
   const deleteSelected = useCallback(async () => {
     if (!db || !selectedNodeId || selectedNodeId === rootNodeId) return;
+    // TypeScript: db is checked above, safe to use
+    const firestore = db;
     const ids = collectDescendants(selectedNodeId, childrenByParent);
     const idSet = new Set(ids);
     const fallbackId = nodesById.get(selectedNodeId)?.parentId || rootNodeId || null;
     setBusyAction(true);
     setError(null);
     try {
-      const batch = writeBatch(db);
+      const batch = writeBatch(firestore);
       ids.forEach((id) => {
-        batch.delete(doc(db, "users", user.uid, "nodes", id));
+        batch.delete(doc(firestore, "users", user.uid, "nodes", id));
       });
       refs.forEach((ref) => {
         const remaining = ref.nodeIds.filter((id) => !idSet.has(id));
         if (remaining.length === ref.nodeIds.length) return;
-        const refDoc = doc(db, "users", user.uid, "crossRefs", ref.id);
+        const refDoc = doc(firestore, "users", user.uid, "crossRefs", ref.id);
         if (remaining.length === 0) {
           batch.delete(refDoc);
         } else {
@@ -802,14 +825,16 @@ export default function PlannerPage({ user }: PlannerPageProps) {
 
   const createCrossRef = useCallback(async () => {
     if (!db || !selectedNodeId) return;
+    // TypeScript: db is checked above, safe to use
+    const firestore = db;
     const label = newRefLabel.trim();
     if (!label) return;
     const code = newRefCode.trim() ? normalizeCode(newRefCode) : initialsFromLabel(label);
     setBusyAction(true);
     setError(null);
     try {
-      const newDoc = doc(collection(db, "users", user.uid, "crossRefs"));
-      await setDoc(doc(db, "users", user.uid, "crossRefs", newDoc.id), {
+      const newDoc = doc(collection(firestore, "users", user.uid, "crossRefs"));
+      await setDoc(doc(firestore, "users", user.uid, "crossRefs", newDoc.id), {
         label,
         code,
         nodeIds: [selectedNodeId],
@@ -825,30 +850,33 @@ export default function PlannerPage({ user }: PlannerPageProps) {
     }
   }, [newRefCode, newRefLabel, selectedNodeId, user.uid]);
 
-  const attachCrossRef = useCallback(async () => {
-    if (!db || !selectedNodeId || !attachRefId) return;
+  const attachCrossRefToNode = useCallback(async (refId: string) => {
+    if (!db || !selectedNodeId) return;
+    // TypeScript: db is checked above, safe to use
+    const firestore = db;
     setBusyAction(true);
     setError(null);
     try {
-      await updateDoc(doc(db, "users", user.uid, "crossRefs", attachRefId), {
+      await updateDoc(doc(firestore, "users", user.uid, "crossRefs", refId), {
         nodeIds: arrayUnion(selectedNodeId),
         updatedAt: serverTimestamp(),
       });
-      setAttachRefId("");
     } catch (actionError: unknown) {
       setError(actionError instanceof Error ? actionError.message : "Could not attach cross-reference.");
     } finally {
       setBusyAction(false);
     }
-  }, [attachRefId, selectedNodeId, user.uid]);
+  }, [selectedNodeId, user.uid]);
 
   const detachCrossRef = useCallback(
     async (refId: string, nodeId: string) => {
       if (!db) return;
+      // TypeScript: db is checked above, safe to use
+      const firestore = db;
       setBusyAction(true);
       setError(null);
       try {
-        await updateDoc(doc(db, "users", user.uid, "crossRefs", refId), {
+        await updateDoc(doc(firestore, "users", user.uid, "crossRefs", refId), {
           nodeIds: arrayRemove(nodeId),
           updatedAt: serverTimestamp(),
         });
@@ -871,20 +899,35 @@ export default function PlannerPage({ user }: PlannerPageProps) {
     [nodesById, rootNodeId]
   );
 
+  const jumpToNode = useCallback(
+    (nodeId: string) => {
+      const masterId = getMasterNodeFor(nodeId, rootNodeId, nodesById);
+      setCurrentRootId(masterId);
+      setSelectedNodeId(nodeId);
+      setActivePortalRefId(null);
+    },
+    [nodesById, rootNodeId]
+  );
+
   const onNodeDragStop = useCallback(
     async (_: React.MouseEvent, node: Node) => {
       if (!db || node.id.startsWith("portal:")) return;
+      // TypeScript: db is checked above, safe to use
+      const firestore = db;
+      showSaveIndicator("saving");
       try {
-        await updateDoc(doc(db, "users", user.uid, "nodes", node.id), {
+        await updateDoc(doc(firestore, "users", user.uid, "nodes", node.id), {
           x: node.position.x,
           y: node.position.y,
           updatedAt: serverTimestamp(),
         });
+        showSaveIndicator("saved");
       } catch (actionError: unknown) {
+        showSaveIndicator("error");
         setError(actionError instanceof Error ? actionError.message : "Could not save node position.");
       }
     },
-    [user.uid]
+    [user.uid, showSaveIndicator]
   );
 
   const handleNodeClick = useCallback(
@@ -941,6 +984,28 @@ export default function PlannerPage({ user }: PlannerPageProps) {
 
   return (
     <div className="planner-shell">
+      {saveStatus !== "idle" && (
+        <div className={`auto-save-indicator auto-save-${saveStatus}`}>
+          {saveStatus === "saving" && (
+            <>
+              <span className="save-spinner" />
+              Saving...
+            </>
+          )}
+          {saveStatus === "saved" && (
+            <>
+              <span className="save-checkmark">✓</span>
+              Saved
+            </>
+          )}
+          {saveStatus === "error" && (
+            <>
+              <span className="save-error">⚠</span>
+              Error saving
+            </>
+          )}
+        </div>
+      )}
       <PlannerSidebar hasError={!!error}>
         <div className="planner-panel-block">
           <h2>{profileName || "Main Node"}</h2>
@@ -962,10 +1027,20 @@ export default function PlannerPage({ user }: PlannerPageProps) {
         </div>
 
         <div className="planner-panel-block">
+          <NodeSearch nodes={nodesById} buildNodePath={buildNodePath} jumpToNode={jumpToNode} />
+        </div>
+
+        <div className="planner-panel-block">
           <h3>Add Child Node</h3>
           <input
             value={newChildTitle}
             onChange={(event) => setNewChildTitle(event.target.value)}
+            onKeyDown={(event) => {
+              if (event.key === "Enter" && newChildTitle.trim().length > 0 && !busyAction) {
+                event.preventDefault();
+                createChild();
+              }
+            }}
             placeholder="Film Production, Education, Finance..."
           />
           <button onClick={createChild} disabled={busyAction || newChildTitle.trim().length === 0}>
@@ -1018,61 +1093,21 @@ export default function PlannerPage({ user }: PlannerPageProps) {
           )}
         </div>
 
-        <div className="planner-panel-block">
-          <h3>Cross-Reference Bubbles</h3>
-          <p className="planner-subtle">
-            Use these for entities shared across branches (e.g., investor Mario Pinto / MP).
-          </p>
-          <input
-            value={newRefLabel}
-            onChange={(event) => setNewRefLabel(event.target.value)}
-            placeholder="Reference name"
-          />
-          <input
-            value={newRefCode}
-            onChange={(event) => setNewRefCode(event.target.value)}
-            placeholder="Bubble code (optional, e.g., MP)"
-          />
-          <button onClick={createCrossRef} disabled={busyAction || !selectedNodeId || newRefLabel.trim().length === 0}>
-            Create bubble and attach to selected
-          </button>
-
-          <div className="planner-inline-buttons">
-            <select value={attachRefId} onChange={(event) => setAttachRefId(event.target.value)}>
-              <option value="">Attach existing bubble...</option>
-              {attachableRefs.map((ref) => (
-                <option key={ref.id} value={ref.id}>
-                  {ref.code} - {ref.label}
-                </option>
-              ))}
-            </select>
-            <button onClick={attachCrossRef} disabled={busyAction || !selectedNodeId || !attachRefId}>
-              Attach
-            </button>
-          </div>
-
-          <div className="planner-row-label">Bubbles on selected node</div>
-          <div className="planner-chip-list">
-            {selectedNodeRefs.length === 0 || !selectedNodeId ? (
-              <span className="planner-subtle">No bubbles attached.</span>
-            ) : (
-              selectedNodeRefs.map((ref) => (
-                <div key={ref.id} className="chip with-action">
-                  <button
-                    onClick={() => setActivePortalRefId(ref.id)}
-                  >{`${ref.code} - ${ref.label}`}</button>
-                  <button
-                    className="chip-action"
-                    onClick={() => detachCrossRef(ref.id, selectedNodeId)}
-                    title="Detach from selected node"
-                  >
-                    x
-                  </button>
-                </div>
-              ))
-            )}
-          </div>
-        </div>
+        <CrossRefPanel
+          selectedNodeId={selectedNodeId}
+          refs={refs}
+          nodes={nodesById}
+          busyAction={busyAction}
+          newRefLabel={newRefLabel}
+          setNewRefLabel={setNewRefLabel}
+          newRefCode={newRefCode}
+          setNewRefCode={setNewRefCode}
+          createCrossRef={createCrossRef}
+          attachCrossRefToNode={attachCrossRefToNode}
+          detachCrossRef={detachCrossRef}
+          setActivePortalRefId={setActivePortalRefId}
+          buildNodePath={buildNodePath}
+        />
 
         {activePortalRef ? (
           <div className="planner-panel-block">
@@ -1088,14 +1123,19 @@ export default function PlannerPage({ user }: PlannerPageProps) {
           </div>
         ) : null}
 
+        <div className="planner-panel-block">
+          <DataBackup nodes={nodes} refs={refs} profileName={profileName} rootNodeId={rootNodeId} />
+        </div>
+
         {error ? <div className="planner-error">{error}</div> : null}
       </PlannerSidebar>
 
       <PlannerCanvas
-        nodes={flowNodes}
+        nodes={internalNodes}
         edges={flowEdges}
         nodeTypes={nodeTypes}
         onInit={setRfInstance}
+        onNodesChange={handleNodesChange}
         onNodeClick={handleNodeClick}
         onNodeDoubleClick={handleNodeDoubleClick}
         onNodeMouseEnter={handleNodeMouseEnter}

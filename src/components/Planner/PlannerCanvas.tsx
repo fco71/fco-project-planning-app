@@ -2,10 +2,13 @@
 import React from "react";
 import ReactFlow, {
   Background,
+  MiniMap,
+  Controls,
   type Edge,
   type Node,
   type NodeTypes,
   type ReactFlowInstance,
+  type OnNodesChange,
 } from "reactflow";
 import "reactflow/dist/style.css";
 
@@ -14,6 +17,7 @@ type PlannerCanvasProps = {
   edges: Edge[];
   nodeTypes: NodeTypes;
   onInit: (instance: ReactFlowInstance) => void;
+  onNodesChange?: OnNodesChange;
   onNodeClick: (_: React.MouseEvent, node: Node) => void;
   onNodeDoubleClick: (_: React.MouseEvent, node: Node) => void;
   onNodeMouseEnter: (_: React.MouseEvent, node: Node) => void;
@@ -32,6 +36,7 @@ export default function PlannerCanvas({
   edges,
   nodeTypes,
   onInit,
+  onNodesChange,
   onNodeClick,
   onNodeDoubleClick,
   onNodeMouseEnter,
@@ -49,7 +54,10 @@ export default function PlannerCanvas({
         fitView
         fitViewOptions={{ padding: 0.3 }}
         nodesConnectable={false}
+        nodesDraggable={true}
+        elementsSelectable={true}
         onInit={onInit}
+        onNodesChange={onNodesChange}
         onNodeClick={onNodeClick}
         onNodeDoubleClick={onNodeDoubleClick}
         onNodeMouseEnter={onNodeMouseEnter}
@@ -58,8 +66,39 @@ export default function PlannerCanvas({
         onEdgeMouseLeave={onEdgeMouseLeave}
         onNodeDragStop={onNodeDragStop}
         minZoom={0.3}
+        maxZoom={1.8}
+        zoomOnScroll={true}
+        panOnScroll={false}
+        panOnDrag={[1, 2]}
+        selectNodesOnDrag={false}
+        proOptions={{ hideAttribution: true }}
+        defaultEdgeOptions={{
+          type: 'smoothstep',
+          animated: false,
+        }}
+        connectionLineType="smoothstep"
+        snapToGrid={true}
+        snapGrid={[16, 16]}
       >
         <Background gap={22} size={1} />
+        <MiniMap
+          nodeStrokeWidth={3}
+          zoomable
+          pannable
+          style={{
+            background: "rgba(11, 16, 25, 0.95)",
+            border: "1px solid rgba(255, 255, 255, 0.12)",
+            borderRadius: "8px",
+          }}
+        />
+        <Controls
+          showInteractive={false}
+          style={{
+            background: "rgba(11, 16, 25, 0.95)",
+            border: "1px solid rgba(255, 255, 255, 0.12)",
+            borderRadius: "8px",
+          }}
+        />
       </ReactFlow>
     </main>
   );
