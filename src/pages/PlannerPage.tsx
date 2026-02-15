@@ -387,6 +387,19 @@ export default function PlannerPage({ user }: PlannerPageProps) {
 
   const visibleTreeIdSet = useMemo(() => new Set(visibleTreeIds), [visibleTreeIds]);
 
+  // Toggle node collapse/expand
+  const toggleNodeCollapse = useCallback((nodeId: string) => {
+    setCollapsedNodeIds((prev) => {
+      const next = new Set(prev);
+      if (next.has(nodeId)) {
+        next.delete(nodeId);
+      } else {
+        next.add(nodeId);
+      }
+      return next;
+    });
+  }, []);
+
   // Filter out descendants of collapsed nodes
   const filteredTreeIds = useMemo(() => {
     if (collapsedNodeIds.size === 0) return visibleTreeIds;
@@ -741,19 +754,6 @@ export default function PlannerPage({ user }: PlannerPageProps) {
     } else if (status === "error") {
       saveTimeoutRef.current = setTimeout(() => setSaveStatus("idle"), 4000);
     }
-  }, []);
-
-  // Toggle node collapse/expand
-  const toggleNodeCollapse = useCallback((nodeId: string) => {
-    setCollapsedNodeIds((prev) => {
-      const next = new Set(prev);
-      if (next.has(nodeId)) {
-        next.delete(nodeId);
-      } else {
-        next.add(nodeId);
-      }
-      return next;
-    });
   }, []);
 
   // Double-click to zoom (less aggressive)
