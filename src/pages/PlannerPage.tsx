@@ -26,6 +26,7 @@ import {
 } from "firebase/firestore";
 import type { User } from "firebase/auth";
 import { db } from "../firebase";
+import { NodeContextMenu } from "../components/Planner/NodeContextMenu";
 import "reactflow/dist/style.css";
 
 type PlannerPageProps = {
@@ -143,6 +144,7 @@ export default function PlannerPage({ user }: PlannerPageProps) {
   const [activePortalRefId, setActivePortalRefId] = useState<string | null>(null);
   const [hoveredNodeId, setHoveredNodeId] = useState<string | null>(null);
   const [hoveredEdgeId, setHoveredEdgeId] = useState<string | null>(null);
+  const [contextMenu, setContextMenu] = useState<{ x: number; y: number; nodeId: string } | null>(null);
   const [busyAction, setBusyAction] = useState(false);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
@@ -672,15 +674,19 @@ export default function PlannerPage({ user }: PlannerPageProps) {
     setDisplayNodes((nds) => applyNodeChanges(changes, nds));
   }, []);
 
-  useEffect(() => {
-    if (!rfInstance || !selectedNodeId) return;
-    const key = `${currentRootId || ""}:${selectedNodeId}`;
-    if (lastFocusKeyRef.current === key) return;
-    const target = flowNodes.find((node) => node.id === selectedNodeId);
-    if (!target) return;
-    rfInstance.fitView({ nodes: [target], duration: 350, padding: 0.45 });
-    lastFocusKeyRef.current = key;
-  }, [currentRootId, flowNodes, rfInstance, selectedNodeId]);
+  // Double-click to zoom (less aggressive)
+  const onNodeDoubleClick = useCallback(
+    (_: React.MouseEvent, node: Node) => {
+      if (!rfInstance) return;
+      rfInstance.fitView({
+        nodes: [node],
+        duration: 250,
+        padding: 0.8,
+        maxZoom: 1.2,
+      });
+    },
+    [rfInstance]
+  );
 
   const currentRootNode = useMemo(
     () => (currentRootId ? nodesById.get(currentRootId) || null : null),
@@ -916,6 +922,140 @@ export default function PlannerPage({ user }: PlannerPageProps) {
     [user.uid]
   );
 
+  // Context menu handlers
+  const handleContextAddChild = useCallback(
+    async (nodeId: string) => {
+      if (!db) return;
+      const parent = nodesById.get(nodeId);
+      if (!parent) return;
+
+      const newDoc = doc(collection(db, "users", user.uid, "nodes"));
+      setBusyAction(true);
+      setError(null);
+      try {
+        await setDoc(doc(db, "users", user.uid, "nodes", newDoc.id), {
+          title: "New Node",
+          parentId: nodeId,
+          kind: "item",
+          x: (typeof parent.x === "number" ? parent.x : 0) + 260,
+          y: (typeof parent.y === "number" ? parent.y : 0) + 20,
+          createdAt: serverTimestamp(),
+          updatedAt: serverTimestamp(),
+        } satisfies TreeNodeDoc & { createdAt: unknown; updatedAt: unknown });
+        setPendingSelectedNodeId(newDoc.id);
+      } catch (actionError: unknown) {
+        setError(actionError instanceof Error ? actionError.message : "Could not create node.");
+      } finally {
+        setBusyAction(false);
+      }
+    },
+    [nodesById, user.uid]
+  );
+
+  const handleContextDelete = useCallback(
+    async (nodeId: string) => {
+      if (!db || nodeId === rootNodeId) return;
+      const ids = collectDescendants(nodeId, childrenByParent);
+      const idSet = new Set(ids);
+      const fallbackId = nodesById.get(nodeId)?.parentId || rootNodeId || null;
+
+      setBusyAction(true);
+      setError(null);
+      try {
+        const batch = writeBatch(db);
+        ids.forEach((id) => {
+          batch.delete(doc(db, "users", user.uid, "nodes", id));
+        });
+        refs.forEach((ref) => {
+          const keep = ref.nodeIds.filter((id) => !idSet.has(id));
+          if (keep.length !== ref.nodeIds.length) {
+            if (keep.length === 0) {
+              batch.delete(doc(db, "users", user.uid, "crossRefs", ref.id));
+            } else {
+              batch.update(doc(db, "users", user.uid, "crossRefs", ref.id), {
+                nodeIds: keep,
+                updatedAt: serverTimestamp(),
+              });
+            }
+          }
+        });
+        await batch.commit();
+        if (selectedNodeId === nodeId || idSet.has(selectedNodeId || "")) {
+          setSelectedNodeId(fallbackId);
+        }
+      } catch (actionError: unknown) {
+        setError(actionError instanceof Error ? actionError.message : "Could not delete node.");
+      } finally {
+        setBusyAction(false);
+      }
+    },
+    [childrenByParent, nodesById, refs, rootNodeId, selectedNodeId, user.uid]
+  );
+
+  const handleContextDuplicate = useCallback(
+    async (nodeId: string) => {
+      if (!db) return;
+      const original = nodesById.get(nodeId);
+      if (!original) return;
+
+      const newDoc = doc(collection(db, "users", user.uid, "nodes"));
+      setBusyAction(true);
+      setError(null);
+      try {
+        await setDoc(doc(db, "users", user.uid, "nodes", newDoc.id), {
+          title: `${original.title} (Copy)`,
+          parentId: original.parentId,
+          kind: original.kind,
+          x: (typeof original.x === "number" ? original.x : 0) + 80,
+          y: (typeof original.y === "number" ? original.y : 0) + 80,
+          createdAt: serverTimestamp(),
+          updatedAt: serverTimestamp(),
+        } satisfies TreeNodeDoc & { createdAt: unknown; updatedAt: unknown });
+        setPendingSelectedNodeId(newDoc.id);
+      } catch (actionError: unknown) {
+        setError(actionError instanceof Error ? actionError.message : "Could not duplicate node.");
+      } finally {
+        setBusyAction(false);
+      }
+    },
+    [nodesById, user.uid]
+  );
+
+  const handleContextAddCrossRef = useCallback(
+    async (nodeId: string) => {
+      // Select the node and scroll to cross-ref section in sidebar
+      setSelectedNodeId(nodeId);
+      setActivePortalRefId(null);
+      // User can then add cross-ref through sidebar
+    },
+    []
+  );
+
+  const handleContextChangeType = useCallback(
+    async (nodeId: string) => {
+      if (!db) return;
+      const node = nodesById.get(nodeId);
+      if (!node) return;
+
+      // Toggle between project and item
+      const newKind = node.kind === "project" ? "item" : "project";
+
+      setBusyAction(true);
+      setError(null);
+      try {
+        await updateDoc(doc(db, "users", user.uid, "nodes", nodeId), {
+          kind: newKind,
+          updatedAt: serverTimestamp(),
+        });
+      } catch (actionError: unknown) {
+        setError(actionError instanceof Error ? actionError.message : "Could not change node type.");
+      } finally {
+        setBusyAction(false);
+      }
+    },
+    [nodesById, user.uid]
+  );
+
   if (!db) {
     return (
       <div className="planner-empty-state">
@@ -1146,21 +1286,54 @@ export default function PlannerPage({ user }: PlannerPageProps) {
           }}
           onNodeDoubleClick={(_, node) => {
             if (node.id.startsWith("portal:")) return;
+
+            // Zoom to node (less aggressive)
+            onNodeDoubleClick(_, node);
+
+            // If node has children, also navigate into it
             const hasChildren = (childrenByParent.get(node.id) || []).length > 0;
-            if (!hasChildren) return;
-            setCurrentRootId(node.id);
-            setSelectedNodeId(node.id);
-            setActivePortalRefId(null);
+            if (hasChildren) {
+              setCurrentRootId(node.id);
+              setSelectedNodeId(node.id);
+              setActivePortalRefId(null);
+            }
           }}
           onNodeMouseEnter={(_, node) => setHoveredNodeId(node.id)}
           onNodeMouseLeave={() => setHoveredNodeId(null)}
           onEdgeMouseEnter={(_, edge) => setHoveredEdgeId(edge.id)}
           onEdgeMouseLeave={() => setHoveredEdgeId(null)}
           onNodeDragStop={onNodeDragStop}
+          onNodeContextMenu={(event, node) => {
+            event.preventDefault();
+            if (node.id.startsWith("portal:")) return;
+            setContextMenu({
+              x: event.clientX,
+              y: event.clientY,
+              nodeId: node.id,
+            });
+          }}
+          onPaneClick={() => setContextMenu(null)}
           minZoom={0.3}
         >
           <Background gap={22} size={1} />
         </ReactFlow>
+
+        {/* Context Menu */}
+        {contextMenu && (
+          <NodeContextMenu
+            x={contextMenu.x}
+            y={contextMenu.y}
+            nodeId={contextMenu.nodeId}
+            nodeTitle={nodesById.get(contextMenu.nodeId)?.title || "Node"}
+            hasChildren={(childrenByParent.get(contextMenu.nodeId) || []).length > 0}
+            onClose={() => setContextMenu(null)}
+            onAddChild={handleContextAddChild}
+            onDelete={handleContextDelete}
+            onDuplicate={handleContextDuplicate}
+            onAddCrossRef={handleContextAddCrossRef}
+            onChangeType={handleContextChangeType}
+          />
+        )}
       </main>
     </div>
   );

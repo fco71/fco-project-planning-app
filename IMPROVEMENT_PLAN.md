@@ -31,55 +31,125 @@
 - **Feature:** Graceful error handling with user-friendly messages
 - **Verified:** Already implemented
 
+### 5. Sidebar Collapse/Expand
+- **Status:** ✅ Done
+- **Files:** `src/pages/PlannerPage.tsx`, `src/index.css`
+- **Changes:** Added collapse button, state management, grid transitions
+- **Result:** Sidebar collapses to ~64px, canvas expands smoothly
+- **Verified:** Working locally and in production
+
+### 6. Node Dragging Smoothness
+- **Status:** ✅ Done
+- **File:** `src/pages/PlannerPage.tsx`
+- **Changes:** Added `handleNodesChange` with `applyNodeChanges`, `displayNodes` state
+- **Result:** Nodes drag smoothly with real-time position updates
+- **Verified:** Working locally
+
+### 7. Draggable Portal Bubbles
+- **Status:** ✅ Done
+- **File:** `src/pages/PlannerPage.tsx`
+- **Changes:** Made portals draggable, preserved positions in displayNodes
+- **Result:** Portal bubbles can be dragged and stay in position (session-based)
+- **Verified:** Working locally
+
 ---
 
 ## 📋 TO IMPLEMENT (In Order)
 
-### Phase 1: Sidebar Improvements
+### Phase 1: Zoom & Navigation
 
-#### Improvement #1: Fix Sidebar Collapse/Expand
-**Goal:** When sidebar collapses, canvas should expand to fill the space
+#### Improvement #8: Adjust Node Click Zoom Behavior
+**Goal:** Make zoom less aggressive when clicking nodes, or disable/provide alternative activation
+
+**Current behavior:** Clicking a node triggers aggressive fitView zoom with 350ms duration
+
+**Options:**
+1. **Reduce zoom aggression** - Increase padding, reduce zoom level
+2. **Disable auto-zoom** - Remove fitView on click entirely
+3. **Alternative activation** - Double-click to zoom, single click just selects
+
+**User preference needed:** Which approach?
 
 **Files to modify:**
-- `src/index.css`
+- `src/pages/PlannerPage.tsx` (useEffect with rfInstance.fitView)
 
-**Changes needed:**
-```css
-.planner-shell {
-  /* Add transition */
-  transition: grid-template-columns 350ms cubic-bezier(0.4, 0, 0.2, 1);
-}
+**Changes for Option 1 (Less aggressive):**
+```typescript
+rfInstance.fitView({
+  nodes: [target],
+  duration: 250,  // Faster
+  padding: 0.8,   // More padding = less zoom
+  maxZoom: 1.2    // Limit zoom level
+});
+```
 
-/* Detect collapsed state and adjust grid */
-.planner-shell:has(.planner-sidebar.collapsed) {
-  grid-template-columns: 64px 1fr;
-}
+**Changes for Option 2 (Disable):**
+```typescript
+// Comment out or remove the entire useEffect block
+```
 
-.planner-sidebar.collapsed {
-  /* Remove fixed width, let grid control it */
-  padding: 8px;
-  overflow: hidden;
-}
+**Changes for Option 3 (Double-click):**
+```typescript
+// Remove auto-zoom useEffect
+// Add onNodeDoubleClick handler instead
+const onNodeDoubleClick = useCallback(
+  (_: React.MouseEvent, node: Node) => {
+    rfInstance?.fitView({ nodes: [node], duration: 250, padding: 0.6 });
+  },
+  [rfInstance]
+);
 ```
 
 **Testing checklist:**
-- [ ] Click collapse button (←)
-- [ ] Sidebar shrinks to ~64px
-- [ ] Canvas expands smoothly to fill space
-- [ ] Click expand button (→)
-- [ ] Sidebar returns to full width
-- [ ] Canvas shrinks smoothly
+- [ ] Click node - appropriate zoom behavior
+- [ ] Selection still works correctly
+- [ ] Portal clicks work as expected
 - [ ] Test works locally
 - [ ] Deploy and test on web
-- [ ] Verify in both Chrome and Safari
 
-**Rollback if fails:** Revert `src/index.css` changes
+**Rollback if fails:** Revert changes
+
+---
+
+#### Improvement #9: Node Context Menu (Right-Click)
+**Goal:** Decide on interaction model for node actions
+
+**Question:** Should nodes have right-click context menus, or keep all controls in sidebar?
+
+**Option A - Sidebar Only (Current):**
+- ✅ Consistent interface
+- ✅ Easier to discover features
+- ✅ Better for mobile (no right-click)
+- ❌ Requires sidebar to be visible
+- ❌ More clicks to perform actions
+
+**Option B - Right-Click Menus:**
+- ✅ Faster access to common actions
+- ✅ Standard desktop pattern
+- ❌ Hidden until discovered
+- ❌ Requires additional UI development
+- ❌ Doesn't work on mobile/tablet
+
+**Option C - Both:**
+- ✅ Best of both worlds
+- ❌ Most development work
+- ❌ Two places to maintain
+
+**User preference needed:** Which option?
+
+**If implementing Option B or C, typical menu items:**
+- Add child node
+- Delete node
+- Duplicate node
+- Add cross-reference
+- Change node type (project/item)
+- View details
 
 ---
 
 ### Phase 2: Visual Feedback
 
-#### Improvement #2: Auto-Save Indicator
+#### Improvement #10: Auto-Save Indicator
 **Goal:** Show visual feedback when saving (e.g., after dragging nodes)
 
 **Files to modify:**
@@ -139,7 +209,7 @@ try {
 
 ### Phase 3: Animation Improvements
 
-#### Improvement #3: Faster Transitions
+#### Improvement #11: Faster Transitions
 **Goal:** Reduce transition duration from 300ms to 180ms for snappier feel
 
 **Files to modify:**
@@ -174,7 +244,7 @@ transition: "all 180ms cubic-bezier(0.4, 0, 0.2, 1)",
 
 ---
 
-#### Improvement #4: Node Hover Effects
+#### Improvement #12: Node Hover Effects
 **Goal:** Add subtle scale effect when hovering nodes
 
 **Files to modify:**
@@ -204,42 +274,9 @@ transform: isHoverRelated ? "scale(1.15)" : isActive ? "scale(1.08)" : "scale(1)
 
 ---
 
-#### Improvement #5: Draggable Portal Bubbles
-**Goal:** Make cross-reference portal bubbles draggable
-
-**Files to modify:**
-- `src/pages/PlannerPage.tsx`
-
-**Changes needed:**
-
-In `basePortalNodes` useMemo:
-```typescript
-style: {
-  // ... existing styles
-  cursor: "grab",
-  transition: "transform 200ms cubic-bezier(0.34, 1.56, 0.64, 1), box-shadow 200ms ease",
-},
-draggable: true,  // Change from false to true
-```
-
-Update `onNodeDragStop` to handle portal positions if needed.
-
-**Testing checklist:**
-- [ ] Can grab and drag portal bubbles
-- [ ] Cursor changes to "grab"
-- [ ] Position persists after drag
-- [ ] Doesn't break tree node dragging
-- [ ] Portal edges update correctly
-- [ ] Test works locally
-- [ ] Deploy and test on web
-
-**Rollback if fails:** Set `draggable: false`
-
----
-
 ## 🚀 Optional: GitHub Actions (Later)
 
-### Improvement #6: Auto-Deploy on Push
+### Improvement #13: Auto-Deploy on Push
 **Goal:** Automatically deploy to Firebase when pushing to main branch
 
 **Files to create:**
@@ -296,13 +333,12 @@ If any of these fail, rollback and reconsider the approach.
 
 ## Current Status
 
-- **Phase 1:** Ready to start (Sidebar collapse fix)
-- **Phase 2:** Pending Phase 1 completion
-- **Phase 3:** Pending Phase 2 completion
+- **Completed:** Items #1-7 ✅
+- **Phase 1 (Zoom & Navigation):** Need user decisions on #8 and #9
+- **Phase 2 (Visual Feedback):** Ready after Phase 1
+- **Phase 3 (Animation):** Ready after Phase 2
 - **Optional:** Can be done anytime after core improvements
 
 ---
 
-**Next Step:** Implement Improvement #1 (Sidebar Collapse Fix)
-
-Ready to begin! 🚀
+**Next Step:** Get user input on zoom behavior (#8) and context menu preference (#9)

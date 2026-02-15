@@ -29,6 +29,9 @@ export default defineConfig({
   define: {
     __BUILD_LABEL__: JSON.stringify(buildLabel),
   },
+  build: {
+    emptyOutDir: false, // Don't empty dist folder (fixes permission issues on mounted folders)
+  },
   plugins: [
     react(),
     VitePWA({
