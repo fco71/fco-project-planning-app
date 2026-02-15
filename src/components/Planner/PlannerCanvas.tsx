@@ -2,7 +2,6 @@
 import React from "react";
 import ReactFlow, {
   Background,
-  MiniMap,
   Controls,
   type Edge,
   type Node,
@@ -81,16 +80,6 @@ export default function PlannerCanvas({
         snapGrid={[16, 16]}
       >
         <Background gap={22} size={1} />
-        <MiniMap
-          nodeStrokeWidth={3}
-          zoomable
-          pannable
-          style={{
-            background: "rgba(11, 16, 25, 0.95)",
-            border: "1px solid rgba(255, 255, 255, 0.12)",
-            borderRadius: "8px",
-          }}
-        />
         <Controls
           showInteractive={false}
           style={{
