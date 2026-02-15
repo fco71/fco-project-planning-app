@@ -5,6 +5,7 @@ import ReactFlow, {
   Position,
   applyNodeChanges,
   type Edge,
+  type EdgeTypes,
   type Node,
   type NodeProps,
   type NodeTypes,
@@ -126,6 +127,11 @@ const PortalNode = memo(function PortalNode({ data }: NodeProps<PortalData>) {
 });
 
 const nodeTypes: NodeTypes = Object.freeze({ portal: PortalNode });
+const edgeTypes: EdgeTypes = Object.freeze({});
+
+function collapsedKeyFromIds(ids: Iterable<string>): string {
+  return Array.from(ids).sort().join("|");
+}
 
 export default function PlannerPage({ user }: PlannerPageProps) {
   const [profileName, setProfileName] = useState("");
@@ -154,6 +160,8 @@ export default function PlannerPage({ user }: PlannerPageProps) {
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [rfInstance, setRfInstance] = useState<ReactFlowInstance | null>(null);
+  const [collapsedHydrated, setCollapsedHydrated] = useState(false);
+  const syncedCollapsedKeyRef = useRef("");
   const lastFocusKeyRef = useRef("");
 
   const nodesById = useMemo(() => new Map(nodes.map((node) => [node.id, node] as const)), [nodes]);
@@ -255,6 +263,8 @@ export default function PlannerPage({ user }: PlannerPageProps) {
 
     setLoading(true);
     setError(null);
+    setCollapsedHydrated(false);
+    syncedCollapsedKeyRef.current = "";
 
     ensureWorkspace()
       .then(() => {
@@ -272,8 +282,17 @@ export default function PlannerPage({ user }: PlannerPageProps) {
               typeof data?.rootNodeId === "string" && data.rootNodeId.trim() ? data.rootNodeId : null;
 
             // Load collapsed nodes from Firebase
-            const savedCollapsedNodes = Array.isArray(data?.collapsedNodes) ? data.collapsedNodes : [];
-            setCollapsedNodeIds(new Set(savedCollapsedNodes));
+            const savedCollapsedNodes = Array.isArray(data?.collapsedNodes)
+              ? data.collapsedNodes.filter((id): id is string => typeof id === "string")
+              : [];
+            const savedSet = new Set(savedCollapsedNodes);
+            const savedKey = collapsedKeyFromIds(savedSet);
+            syncedCollapsedKeyRef.current = savedKey;
+            setCollapsedHydrated(true);
+            setCollapsedNodeIds((prev) => {
+              if (collapsedKeyFromIds(prev) === savedKey) return prev;
+              return savedSet;
+            });
 
             setProfileName(nextProfileName);
             setRootNodeId(nextRootId);
@@ -409,14 +428,24 @@ export default function PlannerPage({ user }: PlannerPageProps) {
 
   // Persist collapsed nodes to Firebase
   useEffect(() => {
-    if (!db || !user.uid) return;
-    const collapsedArray = Array.from(collapsedNodeIds);
-    updateDoc(doc(db, "users", user.uid), {
-      collapsedNodes: collapsedArray,
-    }).catch((err) => {
+    if (!db || !user.uid || !collapsedHydrated) return;
+    const collapsedArray = Array.from(collapsedNodeIds).sort();
+    const nextKey = collapsedArray.join("|");
+    if (syncedCollapsedKeyRef.current === nextKey) return;
+    setDoc(
+      doc(db, "users", user.uid),
+      {
+        collapsedNodes: collapsedArray,
+      },
+      { merge: true }
+    )
+      .then(() => {
+        syncedCollapsedKeyRef.current = nextKey;
+      })
+      .catch((err) => {
       console.error("Failed to save collapsed state:", err);
     });
-  }, [collapsedNodeIds, user.uid]);
+  }, [collapsedHydrated, collapsedNodeIds, user.uid]);
 
   // Filter out descendants of collapsed nodes
   const filteredTreeIds = useMemo(() => {
@@ -483,6 +512,18 @@ export default function PlannerPage({ user }: PlannerPageProps) {
     walk(currentRootId, 0);
     return map;
   }, [childrenByParent, collapsedNodeIds, currentRootId, filteredTreeIds]);
+
+  const resolveNodePosition = useCallback(
+    (nodeId: string) => {
+      const node = nodesById.get(nodeId);
+      const autoPosition = treeLayout.get(nodeId) || { x: 0, y: 0 };
+      return {
+        x: typeof node?.x === "number" ? node.x : autoPosition.x,
+        y: typeof node?.y === "number" ? node.y : autoPosition.y,
+      };
+    },
+    [nodesById, treeLayout]
+  );
 
   const baseTreeNodes = useMemo(() => {
     return filteredTreeIds
@@ -881,7 +922,8 @@ export default function PlannerPage({ user }: PlannerPageProps) {
     const parentId = selectedNodeId || currentRootId || rootNodeId;
     if (!parentId) return;
     const newDoc = doc(collection(db, "users", user.uid, "nodes"));
-    const parent = nodesById.get(parentId);
+    const parentPosition = resolveNodePosition(parentId);
+    const siblingCount = (childrenByParent.get(parentId) || []).length;
     setBusyAction(true);
     setError(null);
     try {
@@ -889,8 +931,8 @@ export default function PlannerPage({ user }: PlannerPageProps) {
         title,
         parentId,
         kind: "item",
-        x: (typeof parent?.x === "number" ? parent.x : 0) + 260,
-        y: (typeof parent?.y === "number" ? parent.y : 0) + 20,
+        x: parentPosition.x + 280,
+        y: parentPosition.y + 20 + siblingCount * 96,
         createdAt: serverTimestamp(),
         updatedAt: serverTimestamp(),
       } satisfies TreeNodeDoc & { createdAt: unknown; updatedAt: unknown });
@@ -901,7 +943,7 @@ export default function PlannerPage({ user }: PlannerPageProps) {
     } finally {
       setBusyAction(false);
     }
-  }, [currentRootId, newChildTitle, nodesById, rootNodeId, selectedNodeId, user.uid]);
+  }, [childrenByParent, currentRootId, newChildTitle, resolveNodePosition, rootNodeId, selectedNodeId, user.uid]);
 
   const renameSelected = useCallback(async () => {
     if (!db || !selectedNodeId) return;
@@ -1057,8 +1099,8 @@ export default function PlannerPage({ user }: PlannerPageProps) {
   const handleContextAddChild = useCallback(
     async (nodeId: string) => {
       if (!db) return;
-      const parent = nodesById.get(nodeId);
-      if (!parent) return;
+      const parentPosition = resolveNodePosition(nodeId);
+      const siblingCount = (childrenByParent.get(nodeId) || []).length;
 
       const newDoc = doc(collection(db, "users", user.uid, "nodes"));
       setBusyAction(true);
@@ -1068,8 +1110,8 @@ export default function PlannerPage({ user }: PlannerPageProps) {
           title: "New Node",
           parentId: nodeId,
           kind: "item",
-          x: (typeof parent.x === "number" ? parent.x : 0) + 260,
-          y: (typeof parent.y === "number" ? parent.y : 0) + 20,
+          x: parentPosition.x + 280,
+          y: parentPosition.y + 20 + siblingCount * 96,
           createdAt: serverTimestamp(),
           updatedAt: serverTimestamp(),
         } satisfies TreeNodeDoc & { createdAt: unknown; updatedAt: unknown });
@@ -1080,7 +1122,7 @@ export default function PlannerPage({ user }: PlannerPageProps) {
         setBusyAction(false);
       }
     },
-    [nodesById, user.uid]
+    [childrenByParent, resolveNodePosition, user.uid]
   );
 
   const handleContextDelete = useCallback(
@@ -1507,8 +1549,9 @@ export default function PlannerPage({ user }: PlannerPageProps) {
           nodes={displayNodes}
           edges={flowEdges}
           nodeTypes={nodeTypes}
+          edgeTypes={edgeTypes}
           fitView
-          fitViewOptions={{ padding: 0.3 }}
+          fitViewOptions={{ padding: 0.3, maxZoom: 1 }}
           nodesConnectable={false}
           onInit={setRfInstance}
           onNodesChange={handleNodesChange}
