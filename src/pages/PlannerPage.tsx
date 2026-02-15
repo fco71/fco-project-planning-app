@@ -378,8 +378,15 @@ export default function PlannerPage({ user }: PlannerPageProps) {
 
   useEffect(() => {
     if (!rootNodeId) return;
-    if (!currentRootId) setCurrentRootId(rootNodeId);
-  }, [rootNodeId, currentRootId]);
+    if (!currentRootId) {
+      setCurrentRootId(rootNodeId);
+      return;
+    }
+    // Recover gracefully if the current view root was deleted or became stale.
+    if (!nodesById.has(currentRootId) && nodesById.has(rootNodeId)) {
+      setCurrentRootId(rootNodeId);
+    }
+  }, [currentRootId, nodesById, rootNodeId]);
 
   useEffect(() => {
     if (selectedNodeId && !nodesById.has(selectedNodeId)) {
@@ -404,6 +411,13 @@ export default function PlannerPage({ user }: PlannerPageProps) {
   const selectedNode = useMemo(
     () => (selectedNodeId ? nodesById.get(selectedNodeId) || null : null),
     [selectedNodeId, nodesById]
+  );
+
+  const applyLocalNodePatch = useCallback(
+    (nodeId: string, patch: Partial<Pick<TreeNode, "title" | "parentId" | "kind" | "x" | "y">>) => {
+      setNodes((prevNodes) => prevNodes.map((entry) => (entry.id === nodeId ? { ...entry, ...patch } : entry)));
+    },
+    []
   );
 
   useEffect(() => {
@@ -1258,16 +1272,20 @@ export default function PlannerPage({ user }: PlannerPageProps) {
           }
         });
         await batch.commit();
+        if (currentRootId && idSet.has(currentRootId)) {
+          setCurrentRootId(fallbackId);
+        }
         if (selectedNodeId === nodeId || idSet.has(selectedNodeId || "")) {
           setSelectedNodeId(fallbackId);
         }
+        setActivePortalRefId(null);
       } catch (actionError: unknown) {
         setError(actionError instanceof Error ? actionError.message : "Could not delete node.");
       } finally {
         setBusyAction(false);
       }
     },
-    [childrenByParent, nodesById, refs, rootNodeId, selectedNodeId, user.uid]
+    [childrenByParent, currentRootId, nodesById, refs, rootNodeId, selectedNodeId, user.uid]
   );
 
   const handleContextDuplicate = useCallback(
@@ -1313,25 +1331,30 @@ export default function PlannerPage({ user }: PlannerPageProps) {
     async (nodeId: string) => {
       if (!db) return;
       const node = nodesById.get(nodeId);
-      if (!node) return;
+      if (!node || node.kind === "root") return;
 
       // Toggle between project and item
-      const newKind = node.kind === "project" ? "item" : "project";
+      const previousKind = node.kind;
+      const newKind = previousKind === "project" ? "item" : "project";
 
       setBusyAction(true);
       setError(null);
+      setSelectedNodeId(nodeId);
+      setActivePortalRefId(null);
+      applyLocalNodePatch(nodeId, { kind: newKind });
       try {
         await updateDoc(doc(db, "users", user.uid, "nodes", nodeId), {
           kind: newKind,
           updatedAt: serverTimestamp(),
         });
       } catch (actionError: unknown) {
+        applyLocalNodePatch(nodeId, { kind: previousKind });
         setError(actionError instanceof Error ? actionError.message : "Could not change node type.");
       } finally {
         setBusyAction(false);
       }
     },
-    [nodesById, user.uid]
+    [applyLocalNodePatch, nodesById, user.uid]
   );
 
   // Keyboard shortcuts
@@ -1738,6 +1761,8 @@ export default function PlannerPage({ user }: PlannerPageProps) {
           onNodeContextMenu={(event, node) => {
             event.preventDefault();
             if (node.id.startsWith("portal:")) return;
+            setSelectedNodeId(node.id);
+            setActivePortalRefId(null);
             setContextMenu({
               x: event.clientX,
               y: event.clientY,

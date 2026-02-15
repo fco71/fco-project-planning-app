@@ -69,17 +69,27 @@ ReactDOM.createRoot(document.getElementById("root")!).render(
   </ErrorBoundary>
 );
 
-registerSW({
-  immediate: true,
-  onOfflineReady() {
-    showPwaToast("Offline ready.");
-    dispatchPwaEvent("planner-offline-ready");
-  },
-  onNeedRefresh() {
-    showPwaToast("Update ready. Reload to refresh.");
-    dispatchPwaEvent("planner-update-ready");
-  },
-});
+const shouldRegisterPwa = import.meta.env.PROD || import.meta.env.VITE_PWA_DEV_ENABLED === "1";
+
+if (shouldRegisterPwa) {
+  registerSW({
+    immediate: true,
+    onOfflineReady() {
+      showPwaToast("Offline ready.");
+      dispatchPwaEvent("planner-offline-ready");
+    },
+    onNeedRefresh() {
+      showPwaToast("Update ready. Reload to refresh.");
+      dispatchPwaEvent("planner-update-ready");
+    },
+  });
+} else if ("serviceWorker" in navigator) {
+  // Prevent stale-dev bundles from previous PWA sessions.
+  navigator.serviceWorker
+    .getRegistrations()
+    .then((registrations) => Promise.all(registrations.map((registration) => registration.unregister())))
+    .catch(() => undefined);
+}
 
 // If React mounted, kill the HTML boot overlay immediately.
 hideBootOverlay();
