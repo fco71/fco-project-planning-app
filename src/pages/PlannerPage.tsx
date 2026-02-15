@@ -142,6 +142,7 @@ export default function PlannerPage({ user }: PlannerPageProps) {
   const [newRefCode, setNewRefCode] = useState("");
   const [attachRefId, setAttachRefId] = useState("");
   const [activePortalRefId, setActivePortalRefId] = useState<string | null>(null);
+  const [collapsedNodeIds, setCollapsedNodeIds] = useState<Set<string>>(new Set());
   const [hoveredNodeId, setHoveredNodeId] = useState<string | null>(null);
   const [hoveredEdgeId, setHoveredEdgeId] = useState<string | null>(null);
   const [contextMenu, setContextMenu] = useState<{ x: number; y: number; nodeId: string } | null>(null);
@@ -386,15 +387,39 @@ export default function PlannerPage({ user }: PlannerPageProps) {
 
   const visibleTreeIdSet = useMemo(() => new Set(visibleTreeIds), [visibleTreeIds]);
 
+  // Filter out descendants of collapsed nodes
+  const filteredTreeIds = useMemo(() => {
+    if (collapsedNodeIds.size === 0) return visibleTreeIds;
+
+    const hiddenIds = new Set<string>();
+    // For each collapsed node, collect all its descendants
+    collapsedNodeIds.forEach((collapsedId) => {
+      const descendants = collectDescendants(collapsedId, childrenByParent);
+      descendants.forEach((id) => {
+        if (id !== collapsedId) {
+          hiddenIds.add(id);
+        }
+      });
+    });
+
+    // Return only nodes that are not hidden
+    return visibleTreeIds.filter((id) => !hiddenIds.has(id));
+  }, [childrenByParent, collapsedNodeIds, visibleTreeIds]);
+
   const treeLayout = useMemo(() => {
     const map = new Map<string, { x: number; y: number }>();
     if (!currentRootId) return map;
     let nextRow = 0;
     const xGap = 280;
     const yGap = 140;
+    const filteredIdSet = new Set(filteredTreeIds);
 
     const walk = (nodeId: string, depth: number): number => {
-      const children = (childrenByParent.get(nodeId) || []).filter((child) => visibleTreeIdSet.has(child));
+      // Don't traverse children of collapsed nodes
+      const isCollapsed = collapsedNodeIds.has(nodeId);
+      const children = isCollapsed
+        ? []
+        : (childrenByParent.get(nodeId) || []).filter((child) => filteredIdSet.has(child));
       if (children.length === 0) {
         const y = nextRow * yGap;
         nextRow += 1;
@@ -409,14 +434,15 @@ export default function PlannerPage({ user }: PlannerPageProps) {
 
     walk(currentRootId, 0);
     return map;
-  }, [childrenByParent, currentRootId, visibleTreeIdSet]);
+  }, [childrenByParent, collapsedNodeIds, currentRootId, filteredTreeIds]);
 
   const baseTreeNodes = useMemo(() => {
-    return visibleTreeIds
+    return filteredTreeIds
       .map((id) => nodesById.get(id))
       .filter((node): node is TreeNode => !!node)
       .map((node) => {
         const childCount = (childrenByParent.get(node.id) || []).length;
+        const isCollapsed = collapsedNodeIds.has(node.id);
         const autoPosition = treeLayout.get(node.id) || { x: 0, y: 0 };
         const position = {
           x: typeof node.x === "number" ? node.x : autoPosition.x,
@@ -429,6 +455,34 @@ export default function PlannerPage({ user }: PlannerPageProps) {
           data: {
             label: (
               <div className="planner-node-label">
+                {childCount > 0 && (
+                  <button
+                    onClick={(e) => {
+                      e.stopPropagation();
+                      toggleNodeCollapse(node.id);
+                    }}
+                    style={{
+                      marginRight: "6px",
+                      padding: "2px 6px",
+                      border: "none",
+                      background: "rgba(255, 255, 255, 0.1)",
+                      color: "rgba(255, 255, 255, 0.8)",
+                      borderRadius: "4px",
+                      cursor: "pointer",
+                      fontSize: "10px",
+                      fontWeight: 700,
+                      transition: "background 150ms ease",
+                    }}
+                    onMouseEnter={(e) => {
+                      (e.target as HTMLButtonElement).style.background = "rgba(255, 255, 255, 0.2)";
+                    }}
+                    onMouseLeave={(e) => {
+                      (e.target as HTMLButtonElement).style.background = "rgba(255, 255, 255, 0.1)";
+                    }}
+                  >
+                    {isCollapsed ? "▶" : "▼"}
+                  </button>
+                )}
                 <span>{node.title}</span>
                 {childCount > 0 ? <span className="planner-node-count">{childCount}</span> : null}
               </div>
@@ -449,12 +503,13 @@ export default function PlannerPage({ user }: PlannerPageProps) {
           selectable: true,
         } as Node;
       });
-  }, [childrenByParent, nodesById, rootNodeId, treeLayout, visibleTreeIds]);
+  }, [childrenByParent, collapsedNodeIds, filteredTreeIds, nodesById, rootNodeId, toggleNodeCollapse, treeLayout]);
 
   const baseTreeEdges = useMemo(() => {
-    return visibleTreeIds
+    const filteredIdSet = new Set(filteredTreeIds);
+    return filteredTreeIds
       .map((id) => nodesById.get(id))
-      .filter((node): node is TreeNode => !!node && !!node.parentId && visibleTreeIdSet.has(node.parentId))
+      .filter((node): node is TreeNode => !!node && !!node.parentId && filteredIdSet.has(node.parentId))
       .map((node) => {
         return {
           id: `edge:${node.parentId}:${node.id}`,
@@ -467,7 +522,7 @@ export default function PlannerPage({ user }: PlannerPageProps) {
           animated: false,
         } as Edge;
       });
-  }, [nodesById, visibleTreeIds, visibleTreeIdSet]);
+  }, [filteredTreeIds, nodesById]);
 
   const treeBounds = useMemo(() => {
     if (baseTreeNodes.length === 0) return { minY: 0, maxX: 0 };
@@ -686,6 +741,19 @@ export default function PlannerPage({ user }: PlannerPageProps) {
     } else if (status === "error") {
       saveTimeoutRef.current = setTimeout(() => setSaveStatus("idle"), 4000);
     }
+  }, []);
+
+  // Toggle node collapse/expand
+  const toggleNodeCollapse = useCallback((nodeId: string) => {
+    setCollapsedNodeIds((prev) => {
+      const next = new Set(prev);
+      if (next.has(nodeId)) {
+        next.delete(nodeId);
+      } else {
+        next.add(nodeId);
+      }
+      return next;
+    });
   }, []);
 
   // Double-click to zoom (less aggressive)
