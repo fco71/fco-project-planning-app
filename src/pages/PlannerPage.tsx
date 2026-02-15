@@ -149,10 +149,12 @@ export default function PlannerPage({ user }: PlannerPageProps) {
   const [renameTitle, setRenameTitle] = useState("");
   const [newRefLabel, setNewRefLabel] = useState("");
   const [newRefCode, setNewRefCode] = useState("");
-  const [attachRefId, setAttachRefId] = useState("");
+  const [refSearchQuery, setRefSearchQuery] = useState("");
   const [editRefId, setEditRefId] = useState("");
   const [editRefLabel, setEditRefLabel] = useState("");
   const [editRefCode, setEditRefCode] = useState("");
+  const [linkNodeQuery, setLinkNodeQuery] = useState("");
+  const [linkTargetNodeId, setLinkTargetNodeId] = useState("");
   const [activePortalRefId, setActivePortalRefId] = useState<string | null>(null);
   const [collapsedNodeIds, setCollapsedNodeIds] = useState<Set<string>>(new Set());
   const [hoveredNodeId, setHoveredNodeId] = useState<string | null>(null);
@@ -914,6 +916,8 @@ export default function PlannerPage({ user }: PlannerPageProps) {
     return refs.filter((ref) => ref.nodeIds.includes(selectedNodeId));
   }, [refs, selectedNodeId]);
 
+  const selectedNodeRefIds = useMemo(() => new Set(selectedNodeRefs.map((ref) => ref.id)), [selectedNodeRefs]);
+
   const refTargetPathsById = useMemo(() => {
     const map = new Map<string, string[]>();
     refs.forEach((ref) => {
@@ -937,10 +941,58 @@ export default function PlannerPage({ user }: PlannerPageProps) {
     [refTargetPathsById]
   );
 
-  const attachableRefs = useMemo(() => {
+  const filteredRefs = useMemo(() => {
+    const queryText = refSearchQuery.trim().toLowerCase();
+    if (!queryText) return refs;
+    return refs.filter((ref) => `${ref.code} ${ref.label}`.toLowerCase().includes(queryText));
+  }, [refSearchQuery, refs]);
+
+  const newRefSuggestions = useMemo(() => {
     if (!selectedNodeId) return [] as CrossRef[];
-    return refs.filter((ref) => !ref.nodeIds.includes(selectedNodeId));
-  }, [refs, selectedNodeId]);
+    const labelQuery = newRefLabel.trim().toLowerCase();
+    const codeQuery = normalizeCode(newRefCode.trim());
+    if (!labelQuery && !newRefCode.trim()) return [] as CrossRef[];
+    return refs
+      .filter((ref) => !ref.nodeIds.includes(selectedNodeId))
+      .filter((ref) => {
+        const labelMatches = labelQuery ? ref.label.toLowerCase().includes(labelQuery) : false;
+        const codeMatches = newRefCode.trim().length > 0 ? ref.code.includes(codeQuery) : false;
+        return labelMatches || codeMatches;
+      })
+      .slice(0, 6);
+  }, [newRefCode, newRefLabel, refs, selectedNodeId]);
+
+  const editableRef = useMemo(() => {
+    if (!editRefId) return null;
+    return refs.find((ref) => ref.id === editRefId) || null;
+  }, [editRefId, refs]);
+
+  const editableRefTargets = useMemo(() => {
+    if (!editableRef) return [] as Array<{ id: string; path: string }>;
+    return editableRef.nodeIds
+      .map((id) => {
+        if (!nodesById.has(id)) return null;
+        return { id, path: buildNodePath(id, nodesById) };
+      })
+      .filter((entry): entry is { id: string; path: string } => !!entry)
+      .sort((a, b) => a.path.localeCompare(b.path));
+  }, [editableRef, nodesById]);
+
+  const linkableNodeOptions = useMemo(() => {
+    if (!editableRef) return [] as Array<{ id: string; path: string }>;
+    const linkedIds = new Set(editableRef.nodeIds);
+    const queryText = linkNodeQuery.trim().toLowerCase();
+    const options = nodes
+      .filter((node) => !linkedIds.has(node.id))
+      .map((node) => ({
+        id: node.id,
+        path: buildNodePath(node.id, nodesById),
+      }));
+    const filtered = queryText
+      ? options.filter((entry) => entry.path.toLowerCase().includes(queryText) || entry.id.toLowerCase().includes(queryText))
+      : options;
+    return filtered.sort((a, b) => a.path.localeCompare(b.path)).slice(0, 120);
+  }, [editableRef, linkNodeQuery, nodes, nodesById]);
 
   const activePortalRef = useMemo(() => {
     if (!activePortalRefId) return null;
@@ -1056,22 +1108,68 @@ export default function PlannerPage({ user }: PlannerPageProps) {
     }
   }, [childrenByParent, currentRootId, nodesById, refs, rootNodeId, selectedNodeId, user.uid]);
 
+  const linkCrossRefToNode = useCallback(
+    async (refId: string, nodeId: string) => {
+      if (!db) return;
+      setBusyAction(true);
+      setError(null);
+      try {
+        await updateDoc(doc(db, "users", user.uid, "crossRefs", refId), {
+          nodeIds: arrayUnion(nodeId),
+          updatedAt: serverTimestamp(),
+        });
+        const linked = refs.find((entry) => entry.id === refId);
+        if (linked) {
+          setEditRefId(linked.id);
+          setEditRefLabel(linked.label);
+          setEditRefCode(linked.code);
+        }
+        setActivePortalRefId(refId);
+        setLinkNodeQuery("");
+        setLinkTargetNodeId("");
+      } catch (actionError: unknown) {
+        setError(actionError instanceof Error ? actionError.message : "Could not link bubble to node.");
+      } finally {
+        setBusyAction(false);
+      }
+    },
+    [refs, user.uid]
+  );
+
   const createCrossRef = useCallback(async () => {
     if (!db || !selectedNodeId) return;
     const label = newRefLabel.trim();
     if (!label) return;
     const code = newRefCode.trim() ? normalizeCode(newRefCode) : initialsFromLabel(label);
+    const existingExact = refs.find(
+      (ref) => ref.code === code && ref.label.trim().toLowerCase() === label.toLowerCase()
+    );
     setBusyAction(true);
     setError(null);
     try {
-      const newDoc = doc(collection(db, "users", user.uid, "crossRefs"));
-      await setDoc(doc(db, "users", user.uid, "crossRefs", newDoc.id), {
-        label,
-        code,
-        nodeIds: [selectedNodeId],
-        createdAt: serverTimestamp(),
-        updatedAt: serverTimestamp(),
-      } satisfies CrossRefDoc & { createdAt: unknown; updatedAt: unknown });
+      if (existingExact) {
+        await updateDoc(doc(db, "users", user.uid, "crossRefs", existingExact.id), {
+          nodeIds: arrayUnion(selectedNodeId),
+          updatedAt: serverTimestamp(),
+        });
+        setEditRefId(existingExact.id);
+        setEditRefLabel(existingExact.label);
+        setEditRefCode(existingExact.code);
+        setActivePortalRefId(existingExact.id);
+      } else {
+        const newDoc = doc(collection(db, "users", user.uid, "crossRefs"));
+        await setDoc(doc(db, "users", user.uid, "crossRefs", newDoc.id), {
+          label,
+          code,
+          nodeIds: [selectedNodeId],
+          createdAt: serverTimestamp(),
+          updatedAt: serverTimestamp(),
+        } satisfies CrossRefDoc & { createdAt: unknown; updatedAt: unknown });
+        setEditRefId(newDoc.id);
+        setEditRefLabel(label);
+        setEditRefCode(code);
+        setActivePortalRefId(newDoc.id);
+      }
       setNewRefLabel("");
       setNewRefCode("");
     } catch (actionError: unknown) {
@@ -1079,24 +1177,7 @@ export default function PlannerPage({ user }: PlannerPageProps) {
     } finally {
       setBusyAction(false);
     }
-  }, [newRefCode, newRefLabel, selectedNodeId, user.uid]);
-
-  const attachCrossRef = useCallback(async () => {
-    if (!db || !selectedNodeId || !attachRefId) return;
-    setBusyAction(true);
-    setError(null);
-    try {
-      await updateDoc(doc(db, "users", user.uid, "crossRefs", attachRefId), {
-        nodeIds: arrayUnion(selectedNodeId),
-        updatedAt: serverTimestamp(),
-      });
-      setAttachRefId("");
-    } catch (actionError: unknown) {
-      setError(actionError instanceof Error ? actionError.message : "Could not attach cross-reference.");
-    } finally {
-      setBusyAction(false);
-    }
-  }, [attachRefId, selectedNodeId, user.uid]);
+  }, [newRefCode, newRefLabel, refs, selectedNodeId, user.uid]);
 
   const saveCrossRefEdits = useCallback(async () => {
     if (!db || !editRefId) return;
@@ -1135,6 +1216,8 @@ export default function PlannerPage({ user }: PlannerPageProps) {
       setEditRefId("");
       setEditRefLabel("");
       setEditRefCode("");
+      setLinkNodeQuery("");
+      setLinkTargetNodeId("");
     } catch (actionError: unknown) {
       setError(actionError instanceof Error ? actionError.message : "Could not delete bubble.");
     } finally {
@@ -1149,6 +1232,8 @@ export default function PlannerPage({ user }: PlannerPageProps) {
       const ref = refs.find((entry) => entry.id === refId);
       setEditRefLabel(ref?.label || "");
       setEditRefCode(ref?.code || "");
+      setLinkNodeQuery("");
+      setLinkTargetNodeId("");
     },
     [refs]
   );
@@ -1159,7 +1244,15 @@ export default function PlannerPage({ user }: PlannerPageProps) {
     setEditRefId("");
     setEditRefLabel("");
     setEditRefCode("");
+    setLinkNodeQuery("");
+    setLinkTargetNodeId("");
   }, [editRefId, refs]);
+
+  useEffect(() => {
+    if (!linkTargetNodeId) return;
+    if (linkableNodeOptions.some((entry) => entry.id === linkTargetNodeId)) return;
+    setLinkTargetNodeId("");
+  }, [linkTargetNodeId, linkableNodeOptions]);
 
   const detachCrossRef = useCallback(
     async (refId: string, nodeId: string) => {
@@ -1618,19 +1711,26 @@ export default function PlannerPage({ user }: PlannerPageProps) {
             Create bubble and attach to selected
           </button>
 
-          <div className="planner-inline-buttons">
-            <select value={attachRefId} onChange={(event) => setAttachRefId(event.target.value)}>
-              <option value="">Attach existing bubble...</option>
-              {attachableRefs.map((ref) => (
-                <option key={ref.id} value={ref.id}>
-                  {`${ref.code} - ${ref.label} (${ref.nodeIds.length} link${ref.nodeIds.length !== 1 ? "s" : ""})`}
-                </option>
-              ))}
-            </select>
-            <button onClick={attachCrossRef} disabled={busyAction || !selectedNodeId || !attachRefId}>
-              Attach
-            </button>
-          </div>
+          {newRefSuggestions.length > 0 ? (
+            <>
+              <div className="planner-row-label">Use an existing bubble instead</div>
+              <div className="planner-chip-list">
+                {newRefSuggestions.map((ref) => (
+                  <button
+                    key={ref.id}
+                    className="chip"
+                    onClick={() => {
+                      if (!selectedNodeId) return;
+                      linkCrossRefToNode(ref.id, selectedNodeId);
+                    }}
+                    title={describeRefTargets(ref, 4)}
+                  >
+                    {`${ref.code} - ${ref.label}`}
+                  </button>
+                ))}
+              </div>
+            </>
+          ) : null}
 
           <div className="planner-row-label">Bubbles on selected node</div>
           <div className="planner-chip-list">
@@ -1655,17 +1755,46 @@ export default function PlannerPage({ user }: PlannerPageProps) {
             )}
           </div>
 
-          <div className="planner-row-label">All bubbles and linked nodes</div>
+          <div className="planner-row-label">Bubble library</div>
+          <input
+            value={refSearchQuery}
+            onChange={(event) => setRefSearchQuery(event.target.value)}
+            placeholder="Search bubbles by code or name..."
+          />
           <div className="planner-reference-list">
-            {refs.length === 0 ? (
-              <span className="planner-subtle">No bubbles created yet.</span>
+            {filteredRefs.length === 0 ? (
+              <span className="planner-subtle">
+                {refs.length === 0 ? "No bubbles created yet." : "No bubbles match this search."}
+              </span>
             ) : (
-              refs.map((ref) => (
-                <div key={ref.id} className="planner-reference-item">
-                  <button onClick={() => selectRefForEditing(ref.id)}>{`${ref.code} - ${ref.label}`}</button>
-                  <div className="planner-reference-preview">{describeRefTargets(ref, 2)}</div>
-                </div>
-              ))
+              filteredRefs.map((ref) => {
+                const linkedOnSelected = selectedNodeId ? selectedNodeRefIds.has(ref.id) : false;
+                return (
+                  <div key={ref.id} className="planner-reference-item">
+                    <button onClick={() => selectRefForEditing(ref.id)}>{`${ref.code} - ${ref.label}`}</button>
+                    <div className="planner-reference-preview">{describeRefTargets(ref, 2)}</div>
+                    <div className="planner-reference-actions">
+                      <button
+                        onClick={() => {
+                          if (!selectedNodeId) return;
+                          if (linkedOnSelected) {
+                            detachCrossRef(ref.id, selectedNodeId);
+                          } else {
+                            linkCrossRefToNode(ref.id, selectedNodeId);
+                          }
+                        }}
+                        disabled={busyAction || !selectedNodeId}
+                      >
+                        {!selectedNodeId
+                          ? "Select node first"
+                          : linkedOnSelected
+                            ? "Unlink selected"
+                            : "Link to selected"}
+                      </button>
+                    </div>
+                  </div>
+                );
+              })
             )}
           </div>
 
@@ -1674,11 +1803,16 @@ export default function PlannerPage({ user }: PlannerPageProps) {
             value={editRefId}
             onChange={(event) => {
               const refId = event.target.value;
-              setEditRefId(refId);
-              const ref = refs.find((entry) => entry.id === refId);
-              setEditRefLabel(ref?.label || "");
-              setEditRefCode(ref?.code || "");
-              if (refId) setActivePortalRefId(refId);
+              if (!refId) {
+                setEditRefId("");
+                setEditRefLabel("");
+                setEditRefCode("");
+                setActivePortalRefId(null);
+                setLinkNodeQuery("");
+                setLinkTargetNodeId("");
+                return;
+              }
+              selectRefForEditing(refId);
             }}
           >
             <option value="">Select bubble to edit...</option>
@@ -1707,6 +1841,55 @@ export default function PlannerPage({ user }: PlannerPageProps) {
             <button className="danger" onClick={deleteCrossRefBubble} disabled={busyAction || !editRefId}>
               Delete bubble
             </button>
+          </div>
+
+          <div className="planner-row-label">Link this bubble to any node</div>
+          <input
+            value={linkNodeQuery}
+            onChange={(event) => setLinkNodeQuery(event.target.value)}
+            placeholder="Search node path across all projects..."
+            disabled={!editRefId}
+          />
+          <select
+            value={linkTargetNodeId}
+            onChange={(event) => setLinkTargetNodeId(event.target.value)}
+            disabled={!editRefId}
+          >
+            <option value="">
+              {editRefId ? "Choose a node to link..." : "Select a bubble first..."}
+            </option>
+            {linkableNodeOptions.map((entry) => (
+              <option key={entry.id} value={entry.id}>
+                {entry.path}
+              </option>
+            ))}
+          </select>
+          <button
+            onClick={() => {
+              if (!editRefId || !linkTargetNodeId) return;
+              linkCrossRefToNode(editRefId, linkTargetNodeId);
+            }}
+            disabled={busyAction || !editRefId || !linkTargetNodeId}
+          >
+            Link node
+          </button>
+
+          <div className="planner-row-label">Linked nodes in this bubble</div>
+          <div className="planner-reference-list">
+            {!editRefId ? (
+              <span className="planner-subtle">Select a bubble to manage its links.</span>
+            ) : editableRefTargets.length === 0 ? (
+              <span className="planner-subtle">This bubble is not linked to any node yet.</span>
+            ) : (
+              editableRefTargets.map((entry) => (
+                <div key={entry.id} className="planner-reference-target-item">
+                  <button onClick={() => jumpToReferencedNode(entry.id)}>{entry.path}</button>
+                  <button className="danger" onClick={() => detachCrossRef(editRefId, entry.id)} disabled={busyAction}>
+                    Unlink
+                  </button>
+                </div>
+              ))
+            )}
           </div>
         </div>
 

@@ -367,12 +367,33 @@ textarea {
   gap: 4px;
 }
 
+.planner-reference-actions {
+  display: flex;
+  gap: 6px;
+}
+
+.planner-reference-actions button {
+  flex: 1;
+}
+
 .planner-reference-preview {
   font-size: 10px;
   line-height: 1.25;
   color: rgba(229, 236, 246, 0.72);
   overflow-wrap: anywhere;
   padding: 0 2px;
+}
+
+.planner-reference-target-item {
+  display: grid;
+  grid-template-columns: 1fr auto;
+  gap: 6px;
+  align-items: center;
+}
+
+.planner-reference-target-item button:first-child {
+  width: 100%;
+  text-align: left;
 }
 
 .planner-error {
