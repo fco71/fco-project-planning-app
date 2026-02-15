@@ -178,6 +178,11 @@ textarea {
   display: grid;
   grid-template-columns: minmax(300px, 360px) 1fr;
   min-height: 0;
+  transition: grid-template-columns 350ms cubic-bezier(0.4, 0, 0.2, 1);
+}
+
+.planner-shell:has(.planner-sidebar.collapsed) {
+  grid-template-columns: 64px 1fr;
 }
 
 .planner-sidebar {
@@ -189,6 +194,11 @@ textarea {
   display: flex;
   flex-direction: column;
   gap: 10px;
+}
+
+.planner-sidebar.collapsed {
+  padding: 8px;
+  overflow: hidden;
 }
 
 .planner-panel-block {
