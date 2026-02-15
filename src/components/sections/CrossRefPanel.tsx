@@ -60,7 +60,7 @@ export default function CrossRefPanel({
               createCrossRef();
             }
           }}
-          placeholder="New bubble name (e.g., Mario Pinto)"
+          placeholder="New bubble name (e.g., Vendor A)"
         />
         <input
           value={newRefCode}
@@ -71,7 +71,7 @@ export default function CrossRefPanel({
               createCrossRef();
             }
           }}
-          placeholder="Code (optional, e.g., MP)"
+          placeholder="Code (optional, e.g., VA)"
         />
         <button
           onClick={createCrossRef}

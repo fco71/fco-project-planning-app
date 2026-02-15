@@ -16,6 +16,7 @@ import {
   arrayRemove,
   arrayUnion,
   collection,
+  deleteDoc,
   doc,
   getDoc,
   onSnapshot,
@@ -149,12 +150,15 @@ export default function PlannerPage({ user }: PlannerPageProps) {
   const [newRefLabel, setNewRefLabel] = useState("");
   const [newRefCode, setNewRefCode] = useState("");
   const [attachRefId, setAttachRefId] = useState("");
+  const [editRefId, setEditRefId] = useState("");
+  const [editRefLabel, setEditRefLabel] = useState("");
+  const [editRefCode, setEditRefCode] = useState("");
   const [activePortalRefId, setActivePortalRefId] = useState<string | null>(null);
   const [collapsedNodeIds, setCollapsedNodeIds] = useState<Set<string>>(new Set());
   const [hoveredNodeId, setHoveredNodeId] = useState<string | null>(null);
   const [hoveredEdgeId, setHoveredEdgeId] = useState<string | null>(null);
   const [contextMenu, setContextMenu] = useState<{ x: number; y: number; nodeId: string } | null>(null);
-  const [saveStatus, setSaveStatus] = useState<"idle" | "saving" | "saved" | "error">("idle");
+  const [saveStatus, setSaveStatus] = useState<"idle" | "error">("idle");
   const saveTimeoutRef = useRef<NodeJS.Timeout | null>(null);
   const [busyAction, setBusyAction] = useState(false);
   const [loading, setLoading] = useState(true);
@@ -539,6 +543,7 @@ export default function PlannerPage({ user }: PlannerPageProps) {
         };
         const isRoot = node.id === rootNodeId;
         const isSearchMatch = searchMatchingIds.has(node.id);
+        const isProject = node.kind === "project";
         return {
           id: node.id,
           position,
@@ -574,6 +579,7 @@ export default function PlannerPage({ user }: PlannerPageProps) {
                   </button>
                 )}
                 <span>{node.title}</span>
+                {!isRoot ? <span className={`planner-kind-badge ${node.kind}`}>{node.kind}</span> : null}
                 {childCount > 0 ? <span className="planner-node-count">{childCount}</span> : null}
               </div>
             ),
@@ -583,6 +589,8 @@ export default function PlannerPage({ user }: PlannerPageProps) {
               ? "2px solid rgba(34, 197, 94, 0.9)"
               : isRoot
                 ? "2px solid rgba(253, 228, 129, 0.9)"
+                : isProject
+                  ? "1px solid rgba(96, 165, 250, 0.6)"
                 : "1px solid rgba(255, 255, 255, 0.18)",
             borderRadius: 14,
             width: 260,
@@ -591,6 +599,8 @@ export default function PlannerPage({ user }: PlannerPageProps) {
               ? "rgba(22, 101, 52, 0.25)"
               : isRoot
                 ? "rgba(58, 44, 14, 0.92)"
+                : isProject
+                  ? "rgba(16, 31, 62, 0.95)"
                 : "rgba(16, 20, 28, 0.94)",
             color: "rgba(250, 252, 255, 0.95)",
             boxShadow: isSearchMatch
@@ -679,10 +689,8 @@ export default function PlannerPage({ user }: PlannerPageProps) {
   }, [treeBounds.maxX, treeBounds.minY, visiblePortals]);
 
   const basePortalEdges = useMemo(() => {
-    return visiblePortals
-      .map((entry) => {
-        const source = entry.inView[0];
-        if (!source) return null;
+    return visiblePortals.flatMap((entry) =>
+      entry.inView.map((source) => {
         return {
           id: `portal-edge:${entry.ref.id}:${source}`,
           source,
@@ -695,7 +703,7 @@ export default function PlannerPage({ user }: PlannerPageProps) {
           animated: false,
         } as Edge;
       })
-      .filter((edge): edge is Edge => !!edge);
+    );
   }, [visiblePortals]);
 
   const baseEdges = useMemo(() => [...baseTreeEdges, ...basePortalEdges], [basePortalEdges, baseTreeEdges]);
@@ -743,9 +751,16 @@ export default function PlannerPage({ user }: PlannerPageProps) {
     return ids;
   }, [hoverIndex.nodeToEdges, hoveredEdgeId, hoveredNodeId]);
 
+  const activeLinkedNodeIds = useMemo(() => {
+    if (!activePortalRefId) return new Set<string>();
+    const activeRef = refs.find((ref) => ref.id === activePortalRefId);
+    return new Set(activeRef?.nodeIds || []);
+  }, [activePortalRefId, refs]);
+
   const flowNodes = useMemo(() => {
     const treeNodes = baseTreeNodes.map((node) => {
       const isSelected = selectedNodeId === node.id;
+      const isActivePortalTarget = activeLinkedNodeIds.has(node.id);
       const isHoverRelated = hoverNodeIds.has(node.id);
       return {
         ...node,
@@ -753,9 +768,13 @@ export default function PlannerPage({ user }: PlannerPageProps) {
           ...(node.style || {}),
           border: isSelected
             ? "2px solid rgba(253, 224, 71, 0.95)"
+            : isActivePortalTarget
+              ? "2px solid rgba(251, 146, 60, 0.85)"
             : (node.style as React.CSSProperties)?.border,
           boxShadow: isSelected
             ? "0 0 0 3px rgba(253, 224, 71, 0.18), 0 14px 32px rgba(0,0,0,0.45)"
+            : isActivePortalTarget
+              ? "0 0 0 2px rgba(251,146,60,0.2), 0 14px 30px rgba(0,0,0,0.42)"
             : isHoverRelated
               ? "0 0 0 2px rgba(125,211,252,0.22), 0 14px 30px rgba(0,0,0,0.42)"
               : (node.style as React.CSSProperties)?.boxShadow,
@@ -785,7 +804,7 @@ export default function PlannerPage({ user }: PlannerPageProps) {
     });
 
     return [...treeNodes, ...portalNodes];
-  }, [activePortalRefId, basePortalNodes, baseTreeNodes, hoverNodeIds, hoveredEdgeId, hoveredNodeId, selectedNodeId]);
+  }, [activeLinkedNodeIds, activePortalRefId, basePortalNodes, baseTreeNodes, hoverNodeIds, hoveredEdgeId, hoveredNodeId, selectedNodeId]);
 
   const flowEdges = useMemo(() => {
     return baseEdges.map((edge) => {
@@ -832,15 +851,17 @@ export default function PlannerPage({ user }: PlannerPageProps) {
     setDisplayNodes((nds) => applyNodeChanges(changes, nds));
   }, []);
 
-  // Auto-save indicator helper
-  const showSaveIndicator = useCallback((status: "saving" | "saved" | "error") => {
+  // Save warning helper (successful autosaves are silent).
+  const showSaveError = useCallback(() => {
     if (saveTimeoutRef.current) clearTimeout(saveTimeoutRef.current);
-    setSaveStatus(status);
-    if (status === "saved") {
-      saveTimeoutRef.current = setTimeout(() => setSaveStatus("idle"), 2000);
-    } else if (status === "error") {
-      saveTimeoutRef.current = setTimeout(() => setSaveStatus("idle"), 4000);
-    }
+    setSaveStatus("error");
+    saveTimeoutRef.current = setTimeout(() => setSaveStatus("idle"), 4000);
+  }, []);
+
+  useEffect(() => {
+    return () => {
+      if (saveTimeoutRef.current) clearTimeout(saveTimeoutRef.current);
+    };
   }, []);
 
   // Double-click to zoom (less aggressive)
@@ -878,6 +899,29 @@ export default function PlannerPage({ user }: PlannerPageProps) {
     if (!selectedNodeId) return [] as CrossRef[];
     return refs.filter((ref) => ref.nodeIds.includes(selectedNodeId));
   }, [refs, selectedNodeId]);
+
+  const refTargetPathsById = useMemo(() => {
+    const map = new Map<string, string[]>();
+    refs.forEach((ref) => {
+      const paths = ref.nodeIds
+        .map((id) => (nodesById.has(id) ? buildNodePath(id, nodesById) : null))
+        .filter((path): path is string => !!path)
+        .sort((a, b) => a.localeCompare(b));
+      map.set(ref.id, paths);
+    });
+    return map;
+  }, [nodesById, refs]);
+
+  const describeRefTargets = useCallback(
+    (ref: CrossRef, limit = 2) => {
+      const paths = refTargetPathsById.get(ref.id) || [];
+      if (paths.length === 0) return "No linked nodes yet.";
+      const preview = paths.slice(0, limit).join(" | ");
+      const remaining = paths.length - limit;
+      return remaining > 0 ? `${preview} +${remaining} more` : preview;
+    },
+    [refTargetPathsById]
+  );
 
   const attachableRefs = useMemo(() => {
     if (!selectedNodeId) return [] as CrossRef[];
@@ -1040,6 +1084,69 @@ export default function PlannerPage({ user }: PlannerPageProps) {
     }
   }, [attachRefId, selectedNodeId, user.uid]);
 
+  const saveCrossRefEdits = useCallback(async () => {
+    if (!db || !editRefId) return;
+    const label = editRefLabel.trim();
+    if (!label) {
+      setError("Bubble name is required.");
+      return;
+    }
+    const code = editRefCode.trim() ? normalizeCode(editRefCode) : initialsFromLabel(label);
+    setBusyAction(true);
+    setError(null);
+    try {
+      await updateDoc(doc(db, "users", user.uid, "crossRefs", editRefId), {
+        label,
+        code,
+        updatedAt: serverTimestamp(),
+      });
+      setEditRefCode(code);
+      setActivePortalRefId(editRefId);
+    } catch (actionError: unknown) {
+      setError(actionError instanceof Error ? actionError.message : "Could not update bubble.");
+    } finally {
+      setBusyAction(false);
+    }
+  }, [editRefCode, editRefId, editRefLabel, user.uid]);
+
+  const deleteCrossRefBubble = useCallback(async () => {
+    if (!db || !editRefId) return;
+    setBusyAction(true);
+    setError(null);
+    try {
+      await deleteDoc(doc(db, "users", user.uid, "crossRefs", editRefId));
+      if (activePortalRefId === editRefId) {
+        setActivePortalRefId(null);
+      }
+      setEditRefId("");
+      setEditRefLabel("");
+      setEditRefCode("");
+    } catch (actionError: unknown) {
+      setError(actionError instanceof Error ? actionError.message : "Could not delete bubble.");
+    } finally {
+      setBusyAction(false);
+    }
+  }, [activePortalRefId, editRefId, user.uid]);
+
+  const selectRefForEditing = useCallback(
+    (refId: string) => {
+      setActivePortalRefId(refId);
+      setEditRefId(refId);
+      const ref = refs.find((entry) => entry.id === refId);
+      setEditRefLabel(ref?.label || "");
+      setEditRefCode(ref?.code || "");
+    },
+    [refs]
+  );
+
+  useEffect(() => {
+    if (!editRefId) return;
+    if (refs.some((ref) => ref.id === editRefId)) return;
+    setEditRefId("");
+    setEditRefLabel("");
+    setEditRefCode("");
+  }, [editRefId, refs]);
+
   const detachCrossRef = useCallback(
     async (refId: string, nodeId: string) => {
       if (!db) return;
@@ -1078,21 +1185,19 @@ export default function PlannerPage({ user }: PlannerPageProps) {
         return;
       }
 
-      // Handle regular node position saves
-      showSaveIndicator("saving");
+      // Save regular node positions silently unless there is an error.
       try {
         await updateDoc(doc(db, "users", user.uid, "nodes", node.id), {
           x: node.position.x,
           y: node.position.y,
           updatedAt: serverTimestamp(),
         });
-        showSaveIndicator("saved");
       } catch (actionError: unknown) {
-        showSaveIndicator("error");
+        showSaveError();
         setError(actionError instanceof Error ? actionError.message : "Could not save node position.");
       }
     },
-    [showSaveIndicator, user.uid]
+    [showSaveError, user.uid]
   );
 
   // Context menu handlers
@@ -1306,26 +1411,15 @@ export default function PlannerPage({ user }: PlannerPageProps) {
   return (
     <div className={`planner-shell ${sidebarCollapsed ? "sidebar-collapsed" : ""}`}>
       <aside className={`planner-sidebar ${sidebarCollapsed ? "collapsed" : ""}`}>
+        <div className="planner-sidebar-header">
         <button
           onClick={() => setSidebarCollapsed(!sidebarCollapsed)}
           className="planner-sidebar-toggle"
-          style={{
-            position: "absolute",
-            top: "12px",
-            right: "12px",
-            zIndex: 10,
-            padding: "6px 10px",
-            border: "1px solid rgba(255, 255, 255, 0.16)",
-            background: "rgba(255, 255, 255, 0.07)",
-            color: "rgba(245, 248, 255, 0.94)",
-            borderRadius: "8px",
-            cursor: "pointer",
-            fontSize: "14px",
-            fontWeight: 700,
-          }}
+          aria-label={sidebarCollapsed ? "Expand sidebar" : "Collapse sidebar"}
         >
           {sidebarCollapsed ? "→" : "←"}
         </button>
+        </div>
 
         {sidebarCollapsed ? (
           <div style={{
@@ -1334,7 +1428,7 @@ export default function PlannerPage({ user }: PlannerPageProps) {
             alignItems: "center",
             justifyContent: "center",
             height: "100%",
-            paddingTop: "60px",
+            paddingTop: "12px",
           }}>
             <div style={{
               fontSize: "10px",
@@ -1430,6 +1524,16 @@ export default function PlannerPage({ user }: PlannerPageProps) {
             <>
               <div className="planner-row-label">Path</div>
               <div className="planner-path">{buildNodePath(selectedNode.id, nodesById)}</div>
+              <div className="planner-row-label">Type</div>
+              <div className="planner-inline-buttons">
+                <button
+                  onClick={() => handleContextChangeType(selectedNode.id)}
+                  disabled={busyAction || selectedNode.kind === "root"}
+                >
+                  {selectedNode.kind === "project" ? "Set as item" : selectedNode.kind === "item" ? "Set as project" : "Root"}
+                </button>
+                <button disabled>{selectedNode.kind}</button>
+              </div>
               <input value={renameTitle} onChange={(event) => setRenameTitle(event.target.value)} />
               <div className="planner-inline-buttons">
                 <button onClick={renameSelected} disabled={busyAction || renameTitle.trim().length === 0}>
@@ -1472,17 +1576,20 @@ export default function PlannerPage({ user }: PlannerPageProps) {
         <div className="planner-panel-block">
           <h3>Cross-Reference Bubbles</h3>
           <p className="planner-subtle">
-            Use these for entities shared across branches (e.g., investor Mario Pinto / MP).
+            Use these for entities shared across branches (e.g., Vendor / VN or Partner / PT).
+          </p>
+          <p className="planner-subtle">
+            Anchor node: <strong>{selectedNode ? buildNodePath(selectedNode.id, nodesById) : "Select a node first"}</strong>
           </p>
           <input
             value={newRefLabel}
             onChange={(event) => setNewRefLabel(event.target.value)}
-            placeholder="Reference name"
+            placeholder="Reference name (e.g., Vendor, Investor, Partner)"
           />
           <input
             value={newRefCode}
             onChange={(event) => setNewRefCode(event.target.value)}
-            placeholder="Bubble code (optional, e.g., MP)"
+            placeholder="Bubble code (optional, e.g., VN)"
           />
           <button onClick={createCrossRef} disabled={busyAction || !selectedNodeId || newRefLabel.trim().length === 0}>
             Create bubble and attach to selected
@@ -1493,7 +1600,7 @@ export default function PlannerPage({ user }: PlannerPageProps) {
               <option value="">Attach existing bubble...</option>
               {attachableRefs.map((ref) => (
                 <option key={ref.id} value={ref.id}>
-                  {ref.code} - {ref.label}
+                  {`${ref.code} - ${ref.label} (${ref.nodeIds.length} link${ref.nodeIds.length !== 1 ? "s" : ""})`}
                 </option>
               ))}
             </select>
@@ -1510,8 +1617,9 @@ export default function PlannerPage({ user }: PlannerPageProps) {
               selectedNodeRefs.map((ref) => (
                 <div key={ref.id} className="chip with-action">
                   <button
-                    onClick={() => setActivePortalRefId(ref.id)}
-                  >{`${ref.code} - ${ref.label}`}</button>
+                    onClick={() => selectRefForEditing(ref.id)}
+                    title={describeRefTargets(ref, 4)}
+                  >{`${ref.code} - ${ref.label} (${ref.nodeIds.length})`}</button>
                   <button
                     className="chip-action"
                     onClick={() => detachCrossRef(ref.id, selectedNodeId)}
@@ -1522,6 +1630,60 @@ export default function PlannerPage({ user }: PlannerPageProps) {
                 </div>
               ))
             )}
+          </div>
+
+          <div className="planner-row-label">All bubbles and linked nodes</div>
+          <div className="planner-reference-list">
+            {refs.length === 0 ? (
+              <span className="planner-subtle">No bubbles created yet.</span>
+            ) : (
+              refs.map((ref) => (
+                <div key={ref.id} className="planner-reference-item">
+                  <button onClick={() => selectRefForEditing(ref.id)}>{`${ref.code} - ${ref.label}`}</button>
+                  <div className="planner-reference-preview">{describeRefTargets(ref, 2)}</div>
+                </div>
+              ))
+            )}
+          </div>
+
+          <div className="planner-row-label">Edit bubble</div>
+          <select
+            value={editRefId}
+            onChange={(event) => {
+              const refId = event.target.value;
+              setEditRefId(refId);
+              const ref = refs.find((entry) => entry.id === refId);
+              setEditRefLabel(ref?.label || "");
+              setEditRefCode(ref?.code || "");
+              if (refId) setActivePortalRefId(refId);
+            }}
+          >
+            <option value="">Select bubble to edit...</option>
+            {refs.map((ref) => (
+              <option key={ref.id} value={ref.id}>
+                {`${ref.code} - ${ref.label}`}
+              </option>
+            ))}
+          </select>
+          <input
+            value={editRefLabel}
+            onChange={(event) => setEditRefLabel(event.target.value)}
+            placeholder="Bubble name"
+            disabled={!editRefId}
+          />
+          <input
+            value={editRefCode}
+            onChange={(event) => setEditRefCode(event.target.value)}
+            placeholder="Bubble code"
+            disabled={!editRefId}
+          />
+          <div className="planner-inline-buttons">
+            <button onClick={saveCrossRefEdits} disabled={busyAction || !editRefId || editRefLabel.trim().length === 0}>
+              Save bubble
+            </button>
+            <button className="danger" onClick={deleteCrossRefBubble} disabled={busyAction || !editRefId}>
+              Delete bubble
+            </button>
           </div>
         </div>
 
@@ -1557,7 +1719,7 @@ export default function PlannerPage({ user }: PlannerPageProps) {
           onNodesChange={handleNodesChange}
           onNodeClick={(_, node) => {
             if (node.id.startsWith("portal:")) {
-              setActivePortalRefId(node.id.replace("portal:", ""));
+              selectRefForEditing(node.id.replace("portal:", ""));
               return;
             }
             setSelectedNodeId(node.id);
@@ -1565,17 +1727,8 @@ export default function PlannerPage({ user }: PlannerPageProps) {
           }}
           onNodeDoubleClick={(_, node) => {
             if (node.id.startsWith("portal:")) return;
-
-            // Zoom to node (less aggressive)
+            // Zoom only; changing view root is an explicit action.
             onNodeDoubleClick(_, node);
-
-            // If node has children, also navigate into it
-            const hasChildren = (childrenByParent.get(node.id) || []).length > 0;
-            if (hasChildren) {
-              setCurrentRootId(node.id);
-              setSelectedNodeId(node.id);
-              setActivePortalRefId(null);
-            }
           }}
           onNodeMouseEnter={(_, node) => setHoveredNodeId(node.id)}
           onNodeMouseLeave={() => setHoveredNodeId(null)}
@@ -1604,6 +1757,7 @@ export default function PlannerPage({ user }: PlannerPageProps) {
             y={contextMenu.y}
             nodeId={contextMenu.nodeId}
             nodeTitle={nodesById.get(contextMenu.nodeId)?.title || "Node"}
+            nodeKind={nodesById.get(contextMenu.nodeId)?.kind || "item"}
             hasChildren={(childrenByParent.get(contextMenu.nodeId) || []).length > 0}
             onClose={() => setContextMenu(null)}
             onAddChild={handleContextAddChild}
@@ -1614,8 +1768,8 @@ export default function PlannerPage({ user }: PlannerPageProps) {
           />
         )}
 
-        {/* Auto-Save Indicator */}
-        {saveStatus !== "idle" && (
+        {/* Save error indicator (successful autosaves are silent). */}
+        {saveStatus === "error" && (
           <div
             style={{
               position: "fixed",
@@ -1631,22 +1785,13 @@ export default function PlannerPage({ user }: PlannerPageProps) {
               gap: "8px",
               boxShadow: "0 4px 12px rgba(0, 0, 0, 0.3)",
               transition: "all 200ms ease",
-              background:
-                saveStatus === "saving"
-                  ? "rgba(59, 130, 246, 0.95)"
-                  : saveStatus === "saved"
-                    ? "rgba(34, 197, 94, 0.95)"
-                    : "rgba(239, 68, 68, 0.95)",
+              background: "rgba(239, 68, 68, 0.95)",
               color: "rgba(255, 255, 255, 0.98)",
               backdropFilter: "blur(8px)",
             }}
           >
-            <span style={{ fontSize: "16px" }}>
-              {saveStatus === "saving" ? "⏳" : saveStatus === "saved" ? "✓" : "⚠"}
-            </span>
-            <span>
-              {saveStatus === "saving" ? "Saving..." : saveStatus === "saved" ? "Saved" : "Save Error"}
-            </span>
+            <span style={{ fontSize: "16px" }}>⚠</span>
+            <span>Could not save node position</span>
           </div>
         )}
       </main>

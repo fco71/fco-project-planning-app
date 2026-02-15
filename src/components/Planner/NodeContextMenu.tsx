@@ -5,6 +5,7 @@ type ContextMenuProps = {
   y: number;
   nodeId: string;
   nodeTitle: string;
+  nodeKind: "root" | "project" | "item";
   hasChildren: boolean;
   onClose: () => void;
   onAddChild: (nodeId: string) => void;
@@ -19,6 +20,7 @@ export function NodeContextMenu({
   y,
   nodeId,
   nodeTitle,
+  nodeKind,
   hasChildren,
   onClose,
   onAddChild,
@@ -80,6 +82,8 @@ export function NodeContextMenu({
     onClose();
   };
 
+  const nextKind = nodeKind === "project" ? "item" : "project";
+
   return (
     <div
       ref={menuRef}
@@ -132,8 +136,10 @@ export function NodeContextMenu({
         />
         <MenuItem
           icon="⚙"
-          label="Change Type"
+          label={`Change Type to ${nextKind}`}
           onClick={() => handleAction(() => onChangeType(nodeId))}
+          disabled={nodeKind === "root"}
+          title={nodeKind === "root" ? "Root node type cannot be changed" : undefined}
         />
 
         <div

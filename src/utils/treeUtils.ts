@@ -14,7 +14,7 @@ export type TreeNode = {
  * Normalizes a string into a 2-4 character uppercase alphanumeric code.
  * Used for generating cross-reference bubble codes.
  * @param input - The input string to normalize
- * @returns Normalized code (e.g., "MP" from "Mario Pinto")
+ * @returns Normalized code (e.g., "VA" from "Vendor A")
  */
 export function normalizeCode(input: string): string {
   const cleaned = input.toUpperCase().replace(/[^A-Z0-9]/g, "").slice(0, 4);
@@ -40,7 +40,7 @@ export function initialsFromLabel(input: string): string {
 
 /**
  * Builds a breadcrumb path string from root to the specified node.
- * Example: "Francisco Valdez / Film Production / Development / De Espacio"
+ * Example: "Main Node / Project / Phase / Item"
  * @param nodeId - The target node ID
  * @param nodesById - Map of node IDs to node objects
  * @returns Formatted path string with " / " separators
