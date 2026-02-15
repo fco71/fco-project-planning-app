@@ -3,13 +3,11 @@ import ReactFlow, {
   Background,
   Handle,
   Position,
-  applyNodeChanges,
   type Edge,
   type Node,
   type NodeProps,
   type NodeTypes,
   type ReactFlowInstance,
-  type OnNodesChange,
 } from "reactflow";
 import {
   arrayRemove,
@@ -26,20 +24,6 @@ import {
 } from "firebase/firestore";
 import type { User } from "firebase/auth";
 import { db } from "../firebase";
-import {
-  buildNodePath,
-  collectDescendants,
-  getMasterNodeFor,
-  normalizeCode,
-  initialsFromLabel,
-  type TreeNode,
-} from "../utils/treeUtils";
-import { adjustPortalPosition, buildTreeNodeBounds } from "../utils/portalUtils";
-import PlannerCanvas from "../components/Planner/PlannerCanvas";
-import PlannerSidebar from "../components/Planner/PlannerSidebar";
-import CrossRefPanel from "../components/sections/CrossRefPanel";
-import NodeSearch from "../components/sections/NodeSearch";
-import DataBackup from "../components/sections/DataBackup";
 import "reactflow/dist/style.css";
 
 type PlannerPageProps = {
@@ -54,6 +38,8 @@ type TreeNodeDoc = {
   y?: number;
 };
 
+type TreeNode = TreeNodeDoc & { id: string };
+
 type CrossRefDoc = {
   label: string;
   code: string;
@@ -66,6 +52,65 @@ type PortalData = {
   label: string;
   title: string;
 };
+
+function normalizeCode(input: string): string {
+  const cleaned = input.toUpperCase().replace(/[^A-Z0-9]/g, "").slice(0, 4);
+  return cleaned || "REF";
+}
+
+function initialsFromLabel(input: string): string {
+  const parts = input
+    .trim()
+    .split(/\s+/)
+    .filter(Boolean);
+  if (parts.length === 0) return "REF";
+  if (parts.length === 1) return normalizeCode(parts[0].slice(0, 4));
+  const code = `${parts[0][0] || ""}${parts[1][0] || ""}`;
+  return normalizeCode(code);
+}
+
+function buildNodePath(nodeId: string, nodesById: Map<string, TreeNode>): string {
+  const parts: string[] = [];
+  const seen = new Set<string>();
+  let cursorId: string | null = nodeId;
+  while (cursorId && !seen.has(cursorId)) {
+    seen.add(cursorId);
+    const node = nodesById.get(cursorId);
+    if (!node) break;
+    parts.unshift(node.title);
+    cursorId = node.parentId;
+  }
+  return parts.join(" / ");
+}
+
+function collectDescendants(startId: string, childrenByParent: Map<string, string[]>): string[] {
+  const ordered: string[] = [];
+  const stack = [startId];
+  const seen = new Set<string>();
+  while (stack.length > 0) {
+    const current = stack.pop();
+    if (!current || seen.has(current)) continue;
+    seen.add(current);
+    ordered.push(current);
+    const children = childrenByParent.get(current) || [];
+    for (let index = children.length - 1; index >= 0; index -= 1) {
+      stack.push(children[index]);
+    }
+  }
+  return ordered;
+}
+
+function getMasterNodeFor(nodeId: string, rootNodeId: string | null, nodesById: Map<string, TreeNode>): string {
+  if (!rootNodeId) return nodeId;
+  let cursor = nodesById.get(nodeId);
+  if (!cursor) return rootNodeId;
+  while (cursor.parentId && cursor.parentId !== rootNodeId) {
+    const parent = nodesById.get(cursor.parentId);
+    if (!parent) break;
+    cursor = parent;
+  }
+  return cursor.id || rootNodeId;
+}
 
 const PortalNode = memo(function PortalNode({ data }: NodeProps<PortalData>) {
   return (
@@ -91,6 +136,7 @@ export default function PlannerPage({ user }: PlannerPageProps) {
   const [renameTitle, setRenameTitle] = useState("");
   const [newRefLabel, setNewRefLabel] = useState("");
   const [newRefCode, setNewRefCode] = useState("");
+  const [attachRefId, setAttachRefId] = useState("");
   const [activePortalRefId, setActivePortalRefId] = useState<string | null>(null);
   const [hoveredNodeId, setHoveredNodeId] = useState<string | null>(null);
   const [hoveredEdgeId, setHoveredEdgeId] = useState<string | null>(null);
@@ -98,20 +144,9 @@ export default function PlannerPage({ user }: PlannerPageProps) {
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [rfInstance, setRfInstance] = useState<ReactFlowInstance | null>(null);
-  const [isSaving, setIsSaving] = useState(false);
-  const [saveStatus, setSaveStatus] = useState<"idle" | "saving" | "saved" | "error">("idle");
   const lastFocusKeyRef = useRef("");
-  const saveTimeoutRef = useRef<NodeJS.Timeout | null>(null);
 
   const nodesById = useMemo(() => new Map(nodes.map((node) => [node.id, node] as const)), [nodes]);
-
-  const showSaveIndicator = useCallback((status: "saving" | "saved" | "error") => {
-    if (saveTimeoutRef.current) clearTimeout(saveTimeoutRef.current);
-    setSaveStatus(status);
-    if (status === "saved") {
-      saveTimeoutRef.current = setTimeout(() => setSaveStatus("idle"), 2000);
-    }
-  }, []);
 
   const childrenByParent = useMemo(() => {
     const map = new Map<string, string[]>();
@@ -136,9 +171,7 @@ export default function PlannerPage({ user }: PlannerPageProps) {
       setLoading(false);
       return;
     }
-    // TypeScript: db is checked above, safe to use
-    const firestore = db;
-    const userRef = doc(firestore, "users", user.uid);
+    const userRef = doc(db, "users", user.uid);
     const userSnap = await getDoc(userRef);
     const existing = userSnap.exists() ? userSnap.data() : {};
     const preferredName =
@@ -148,11 +181,11 @@ export default function PlannerPage({ user }: PlannerPageProps) {
     const rootId =
       typeof existing.rootNodeId === "string" && existing.rootNodeId.trim()
         ? existing.rootNodeId
-        : doc(collection(firestore, "users", user.uid, "nodes")).id;
+        : doc(collection(db, "users", user.uid, "nodes")).id;
 
-    const rootRef = doc(firestore, "users", user.uid, "nodes", rootId);
+    const rootRef = doc(db, "users", user.uid, "nodes", rootId);
     const rootSnap = await getDoc(rootRef);
-    const batch = writeBatch(firestore);
+    const batch = writeBatch(db);
     let changed = false;
 
     if (!userSnap.exists()) {
@@ -199,8 +232,6 @@ export default function PlannerPage({ user }: PlannerPageProps) {
       setError("Firestore is not available. Check Firebase configuration.");
       return;
     }
-    // TypeScript: db is checked above, safe to use
-    const firestore = db;
     let unsubProfile: (() => void) | null = null;
     let unsubNodes: (() => void) | null = null;
     let unsubRefs: (() => void) | null = null;
@@ -220,7 +251,7 @@ export default function PlannerPage({ user }: PlannerPageProps) {
         if (cancelled) return;
 
         unsubProfile = onSnapshot(
-          doc(firestore, "users", user.uid),
+          doc(db, "users", user.uid),
           (snapshot) => {
             const data = snapshot.data();
             const nextProfileName =
@@ -242,7 +273,7 @@ export default function PlannerPage({ user }: PlannerPageProps) {
         );
 
         unsubNodes = onSnapshot(
-          query(collection(firestore, "users", user.uid, "nodes")),
+          query(collection(db, "users", user.uid, "nodes")),
           (snapshot) => {
             const nextNodes = snapshot.docs.map((entry) => {
               const value = entry.data() as Partial<TreeNodeDoc>;
@@ -268,7 +299,7 @@ export default function PlannerPage({ user }: PlannerPageProps) {
         );
 
         unsubRefs = onSnapshot(
-          query(collection(firestore, "users", user.uid, "crossRefs")),
+          query(collection(db, "users", user.uid, "crossRefs")),
           (snapshot) => {
             const nextRefs = snapshot.docs.map((entry) => {
               const value = entry.data() as Partial<CrossRefDoc>;
@@ -331,48 +362,6 @@ export default function PlannerPage({ user }: PlannerPageProps) {
       setSelectedNodeId(currentRootId);
     }
   }, [selectedNodeId, currentRootId]);
-
-  useEffect(() => {
-    const handleKeyboard = (event: KeyboardEvent) => {
-      // Ignore if user is typing in an input/textarea
-      if (
-        event.target instanceof HTMLInputElement ||
-        event.target instanceof HTMLTextAreaElement ||
-        event.target instanceof HTMLSelectElement
-      ) {
-        return;
-      }
-
-      const key = event.key.toLowerCase();
-
-      // G: Grandmother view (main root)
-      if (key === "g" && rootNodeId) {
-        event.preventDefault();
-        setCurrentRootId(rootNodeId);
-        setActivePortalRefId(null);
-      }
-
-      // U: Up one level
-      if (key === "u" && currentRootId) {
-        const currentNode = nodesById.get(currentRootId);
-        if (currentNode?.parentId) {
-          event.preventDefault();
-          setCurrentRootId(currentNode.parentId);
-          setActivePortalRefId(null);
-        }
-      }
-
-      // O: Open selected as master
-      if (key === "o" && selectedNodeId) {
-        event.preventDefault();
-        setCurrentRootId(selectedNodeId);
-        setActivePortalRefId(null);
-      }
-    };
-
-    window.addEventListener("keydown", handleKeyboard);
-    return () => window.removeEventListener("keydown", handleKeyboard);
-  }, [rootNodeId, currentRootId, selectedNodeId, nodesById]);
 
   const selectedNode = useMemo(
     () => (selectedNodeId ? nodesById.get(selectedNodeId) || null : null),
@@ -492,21 +481,14 @@ export default function PlannerPage({ user }: PlannerPageProps) {
   }, [refs, visibleTreeIdSet]);
 
   const basePortalNodes = useMemo(() => {
-    // Simpler positioning: just stack vertically with consistent spacing
-    // Only apply collision detection if portals would overlap tree nodes significantly
-    const portalSize = { width: 48, height: 48 };
-
     return visiblePortals.map((entry, index) => {
-      // Simple vertical stacking with increased spacing for cleaner look
-      const position = {
-        x: treeBounds.maxX + 240, // More spacing from tree
-        y: treeBounds.minY + index * 96, // Increased vertical spacing (was 84)
-      };
-
       return {
         id: `portal:${entry.ref.id}`,
         type: "portal",
-        position,
+        position: {
+          x: treeBounds.maxX + 220,
+          y: treeBounds.minY + index * 84,
+        },
         data: {
           label: entry.ref.code,
           title: `${entry.ref.label} (${entry.ref.nodeIds.length} links)`,
@@ -523,14 +505,12 @@ export default function PlannerPage({ user }: PlannerPageProps) {
           boxShadow: "0 10px 20px rgba(0,0,0,0.35)",
           display: "grid",
           placeItems: "center",
-          cursor: "grab",
-          transition: "transform 200ms cubic-bezier(0.34, 1.56, 0.64, 1), box-shadow 200ms ease",
         } as React.CSSProperties,
-        draggable: true,
+        draggable: false,
         selectable: true,
       } as Node<PortalData>;
     });
-  }, [treeBounds.maxX, treeBounds.minY, visiblePortals, baseTreeNodes]);
+  }, [treeBounds.maxX, treeBounds.minY, visiblePortals]);
 
   const basePortalEdges = useMemo(() => {
     return visiblePortals
@@ -614,8 +594,7 @@ export default function PlannerPage({ user }: PlannerPageProps) {
               ? "0 0 0 2px rgba(125,211,252,0.22), 0 14px 30px rgba(0,0,0,0.42)"
               : (node.style as React.CSSProperties)?.boxShadow,
           opacity: hoveredNodeId || hoveredEdgeId ? (isHoverRelated ? 1 : 0.4) : 1,
-          transform: isHoverRelated ? "scale(1.02)" : "scale(1)",
-          transition: "all 180ms cubic-bezier(0.34, 1.56, 0.64, 1)",
+          transition: "opacity 160ms ease, box-shadow 160ms ease, border-color 160ms ease",
         },
       } as Node;
     });
@@ -631,11 +610,9 @@ export default function PlannerPage({ user }: PlannerPageProps) {
           boxShadow: isActive
             ? "0 0 0 3px rgba(251,146,60,0.28), 0 14px 28px rgba(0,0,0,0.42)"
             : isHoverRelated
-              ? "0 0 0 2px rgba(251,146,60,0.2), 0 16px 32px rgba(0,0,0,0.48), 0 0 20px rgba(251,146,60,0.3)"
+              ? "0 0 0 2px rgba(251,146,60,0.2), 0 14px 28px rgba(0,0,0,0.42)"
               : (node.style as React.CSSProperties)?.boxShadow,
           opacity: hoveredNodeId || hoveredEdgeId ? (isHoverRelated ? 1 : 0.5) : 1,
-          transform: isHoverRelated ? "scale(1.15)" : isActive ? "scale(1.08)" : "scale(1)",
-          transition: "all 200ms cubic-bezier(0.34, 1.56, 0.64, 1)",
         },
       } as Node;
     });
@@ -651,31 +628,16 @@ export default function PlannerPage({ user }: PlannerPageProps) {
       const baseWidth = typeof edgeStyle.strokeWidth === "number" ? edgeStyle.strokeWidth : 2;
       return {
         ...edge,
-        type: "smoothstep",
         style: {
           ...edgeStyle,
           stroke: isHoverRelated ? "rgba(255, 255, 255, 0.9)" : baseStroke,
           strokeWidth: isHoverRelated ? Math.max(baseWidth, 3) : baseWidth,
           opacity: hoveredNodeId || hoveredEdgeId ? (isHoverRelated ? 1 : 0.35) : 1,
-          transition: "all 180ms cubic-bezier(0.4, 0, 0.2, 1)",
+          transition: "opacity 160ms ease, stroke 160ms ease, stroke-width 160ms ease",
         },
       } as Edge;
     });
   }, [baseEdges, hoverEdgeIds, hoveredEdgeId, hoveredNodeId]);
-
-  const [internalNodes, setInternalNodes] = useState<Node[]>([]);
-
-  useEffect(() => {
-    setInternalNodes(flowNodes);
-  }, [flowNodes]);
-
-  const handleNodesChange: OnNodesChange = useCallback(
-    (changes) => {
-      // Apply position changes immediately for smooth dragging
-      setInternalNodes((nds) => applyNodeChanges(changes, nds) as Node[]);
-    },
-    []
-  );
 
   useEffect(() => {
     if (!rfInstance || !selectedNodeId) return;
@@ -683,7 +645,7 @@ export default function PlannerPage({ user }: PlannerPageProps) {
     if (lastFocusKeyRef.current === key) return;
     const target = flowNodes.find((node) => node.id === selectedNodeId);
     if (!target) return;
-    rfInstance.fitView({ nodes: [target], duration: 500, padding: 0.45 });
+    rfInstance.fitView({ nodes: [target], duration: 350, padding: 0.45 });
     lastFocusKeyRef.current = key;
   }, [currentRootId, flowNodes, rfInstance, selectedNodeId]);
 
@@ -703,6 +665,16 @@ export default function PlannerPage({ user }: PlannerPageProps) {
       .map((id) => nodesById.get(id))
       .filter((node): node is TreeNode => !!node);
   }, [childrenByParent, nodesById, selectedNodeId]);
+
+  const selectedNodeRefs = useMemo(() => {
+    if (!selectedNodeId) return [] as CrossRef[];
+    return refs.filter((ref) => ref.nodeIds.includes(selectedNodeId));
+  }, [refs, selectedNodeId]);
+
+  const attachableRefs = useMemo(() => {
+    if (!selectedNodeId) return [] as CrossRef[];
+    return refs.filter((ref) => !ref.nodeIds.includes(selectedNodeId));
+  }, [refs, selectedNodeId]);
 
   const activePortalRef = useMemo(() => {
     if (!activePortalRefId) return null;
@@ -737,18 +709,16 @@ export default function PlannerPage({ user }: PlannerPageProps) {
 
   const createChild = useCallback(async () => {
     if (!db) return;
-    // TypeScript: db is checked above, safe to use
-    const firestore = db;
     const title = newChildTitle.trim();
     if (!title) return;
     const parentId = selectedNodeId || currentRootId || rootNodeId;
     if (!parentId) return;
-    const newDoc = doc(collection(firestore, "users", user.uid, "nodes"));
+    const newDoc = doc(collection(db, "users", user.uid, "nodes"));
     const parent = nodesById.get(parentId);
     setBusyAction(true);
     setError(null);
     try {
-      await setDoc(doc(firestore, "users", user.uid, "nodes", newDoc.id), {
+      await setDoc(doc(db, "users", user.uid, "nodes", newDoc.id), {
         title,
         parentId,
         kind: "item",
@@ -768,14 +738,12 @@ export default function PlannerPage({ user }: PlannerPageProps) {
 
   const renameSelected = useCallback(async () => {
     if (!db || !selectedNodeId) return;
-    // TypeScript: db is checked above, safe to use
-    const firestore = db;
     const title = renameTitle.trim();
     if (!title) return;
     setBusyAction(true);
     setError(null);
     try {
-      await updateDoc(doc(firestore, "users", user.uid, "nodes", selectedNodeId), {
+      await updateDoc(doc(db, "users", user.uid, "nodes", selectedNodeId), {
         title,
         updatedAt: serverTimestamp(),
       });
@@ -788,22 +756,20 @@ export default function PlannerPage({ user }: PlannerPageProps) {
 
   const deleteSelected = useCallback(async () => {
     if (!db || !selectedNodeId || selectedNodeId === rootNodeId) return;
-    // TypeScript: db is checked above, safe to use
-    const firestore = db;
     const ids = collectDescendants(selectedNodeId, childrenByParent);
     const idSet = new Set(ids);
     const fallbackId = nodesById.get(selectedNodeId)?.parentId || rootNodeId || null;
     setBusyAction(true);
     setError(null);
     try {
-      const batch = writeBatch(firestore);
+      const batch = writeBatch(db);
       ids.forEach((id) => {
-        batch.delete(doc(firestore, "users", user.uid, "nodes", id));
+        batch.delete(doc(db, "users", user.uid, "nodes", id));
       });
       refs.forEach((ref) => {
         const remaining = ref.nodeIds.filter((id) => !idSet.has(id));
         if (remaining.length === ref.nodeIds.length) return;
-        const refDoc = doc(firestore, "users", user.uid, "crossRefs", ref.id);
+        const refDoc = doc(db, "users", user.uid, "crossRefs", ref.id);
         if (remaining.length === 0) {
           batch.delete(refDoc);
         } else {
@@ -825,16 +791,14 @@ export default function PlannerPage({ user }: PlannerPageProps) {
 
   const createCrossRef = useCallback(async () => {
     if (!db || !selectedNodeId) return;
-    // TypeScript: db is checked above, safe to use
-    const firestore = db;
     const label = newRefLabel.trim();
     if (!label) return;
     const code = newRefCode.trim() ? normalizeCode(newRefCode) : initialsFromLabel(label);
     setBusyAction(true);
     setError(null);
     try {
-      const newDoc = doc(collection(firestore, "users", user.uid, "crossRefs"));
-      await setDoc(doc(firestore, "users", user.uid, "crossRefs", newDoc.id), {
+      const newDoc = doc(collection(db, "users", user.uid, "crossRefs"));
+      await setDoc(doc(db, "users", user.uid, "crossRefs", newDoc.id), {
         label,
         code,
         nodeIds: [selectedNodeId],
@@ -850,33 +814,30 @@ export default function PlannerPage({ user }: PlannerPageProps) {
     }
   }, [newRefCode, newRefLabel, selectedNodeId, user.uid]);
 
-  const attachCrossRefToNode = useCallback(async (refId: string) => {
-    if (!db || !selectedNodeId) return;
-    // TypeScript: db is checked above, safe to use
-    const firestore = db;
+  const attachCrossRef = useCallback(async () => {
+    if (!db || !selectedNodeId || !attachRefId) return;
     setBusyAction(true);
     setError(null);
     try {
-      await updateDoc(doc(firestore, "users", user.uid, "crossRefs", refId), {
+      await updateDoc(doc(db, "users", user.uid, "crossRefs", attachRefId), {
         nodeIds: arrayUnion(selectedNodeId),
         updatedAt: serverTimestamp(),
       });
+      setAttachRefId("");
     } catch (actionError: unknown) {
       setError(actionError instanceof Error ? actionError.message : "Could not attach cross-reference.");
     } finally {
       setBusyAction(false);
     }
-  }, [selectedNodeId, user.uid]);
+  }, [attachRefId, selectedNodeId, user.uid]);
 
   const detachCrossRef = useCallback(
     async (refId: string, nodeId: string) => {
       if (!db) return;
-      // TypeScript: db is checked above, safe to use
-      const firestore = db;
       setBusyAction(true);
       setError(null);
       try {
-        await updateDoc(doc(firestore, "users", user.uid, "crossRefs", refId), {
+        await updateDoc(doc(db, "users", user.uid, "crossRefs", refId), {
           nodeIds: arrayRemove(nodeId),
           updatedAt: serverTimestamp(),
         });
@@ -899,76 +860,21 @@ export default function PlannerPage({ user }: PlannerPageProps) {
     [nodesById, rootNodeId]
   );
 
-  const jumpToNode = useCallback(
-    (nodeId: string) => {
-      const masterId = getMasterNodeFor(nodeId, rootNodeId, nodesById);
-      setCurrentRootId(masterId);
-      setSelectedNodeId(nodeId);
-      setActivePortalRefId(null);
-    },
-    [nodesById, rootNodeId]
-  );
-
   const onNodeDragStop = useCallback(
     async (_: React.MouseEvent, node: Node) => {
       if (!db || node.id.startsWith("portal:")) return;
-      // TypeScript: db is checked above, safe to use
-      const firestore = db;
-      showSaveIndicator("saving");
       try {
-        await updateDoc(doc(firestore, "users", user.uid, "nodes", node.id), {
+        await updateDoc(doc(db, "users", user.uid, "nodes", node.id), {
           x: node.position.x,
           y: node.position.y,
           updatedAt: serverTimestamp(),
         });
-        showSaveIndicator("saved");
       } catch (actionError: unknown) {
-        showSaveIndicator("error");
         setError(actionError instanceof Error ? actionError.message : "Could not save node position.");
       }
     },
-    [user.uid, showSaveIndicator]
+    [user.uid]
   );
-
-  const handleNodeClick = useCallback(
-    (_: React.MouseEvent, node: Node) => {
-      if (node.id.startsWith("portal:")) {
-        setActivePortalRefId(node.id.replace("portal:", ""));
-        return;
-      }
-      setSelectedNodeId(node.id);
-      setActivePortalRefId(null);
-    },
-    []
-  );
-
-  const handleNodeDoubleClick = useCallback(
-    (_: React.MouseEvent, node: Node) => {
-      if (node.id.startsWith("portal:")) return;
-      const hasChildren = (childrenByParent.get(node.id) || []).length > 0;
-      if (!hasChildren) return;
-      setCurrentRootId(node.id);
-      setSelectedNodeId(node.id);
-      setActivePortalRefId(null);
-    },
-    [childrenByParent]
-  );
-
-  const handleNodeMouseEnter = useCallback((_: React.MouseEvent, node: Node) => {
-    setHoveredNodeId(node.id);
-  }, []);
-
-  const handleNodeMouseLeave = useCallback(() => {
-    setHoveredNodeId(null);
-  }, []);
-
-  const handleEdgeMouseEnter = useCallback((_: React.MouseEvent, edge: Edge) => {
-    setHoveredEdgeId(edge.id);
-  }, []);
-
-  const handleEdgeMouseLeave = useCallback(() => {
-    setHoveredEdgeId(null);
-  }, []);
 
   if (!db) {
     return (
@@ -984,29 +890,7 @@ export default function PlannerPage({ user }: PlannerPageProps) {
 
   return (
     <div className="planner-shell">
-      {saveStatus !== "idle" && (
-        <div className={`auto-save-indicator auto-save-${saveStatus}`}>
-          {saveStatus === "saving" && (
-            <>
-              <span className="save-spinner" />
-              Saving...
-            </>
-          )}
-          {saveStatus === "saved" && (
-            <>
-              <span className="save-checkmark">✓</span>
-              Saved
-            </>
-          )}
-          {saveStatus === "error" && (
-            <>
-              <span className="save-error">⚠</span>
-              Error saving
-            </>
-          )}
-        </div>
-      )}
-      <PlannerSidebar hasError={!!error}>
+      <aside className="planner-sidebar">
         <div className="planner-panel-block">
           <h2>{profileName || "Main Node"}</h2>
           <p className="planner-subtle">{user.email}</p>
@@ -1027,20 +911,10 @@ export default function PlannerPage({ user }: PlannerPageProps) {
         </div>
 
         <div className="planner-panel-block">
-          <NodeSearch nodes={nodesById} buildNodePath={buildNodePath} jumpToNode={jumpToNode} />
-        </div>
-
-        <div className="planner-panel-block">
           <h3>Add Child Node</h3>
           <input
             value={newChildTitle}
             onChange={(event) => setNewChildTitle(event.target.value)}
-            onKeyDown={(event) => {
-              if (event.key === "Enter" && newChildTitle.trim().length > 0 && !busyAction) {
-                event.preventDefault();
-                createChild();
-              }
-            }}
             placeholder="Film Production, Education, Finance..."
           />
           <button onClick={createChild} disabled={busyAction || newChildTitle.trim().length === 0}>
@@ -1093,21 +967,61 @@ export default function PlannerPage({ user }: PlannerPageProps) {
           )}
         </div>
 
-        <CrossRefPanel
-          selectedNodeId={selectedNodeId}
-          refs={refs}
-          nodes={nodesById}
-          busyAction={busyAction}
-          newRefLabel={newRefLabel}
-          setNewRefLabel={setNewRefLabel}
-          newRefCode={newRefCode}
-          setNewRefCode={setNewRefCode}
-          createCrossRef={createCrossRef}
-          attachCrossRefToNode={attachCrossRefToNode}
-          detachCrossRef={detachCrossRef}
-          setActivePortalRefId={setActivePortalRefId}
-          buildNodePath={buildNodePath}
-        />
+        <div className="planner-panel-block">
+          <h3>Cross-Reference Bubbles</h3>
+          <p className="planner-subtle">
+            Use these for entities shared across branches (e.g., investor Mario Pinto / MP).
+          </p>
+          <input
+            value={newRefLabel}
+            onChange={(event) => setNewRefLabel(event.target.value)}
+            placeholder="Reference name"
+          />
+          <input
+            value={newRefCode}
+            onChange={(event) => setNewRefCode(event.target.value)}
+            placeholder="Bubble code (optional, e.g., MP)"
+          />
+          <button onClick={createCrossRef} disabled={busyAction || !selectedNodeId || newRefLabel.trim().length === 0}>
+            Create bubble and attach to selected
+          </button>
+
+          <div className="planner-inline-buttons">
+            <select value={attachRefId} onChange={(event) => setAttachRefId(event.target.value)}>
+              <option value="">Attach existing bubble...</option>
+              {attachableRefs.map((ref) => (
+                <option key={ref.id} value={ref.id}>
+                  {ref.code} - {ref.label}
+                </option>
+              ))}
+            </select>
+            <button onClick={attachCrossRef} disabled={busyAction || !selectedNodeId || !attachRefId}>
+              Attach
+            </button>
+          </div>
+
+          <div className="planner-row-label">Bubbles on selected node</div>
+          <div className="planner-chip-list">
+            {selectedNodeRefs.length === 0 || !selectedNodeId ? (
+              <span className="planner-subtle">No bubbles attached.</span>
+            ) : (
+              selectedNodeRefs.map((ref) => (
+                <div key={ref.id} className="chip with-action">
+                  <button
+                    onClick={() => setActivePortalRefId(ref.id)}
+                  >{`${ref.code} - ${ref.label}`}</button>
+                  <button
+                    className="chip-action"
+                    onClick={() => detachCrossRef(ref.id, selectedNodeId)}
+                    title="Detach from selected node"
+                  >
+                    x
+                  </button>
+                </div>
+              ))
+            )}
+          </div>
+        </div>
 
         {activePortalRef ? (
           <div className="planner-panel-block">
@@ -1123,27 +1037,44 @@ export default function PlannerPage({ user }: PlannerPageProps) {
           </div>
         ) : null}
 
-        <div className="planner-panel-block">
-          <DataBackup nodes={nodes} refs={refs} profileName={profileName} rootNodeId={rootNodeId} />
-        </div>
-
         {error ? <div className="planner-error">{error}</div> : null}
-      </PlannerSidebar>
+      </aside>
 
-      <PlannerCanvas
-        nodes={internalNodes}
-        edges={flowEdges}
-        nodeTypes={nodeTypes}
-        onInit={setRfInstance}
-        onNodesChange={handleNodesChange}
-        onNodeClick={handleNodeClick}
-        onNodeDoubleClick={handleNodeDoubleClick}
-        onNodeMouseEnter={handleNodeMouseEnter}
-        onNodeMouseLeave={handleNodeMouseLeave}
-        onEdgeMouseEnter={handleEdgeMouseEnter}
-        onEdgeMouseLeave={handleEdgeMouseLeave}
-        onNodeDragStop={onNodeDragStop}
-      />
+      <main className="planner-canvas">
+        <ReactFlow
+          nodes={flowNodes}
+          edges={flowEdges}
+          nodeTypes={nodeTypes}
+          fitView
+          fitViewOptions={{ padding: 0.3 }}
+          nodesConnectable={false}
+          onInit={setRfInstance}
+          onNodeClick={(_, node) => {
+            if (node.id.startsWith("portal:")) {
+              setActivePortalRefId(node.id.replace("portal:", ""));
+              return;
+            }
+            setSelectedNodeId(node.id);
+            setActivePortalRefId(null);
+          }}
+          onNodeDoubleClick={(_, node) => {
+            if (node.id.startsWith("portal:")) return;
+            const hasChildren = (childrenByParent.get(node.id) || []).length > 0;
+            if (!hasChildren) return;
+            setCurrentRootId(node.id);
+            setSelectedNodeId(node.id);
+            setActivePortalRefId(null);
+          }}
+          onNodeMouseEnter={(_, node) => setHoveredNodeId(node.id)}
+          onNodeMouseLeave={() => setHoveredNodeId(null)}
+          onEdgeMouseEnter={(_, edge) => setHoveredEdgeId(edge.id)}
+          onEdgeMouseLeave={() => setHoveredEdgeId(null)}
+          onNodeDragStop={onNodeDragStop}
+          minZoom={0.3}
+        >
+          <Background gap={22} size={1} />
+        </ReactFlow>
+      </main>
     </div>
   );
 }
