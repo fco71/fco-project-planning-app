@@ -4,13 +4,14 @@ import React, { useEffect, useState } from "react";
 type PlannerSidebarProps = {
   children: React.ReactNode;
   hasError: boolean;
+  onCollapsedChange?: (collapsed: boolean) => void;
 };
 
 /**
  * PlannerSidebar - Collapsible sidebar wrapper with full and compact modes.
  * Persists collapse state to localStorage.
  */
-export default function PlannerSidebar({ children, hasError }: PlannerSidebarProps) {
+export default function PlannerSidebar({ children, hasError, onCollapsedChange }: PlannerSidebarProps) {
   const [collapsed, setCollapsed] = useState(() => {
     try {
       return localStorage.getItem("planner-sidebar-collapsed") === "true";
@@ -22,10 +23,11 @@ export default function PlannerSidebar({ children, hasError }: PlannerSidebarPro
   useEffect(() => {
     try {
       localStorage.setItem("planner-sidebar-collapsed", String(collapsed));
+      onCollapsedChange?.(collapsed);
     } catch {
       // Ignore localStorage errors
     }
-  }, [collapsed]);
+  }, [collapsed, onCollapsedChange]);
 
   const toggleCollapse = () => setCollapsed((prev) => !prev);
 

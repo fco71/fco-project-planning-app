@@ -3,11 +3,13 @@ import ReactFlow, {
   Background,
   Handle,
   Position,
+  applyNodeChanges,
   type Edge,
   type Node,
   type NodeProps,
   type NodeTypes,
   type ReactFlowInstance,
+  type OnNodesChange,
 } from "reactflow";
 import {
   arrayRemove,
@@ -132,6 +134,7 @@ export default function PlannerPage({ user }: PlannerPageProps) {
   const [currentRootId, setCurrentRootId] = useState<string | null>(null);
   const [selectedNodeId, setSelectedNodeId] = useState<string | null>(null);
   const [pendingSelectedNodeId, setPendingSelectedNodeId] = useState<string | null>(null);
+  const [sidebarCollapsed, setSidebarCollapsed] = useState(false);
   const [newChildTitle, setNewChildTitle] = useState("");
   const [renameTitle, setRenameTitle] = useState("");
   const [newRefLabel, setNewRefLabel] = useState("");
@@ -505,8 +508,9 @@ export default function PlannerPage({ user }: PlannerPageProps) {
           boxShadow: "0 10px 20px rgba(0,0,0,0.35)",
           display: "grid",
           placeItems: "center",
+          cursor: "grab",
         } as React.CSSProperties,
-        draggable: false,
+        draggable: true,
         selectable: true,
       } as Node<PortalData>;
     });
@@ -638,6 +642,16 @@ export default function PlannerPage({ user }: PlannerPageProps) {
       } as Edge;
     });
   }, [baseEdges, hoverEdgeIds, hoveredEdgeId, hoveredNodeId]);
+
+  const [displayNodes, setDisplayNodes] = useState<Node[]>([]);
+
+  useEffect(() => {
+    setDisplayNodes(flowNodes);
+  }, [flowNodes]);
+
+  const handleNodesChange: OnNodesChange = useCallback((changes) => {
+    setDisplayNodes((nds) => applyNodeChanges(changes, nds));
+  }, []);
 
   useEffect(() => {
     if (!rfInstance || !selectedNodeId) return;
@@ -889,8 +903,52 @@ export default function PlannerPage({ user }: PlannerPageProps) {
   }
 
   return (
-    <div className="planner-shell">
-      <aside className="planner-sidebar">
+    <div className={`planner-shell ${sidebarCollapsed ? "sidebar-collapsed" : ""}`}>
+      <aside className={`planner-sidebar ${sidebarCollapsed ? "collapsed" : ""}`}>
+        <button
+          onClick={() => setSidebarCollapsed(!sidebarCollapsed)}
+          className="planner-sidebar-toggle"
+          style={{
+            position: "absolute",
+            top: "12px",
+            right: "12px",
+            zIndex: 10,
+            padding: "6px 10px",
+            border: "1px solid rgba(255, 255, 255, 0.16)",
+            background: "rgba(255, 255, 255, 0.07)",
+            color: "rgba(245, 248, 255, 0.94)",
+            borderRadius: "8px",
+            cursor: "pointer",
+            fontSize: "14px",
+            fontWeight: 700,
+          }}
+        >
+          {sidebarCollapsed ? "→" : "←"}
+        </button>
+
+        {sidebarCollapsed ? (
+          <div style={{
+            display: "flex",
+            flexDirection: "column",
+            alignItems: "center",
+            justifyContent: "center",
+            height: "100%",
+            paddingTop: "60px",
+          }}>
+            <div style={{
+              fontSize: "10px",
+              color: "rgba(245, 248, 255, 0.6)",
+              textAlign: "center",
+              writingMode: "vertical-rl",
+              transform: "rotate(180deg)",
+              letterSpacing: "1px",
+              fontWeight: 700,
+            }}>
+              Controls
+            </div>
+          </div>
+        ) : (
+          <>
         <div className="planner-panel-block">
           <h2>{profileName || "Main Node"}</h2>
           <p className="planner-subtle">{user.email}</p>
@@ -1038,17 +1096,20 @@ export default function PlannerPage({ user }: PlannerPageProps) {
         ) : null}
 
         {error ? <div className="planner-error">{error}</div> : null}
+          </>
+        )}
       </aside>
 
       <main className="planner-canvas">
         <ReactFlow
-          nodes={flowNodes}
+          nodes={displayNodes}
           edges={flowEdges}
           nodeTypes={nodeTypes}
           fitView
           fitViewOptions={{ padding: 0.3 }}
           nodesConnectable={false}
           onInit={setRfInstance}
+          onNodesChange={handleNodesChange}
           onNodeClick={(_, node) => {
             if (node.id.startsWith("portal:")) {
               setActivePortalRefId(node.id.replace("portal:", ""));
