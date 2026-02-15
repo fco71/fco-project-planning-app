@@ -145,6 +145,8 @@ export default function PlannerPage({ user }: PlannerPageProps) {
   const [hoveredNodeId, setHoveredNodeId] = useState<string | null>(null);
   const [hoveredEdgeId, setHoveredEdgeId] = useState<string | null>(null);
   const [contextMenu, setContextMenu] = useState<{ x: number; y: number; nodeId: string } | null>(null);
+  const [saveStatus, setSaveStatus] = useState<"idle" | "saving" | "saved" | "error">("idle");
+  const saveTimeoutRef = useRef<NodeJS.Timeout | null>(null);
   const [busyAction, setBusyAction] = useState(false);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
@@ -603,7 +605,7 @@ export default function PlannerPage({ user }: PlannerPageProps) {
               ? "0 0 0 2px rgba(125,211,252,0.22), 0 14px 30px rgba(0,0,0,0.42)"
               : (node.style as React.CSSProperties)?.boxShadow,
           opacity: hoveredNodeId || hoveredEdgeId ? (isHoverRelated ? 1 : 0.4) : 1,
-          transition: "opacity 160ms ease, box-shadow 160ms ease, border-color 160ms ease",
+          transition: "opacity 180ms cubic-bezier(0.4, 0, 0.2, 1), box-shadow 180ms cubic-bezier(0.4, 0, 0.2, 1), border-color 180ms cubic-bezier(0.4, 0, 0.2, 1)",
         },
       } as Node;
     });
@@ -622,6 +624,7 @@ export default function PlannerPage({ user }: PlannerPageProps) {
               ? "0 0 0 2px rgba(251,146,60,0.2), 0 14px 28px rgba(0,0,0,0.42)"
               : (node.style as React.CSSProperties)?.boxShadow,
           opacity: hoveredNodeId || hoveredEdgeId ? (isHoverRelated ? 1 : 0.5) : 1,
+          transition: "opacity 200ms cubic-bezier(0.4, 0, 0.2, 1), box-shadow 200ms cubic-bezier(0.4, 0, 0.2, 1), border-color 200ms cubic-bezier(0.4, 0, 0.2, 1)",
         },
       } as Node;
     });
@@ -642,7 +645,7 @@ export default function PlannerPage({ user }: PlannerPageProps) {
           stroke: isHoverRelated ? "rgba(255, 255, 255, 0.9)" : baseStroke,
           strokeWidth: isHoverRelated ? Math.max(baseWidth, 3) : baseWidth,
           opacity: hoveredNodeId || hoveredEdgeId ? (isHoverRelated ? 1 : 0.35) : 1,
-          transition: "opacity 160ms ease, stroke 160ms ease, stroke-width 160ms ease",
+          transition: "opacity 180ms cubic-bezier(0.4, 0, 0.2, 1), stroke 180ms cubic-bezier(0.4, 0, 0.2, 1), stroke-width 180ms cubic-bezier(0.4, 0, 0.2, 1)",
         },
       } as Edge;
     });
@@ -672,6 +675,17 @@ export default function PlannerPage({ user }: PlannerPageProps) {
 
   const handleNodesChange: OnNodesChange = useCallback((changes) => {
     setDisplayNodes((nds) => applyNodeChanges(changes, nds));
+  }, []);
+
+  // Auto-save indicator helper
+  const showSaveIndicator = useCallback((status: "saving" | "saved" | "error") => {
+    if (saveTimeoutRef.current) clearTimeout(saveTimeoutRef.current);
+    setSaveStatus(status);
+    if (status === "saved") {
+      saveTimeoutRef.current = setTimeout(() => setSaveStatus("idle"), 2000);
+    } else if (status === "error") {
+      saveTimeoutRef.current = setTimeout(() => setSaveStatus("idle"), 4000);
+    }
   }, []);
 
   // Double-click to zoom (less aggressive)
@@ -909,17 +923,20 @@ export default function PlannerPage({ user }: PlannerPageProps) {
       }
 
       // Handle regular node position saves
+      showSaveIndicator("saving");
       try {
         await updateDoc(doc(db, "users", user.uid, "nodes", node.id), {
           x: node.position.x,
           y: node.position.y,
           updatedAt: serverTimestamp(),
         });
+        showSaveIndicator("saved");
       } catch (actionError: unknown) {
+        showSaveIndicator("error");
         setError(actionError instanceof Error ? actionError.message : "Could not save node position.");
       }
     },
-    [user.uid]
+    [showSaveIndicator, user.uid]
   );
 
   // Context menu handlers
@@ -1333,6 +1350,42 @@ export default function PlannerPage({ user }: PlannerPageProps) {
             onAddCrossRef={handleContextAddCrossRef}
             onChangeType={handleContextChangeType}
           />
+        )}
+
+        {/* Auto-Save Indicator */}
+        {saveStatus !== "idle" && (
+          <div
+            style={{
+              position: "fixed",
+              top: "16px",
+              right: "16px",
+              zIndex: 9998,
+              padding: "10px 16px",
+              borderRadius: "8px",
+              fontSize: "14px",
+              fontWeight: 600,
+              display: "flex",
+              alignItems: "center",
+              gap: "8px",
+              boxShadow: "0 4px 12px rgba(0, 0, 0, 0.3)",
+              transition: "all 200ms ease",
+              background:
+                saveStatus === "saving"
+                  ? "rgba(59, 130, 246, 0.95)"
+                  : saveStatus === "saved"
+                    ? "rgba(34, 197, 94, 0.95)"
+                    : "rgba(239, 68, 68, 0.95)",
+              color: "rgba(255, 255, 255, 0.98)",
+              backdropFilter: "blur(8px)",
+            }}
+          >
+            <span style={{ fontSize: "16px" }}>
+              {saveStatus === "saving" ? "⏳" : saveStatus === "saved" ? "✓" : "⚠"}
+            </span>
+            <span>
+              {saveStatus === "saving" ? "Saving..." : saveStatus === "saved" ? "Saved" : "Save Error"}
+            </span>
+          </div>
         )}
       </main>
     </div>

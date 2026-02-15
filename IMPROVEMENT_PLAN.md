@@ -52,6 +52,41 @@
 - **Result:** Portal bubbles can be dragged and stay in position (session-based)
 - **Verified:** Working locally
 
+### 8. Double-Click Zoom (Less Aggressive)
+- **Status:** ✅ Done
+- **File:** `src/pages/PlannerPage.tsx`
+- **Changes:** Removed auto-zoom on click, added double-click zoom with gentle settings (250ms, padding 0.8, maxZoom 1.2)
+- **Result:** Single click selects, double-click zooms smoothly without jarring motion
+- **Verified:** Working locally
+
+### 9. Right-Click Context Menu
+- **Status:** ✅ Done
+- **Files:** `src/pages/PlannerPage.tsx`, `src/components/Planner/NodeContextMenu.tsx`
+- **Changes:** Added context menu component with actions (Add Child, Duplicate, Delete, Add Cross-Ref, Change Type)
+- **Result:** Both sidebar and right-click controls available for maximum flexibility
+- **Verified:** Working locally
+
+### 10. Auto-Save Indicator
+- **Status:** ✅ Done
+- **File:** `src/pages/PlannerPage.tsx`
+- **Changes:** Added save status state, visual indicator in top-right, integrated with save operations
+- **Result:** Shows "Saving...", "Saved ✓", or "Save Error ⚠" with color-coded feedback
+- **Verified:** Working locally
+
+### 11. Faster Transitions
+- **Status:** ✅ Done
+- **File:** `src/pages/PlannerPage.tsx`
+- **Changes:** Updated all transitions to 180ms (nodes/edges) and 200ms (portals) with cubic-bezier easing
+- **Result:** Snappier, more responsive feel when hovering and interacting
+- **Verified:** Working locally
+
+### 12. Hover Scale Effects
+- **Status:** ✅ Done
+- **File:** `src/pages/PlannerPage.tsx`
+- **Changes:** Added transform scale on hover (1.02x for nodes, 1.15x for portals, 1.08x for active portals)
+- **Result:** Subtle bounce effect with spring easing for polished feel
+- **Verified:** Working locally
+
 ---
 
 ## 📋 TO IMPLEMENT (In Order)
@@ -333,12 +368,14 @@ If any of these fail, rollback and reconsider the approach.
 
 ## Current Status
 
-- **Completed:** Items #1-7 ✅
-- **Phase 1 (Zoom & Navigation):** Need user decisions on #8 and #9
-- **Phase 2 (Visual Feedback):** Ready after Phase 1
-- **Phase 3 (Animation):** Ready after Phase 2
-- **Optional:** Can be done anytime after core improvements
+- **Completed:** Items #1-12 ✅
+- **Phase 1 (Zoom & Navigation):** ✅ Complete
+- **Phase 2 (Visual Feedback):** ✅ Complete
+- **Phase 3 (Animation):** ✅ Complete
+- **Optional:** GitHub Actions auto-deploy available
 
 ---
 
-**Next Step:** Get user input on zoom behavior (#8) and context menu preference (#9)
+**Build Status:** ✅ Built successfully (ready to deploy)
+
+**Next Step:** Deploy to Firebase (`npx firebase login` then `npx firebase deploy --only hosting`)
