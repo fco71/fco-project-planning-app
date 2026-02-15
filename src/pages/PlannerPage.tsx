@@ -136,6 +136,8 @@ export default function PlannerPage({ user }: PlannerPageProps) {
   const [selectedNodeId, setSelectedNodeId] = useState<string | null>(null);
   const [pendingSelectedNodeId, setPendingSelectedNodeId] = useState<string | null>(null);
   const [sidebarCollapsed, setSidebarCollapsed] = useState(false);
+  const [searchQuery, setSearchQuery] = useState("");
+  const searchInputRef = useRef<HTMLInputElement>(null);
   const [newChildTitle, setNewChildTitle] = useState("");
   const [renameTitle, setRenameTitle] = useState("");
   const [newRefLabel, setNewRefLabel] = useState("");
@@ -268,6 +270,11 @@ export default function PlannerPage({ user }: PlannerPageProps) {
                 : (user.displayName || user.email?.split("@")[0] || "Main Node");
             const nextRootId =
               typeof data?.rootNodeId === "string" && data.rootNodeId.trim() ? data.rootNodeId : null;
+
+            // Load collapsed nodes from Firebase
+            const savedCollapsedNodes = Array.isArray(data?.collapsedNodes) ? data.collapsedNodes : [];
+            setCollapsedNodeIds(new Set(savedCollapsedNodes));
+
             setProfileName(nextProfileName);
             setRootNodeId(nextRootId);
             gotProfile = true;
@@ -400,6 +407,17 @@ export default function PlannerPage({ user }: PlannerPageProps) {
     });
   }, []);
 
+  // Persist collapsed nodes to Firebase
+  useEffect(() => {
+    if (!db || !user.uid) return;
+    const collapsedArray = Array.from(collapsedNodeIds);
+    updateDoc(doc(db, "users", user.uid), {
+      collapsedNodes: collapsedArray,
+    }).catch((err) => {
+      console.error("Failed to save collapsed state:", err);
+    });
+  }, [collapsedNodeIds, user.uid]);
+
   // Filter out descendants of collapsed nodes
   const filteredTreeIds = useMemo(() => {
     if (collapsedNodeIds.size === 0) return visibleTreeIds;
@@ -418,6 +436,23 @@ export default function PlannerPage({ user }: PlannerPageProps) {
     // Return only nodes that are not hidden
     return visibleTreeIds.filter((id) => !hiddenIds.has(id));
   }, [childrenByParent, collapsedNodeIds, visibleTreeIds]);
+
+  // Search matching nodes
+  const searchMatchingIds = useMemo(() => {
+    if (!searchQuery.trim()) return new Set<string>();
+
+    const query = searchQuery.toLowerCase().trim();
+    const matches = new Set<string>();
+
+    filteredTreeIds.forEach((id) => {
+      const node = nodesById.get(id);
+      if (node && node.title.toLowerCase().includes(query)) {
+        matches.add(id);
+      }
+    });
+
+    return matches;
+  }, [filteredTreeIds, nodesById, searchQuery]);
 
   const treeLayout = useMemo(() => {
     const map = new Map<string, { x: number; y: number }>();
@@ -462,6 +497,7 @@ export default function PlannerPage({ user }: PlannerPageProps) {
           y: typeof node.y === "number" ? node.y : autoPosition.y,
         };
         const isRoot = node.id === rootNodeId;
+        const isSearchMatch = searchMatchingIds.has(node.id);
         return {
           id: node.id,
           position,
@@ -502,13 +538,23 @@ export default function PlannerPage({ user }: PlannerPageProps) {
             ),
           },
           style: {
-            border: isRoot ? "2px solid rgba(253, 228, 129, 0.9)" : "1px solid rgba(255, 255, 255, 0.18)",
+            border: isSearchMatch
+              ? "2px solid rgba(34, 197, 94, 0.9)"
+              : isRoot
+                ? "2px solid rgba(253, 228, 129, 0.9)"
+                : "1px solid rgba(255, 255, 255, 0.18)",
             borderRadius: 14,
             width: 260,
             padding: 10,
-            background: isRoot ? "rgba(58, 44, 14, 0.92)" : "rgba(16, 20, 28, 0.94)",
+            background: isSearchMatch
+              ? "rgba(22, 101, 52, 0.25)"
+              : isRoot
+                ? "rgba(58, 44, 14, 0.92)"
+                : "rgba(16, 20, 28, 0.94)",
             color: "rgba(250, 252, 255, 0.95)",
-            boxShadow: "0 10px 24px rgba(0,0,0,0.35)",
+            boxShadow: isSearchMatch
+              ? "0 0 0 2px rgba(34, 197, 94, 0.3), 0 12px 28px rgba(0,0,0,0.4)"
+              : "0 10px 24px rgba(0,0,0,0.35)",
             fontWeight: 700,
             fontSize: 12.5,
           } as React.CSSProperties,
@@ -516,7 +562,7 @@ export default function PlannerPage({ user }: PlannerPageProps) {
           selectable: true,
         } as Node;
       });
-  }, [childrenByParent, collapsedNodeIds, filteredTreeIds, nodesById, rootNodeId, toggleNodeCollapse, treeLayout]);
+  }, [childrenByParent, collapsedNodeIds, filteredTreeIds, nodesById, rootNodeId, searchMatchingIds, toggleNodeCollapse, treeLayout]);
 
   const baseTreeEdges = useMemo(() => {
     const filteredIdSet = new Set(filteredTreeIds);
@@ -1141,6 +1187,68 @@ export default function PlannerPage({ user }: PlannerPageProps) {
     [nodesById, user.uid]
   );
 
+  // Keyboard shortcuts
+  useEffect(() => {
+    const handleKeyDown = (e: KeyboardEvent) => {
+      const isMac = navigator.platform.toUpperCase().indexOf('MAC') >= 0;
+      const cmdOrCtrl = isMac ? e.metaKey : e.ctrlKey;
+
+      // Ignore if typing in input/textarea or if context menu is open
+      const target = e.target as HTMLElement;
+      if (target.tagName === 'INPUT' || target.tagName === 'TEXTAREA' || contextMenu) {
+        return;
+      }
+
+      // Ctrl/Cmd+N - New child node
+      if (cmdOrCtrl && e.key === 'n') {
+        e.preventDefault();
+        if (selectedNodeId) {
+          handleContextAddChild(selectedNodeId);
+        }
+        return;
+      }
+
+      // Ctrl/Cmd+D - Duplicate node
+      if (cmdOrCtrl && e.key === 'd') {
+        e.preventDefault();
+        if (selectedNodeId) {
+          handleContextDuplicate(selectedNodeId);
+        }
+        return;
+      }
+
+      // Delete/Backspace - Delete node
+      if ((e.key === 'Delete' || e.key === 'Backspace') && !e.shiftKey && !cmdOrCtrl) {
+        e.preventDefault();
+        if (selectedNodeId) {
+          handleContextDelete(selectedNodeId);
+        }
+        return;
+      }
+
+      // Ctrl/Cmd+F - Focus search
+      if (cmdOrCtrl && e.key === 'f') {
+        e.preventDefault();
+        searchInputRef.current?.focus();
+        return;
+      }
+
+      // Escape - Deselect or clear search
+      if (e.key === 'Escape') {
+        if (searchQuery) {
+          setSearchQuery("");
+        } else {
+          setSelectedNodeId(null);
+          setActivePortalRefId(null);
+        }
+        return;
+      }
+    };
+
+    document.addEventListener('keydown', handleKeyDown);
+    return () => document.removeEventListener('keydown', handleKeyDown);
+  }, [contextMenu, handleContextAddChild, handleContextDelete, handleContextDuplicate, searchQuery, selectedNodeId]);
+
   if (!db) {
     return (
       <div className="planner-empty-state">
@@ -1200,6 +1308,49 @@ export default function PlannerPage({ user }: PlannerPageProps) {
           </div>
         ) : (
           <>
+        {/* Search Input */}
+        <div style={{
+          padding: "12px 12px 0",
+          marginBottom: "12px",
+        }}>
+          <input
+            ref={searchInputRef}
+            type="text"
+            placeholder="Search nodes... (Ctrl+F)"
+            value={searchQuery}
+            onChange={(e) => setSearchQuery(e.target.value)}
+            style={{
+              width: "100%",
+              padding: "8px 12px",
+              border: "1px solid rgba(255, 255, 255, 0.15)",
+              borderRadius: "6px",
+              background: "rgba(255, 255, 255, 0.05)",
+              color: "rgba(245, 248, 255, 0.94)",
+              fontSize: "13px",
+              outline: "none",
+              transition: "all 150ms ease",
+            }}
+            onFocus={(e) => {
+              e.target.style.borderColor = "rgba(34, 197, 94, 0.5)";
+              e.target.style.background = "rgba(255, 255, 255, 0.08)";
+            }}
+            onBlur={(e) => {
+              e.target.style.borderColor = "rgba(255, 255, 255, 0.15)";
+              e.target.style.background = "rgba(255, 255, 255, 0.05)";
+            }}
+          />
+          {searchMatchingIds.size > 0 && (
+            <div style={{
+              marginTop: "6px",
+              fontSize: "11px",
+              color: "rgba(34, 197, 94, 0.9)",
+              fontWeight: 600,
+            }}>
+              {searchMatchingIds.size} match{searchMatchingIds.size !== 1 ? "es" : ""} found
+            </div>
+          )}
+        </div>
+
         <div className="planner-panel-block">
           <h2>{profileName || "Main Node"}</h2>
           <p className="planner-subtle">{user.email}</p>
