@@ -485,13 +485,16 @@ export default function PlannerPage({ user }: PlannerPageProps) {
 
   const basePortalNodes = useMemo(() => {
     return visiblePortals.map((entry, index) => {
+      // Compute initial position (will be preserved by displayNodes logic if dragged)
+      const position = {
+        x: treeBounds.maxX + 220,
+        y: treeBounds.minY + index * 84,
+      };
+
       return {
         id: `portal:${entry.ref.id}`,
         type: "portal",
-        position: {
-          x: treeBounds.maxX + 220,
-          y: treeBounds.minY + index * 84,
-        },
+        position,
         data: {
           label: entry.ref.code,
           title: `${entry.ref.label} (${entry.ref.nodeIds.length} links)`,
@@ -646,7 +649,23 @@ export default function PlannerPage({ user }: PlannerPageProps) {
   const [displayNodes, setDisplayNodes] = useState<Node[]>([]);
 
   useEffect(() => {
-    setDisplayNodes(flowNodes);
+    setDisplayNodes((prevDisplayNodes) => {
+      // Preserve portal positions that may have been manually dragged
+      const portalPositions = new Map<string, { x: number; y: number }>();
+      prevDisplayNodes.forEach((node) => {
+        if (node.id.startsWith("portal:")) {
+          portalPositions.set(node.id, node.position);
+        }
+      });
+
+      // Apply flowNodes but preserve portal positions
+      return flowNodes.map((node) => {
+        if (node.id.startsWith("portal:") && portalPositions.has(node.id)) {
+          return { ...node, position: portalPositions.get(node.id)! };
+        }
+        return node;
+      });
+    });
   }, [flowNodes]);
 
   const handleNodesChange: OnNodesChange = useCallback((changes) => {
@@ -876,7 +895,14 @@ export default function PlannerPage({ user }: PlannerPageProps) {
 
   const onNodeDragStop = useCallback(
     async (_: React.MouseEvent, node: Node) => {
-      if (!db || node.id.startsWith("portal:")) return;
+      if (!db) return;
+
+      // Only save tree node positions (not portals)
+      if (node.id.startsWith("portal:")) {
+        return;
+      }
+
+      // Handle regular node position saves
       try {
         await updateDoc(doc(db, "users", user.uid, "nodes", node.id), {
           x: node.position.x,
