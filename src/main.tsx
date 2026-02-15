@@ -69,7 +69,8 @@ ReactDOM.createRoot(document.getElementById("root")!).render(
   </ErrorBoundary>
 );
 
-const shouldRegisterPwa = import.meta.env.PROD || import.meta.env.VITE_PWA_DEV_ENABLED === "1";
+const pwaEnabledInProd = import.meta.env.VITE_ENABLE_PWA !== "0";
+const shouldRegisterPwa = (import.meta.env.PROD && pwaEnabledInProd) || import.meta.env.VITE_PWA_DEV_ENABLED === "1";
 
 if (shouldRegisterPwa) {
   registerSW({
