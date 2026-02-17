@@ -472,6 +472,107 @@ textarea {
   z-index: 10010;
 }
 
+.planner-mobile-sheet-backdrop {
+  z-index: 10018;
+}
+
+.planner-mobile-sheet {
+  position: fixed;
+  left: 12px;
+  right: 12px;
+  bottom: calc(10px + env(safe-area-inset-bottom));
+  z-index: 10040;
+  border: 1px solid rgba(255, 255, 255, 0.16);
+  border-radius: 14px;
+  background: rgba(11, 16, 25, 0.97);
+  box-shadow: 0 18px 40px rgba(0, 0, 0, 0.45);
+  padding: 10px;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.planner-mobile-sheet-handle {
+  width: 44px;
+  height: 4px;
+  border-radius: 999px;
+  background: rgba(255, 255, 255, 0.26);
+  margin: 2px auto 4px;
+}
+
+.planner-mobile-sheet-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: baseline;
+  gap: 10px;
+}
+
+.planner-mobile-sheet-header strong {
+  font-size: 13px;
+  overflow-wrap: anywhere;
+}
+
+.planner-mobile-sheet-header span {
+  font-size: 10.5px;
+  opacity: 0.72;
+  text-transform: uppercase;
+}
+
+.planner-mobile-sheet-path {
+  font-size: 10.5px;
+  line-height: 1.3;
+  opacity: 0.72;
+  overflow-wrap: anywhere;
+}
+
+.planner-mobile-sheet input,
+.planner-mobile-sheet select {
+  width: 100%;
+  border: 1px solid rgba(255, 255, 255, 0.14);
+  background: rgba(255, 255, 255, 0.06);
+  color: rgba(245, 248, 255, 0.95);
+  border-radius: 8px;
+  padding: 8px 10px;
+  font-size: 16px;
+  outline: none;
+}
+
+.planner-mobile-sheet-grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 6px;
+}
+
+.planner-mobile-sheet-grid button,
+.planner-mobile-sheet-actions button,
+.planner-mobile-sheet-story button {
+  border: 1px solid rgba(255, 255, 255, 0.16);
+  background: rgba(255, 255, 255, 0.08);
+  color: rgba(245, 248, 255, 0.95);
+  border-radius: 8px;
+  min-height: 38px;
+  font-size: 12px;
+  font-weight: 700;
+}
+
+.planner-mobile-sheet-grid button:disabled,
+.planner-mobile-sheet-actions button:disabled,
+.planner-mobile-sheet-story button:disabled {
+  opacity: 0.5;
+}
+
+.planner-mobile-sheet-story {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  gap: 6px;
+}
+
+.planner-mobile-sheet-actions {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  gap: 6px;
+}
+
 .planner-mobile-toolbar {
   position: absolute;
   top: calc(12px + env(safe-area-inset-top));
@@ -479,7 +580,7 @@ textarea {
   right: 12px;
   z-index: 10000;
   display: grid;
-  grid-template-columns: repeat(5, minmax(0, 1fr));
+  grid-template-columns: repeat(3, minmax(0, 1fr));
   gap: 6px;
 }
 
@@ -820,6 +921,12 @@ textarea {
   }
 
   .planner-story-step-add {
+    grid-template-columns: 1fr;
+  }
+
+  .planner-mobile-sheet-grid,
+  .planner-mobile-sheet-actions,
+  .planner-mobile-sheet-story {
     grid-template-columns: 1fr;
   }
 }

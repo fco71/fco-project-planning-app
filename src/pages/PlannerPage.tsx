@@ -300,6 +300,7 @@ export default function PlannerPage({ user }: PlannerPageProps) {
   );
   const [mobileSidebarOpen, setMobileSidebarOpen] = useState(false);
   const [mobileSidebarSection, setMobileSidebarSection] = useState<"project" | "node" | "bubbles">("project");
+  const [mobileQuickEditorOpen, setMobileQuickEditorOpen] = useState(false);
   const [searchQuery, setSearchQuery] = useState("");
   const searchInputRef = useRef<HTMLInputElement>(null);
   const renameInputRef = useRef<HTMLInputElement>(null);
@@ -445,16 +446,27 @@ export default function PlannerPage({ user }: PlannerPageProps) {
       return;
     }
     setMobileSidebarOpen(false);
+    setMobileQuickEditorOpen(false);
   }, [isMobileLayout]);
 
   useEffect(() => {
-    if (!isMobileLayout || !mobileSidebarOpen || typeof document === "undefined") return undefined;
+    if (!isMobileLayout || (!mobileSidebarOpen && !mobileQuickEditorOpen) || typeof document === "undefined") return undefined;
     const previousOverflow = document.body.style.overflow;
     document.body.style.overflow = "hidden";
     return () => {
       document.body.style.overflow = previousOverflow;
     };
-  }, [isMobileLayout, mobileSidebarOpen]);
+  }, [isMobileLayout, mobileQuickEditorOpen, mobileSidebarOpen]);
+
+  useEffect(() => {
+    if (!mobileSidebarOpen) return;
+    setMobileQuickEditorOpen(false);
+  }, [mobileSidebarOpen]);
+
+  useEffect(() => {
+    if (selectedNodeId) return;
+    setMobileQuickEditorOpen(false);
+  }, [selectedNodeId]);
 
   useEffect(() => {
     if (!db) {
@@ -2318,6 +2330,14 @@ export default function PlannerPage({ user }: PlannerPageProps) {
 
       // Escape - Deselect or clear search
       if (e.key === 'Escape') {
+        if (mobileQuickEditorOpen) {
+          setMobileQuickEditorOpen(false);
+          return;
+        }
+        if (mobileSidebarOpen) {
+          setMobileSidebarOpen(false);
+          return;
+        }
         if (searchQuery) {
           setSearchQuery("");
         } else {
@@ -2338,6 +2358,8 @@ export default function PlannerPage({ user }: PlannerPageProps) {
     paletteIndex,
     paletteItems,
     paletteOpen,
+    mobileQuickEditorOpen,
+    mobileSidebarOpen,
     runPaletteAction,
     searchQuery,
     selectedNodeId,
@@ -3029,6 +3051,110 @@ export default function PlannerPage({ user }: PlannerPageProps) {
         />
       ) : null}
 
+      {isMobileLayout && mobileQuickEditorOpen ? (
+        <button
+          type="button"
+          className="planner-mobile-backdrop planner-mobile-sheet-backdrop"
+          aria-label="Close quick editor"
+          onClick={() => setMobileQuickEditorOpen(false)}
+        />
+      ) : null}
+
+      {isMobileLayout && mobileQuickEditorOpen ? (
+        <section className="planner-mobile-sheet" role="dialog" aria-label="Quick node editor">
+          <div className="planner-mobile-sheet-handle" />
+          {selectedNode ? (
+            <>
+              <div className="planner-mobile-sheet-header">
+                <strong>{selectedNode.title}</strong>
+                <span>{selectedNode.kind}</span>
+              </div>
+              <div className="planner-mobile-sheet-path">{buildNodePath(selectedNode.id, nodesById)}</div>
+              <input
+                value={renameTitle}
+                onChange={(event) => setRenameTitle(event.target.value)}
+                onKeyDown={(event) => {
+                  if (event.key !== "Enter") return;
+                  event.preventDefault();
+                  if (busyAction || renameTitle.trim().length === 0) return;
+                  void renameSelected();
+                }}
+                placeholder="Rename node..."
+              />
+              <div className="planner-mobile-sheet-grid">
+                <button
+                  onClick={() => {
+                    if (selectedNode.kind === "root") return;
+                    const current = selectedNode.taskStatus || "none";
+                    const nextStatus: TaskStatus = current === "done" ? "todo" : "done";
+                    void setNodeTaskStatus(selectedNode.id, nextStatus);
+                  }}
+                  disabled={busyAction || selectedNode.kind === "root"}
+                >
+                  {selectedNode.taskStatus === "done" ? "Mark Todo" : "Mark Done"}
+                </button>
+                <button
+                  onClick={() => {
+                    void handleContextChangeType(selectedNode.id);
+                  }}
+                  disabled={busyAction || selectedNode.kind === "root"}
+                >
+                  {selectedNode.kind === "root" ? "Root" : `Set ${nextNodeKind(selectedNode.kind)}`}
+                </button>
+                <button
+                  onClick={() => {
+                    setCurrentRootId(selectedNode.id);
+                    setMobileQuickEditorOpen(false);
+                  }}
+                >
+                  Focus Here
+                </button>
+                <button
+                  onClick={() => {
+                    void handleContextAddChild(selectedNode.id);
+                  }}
+                  disabled={busyAction}
+                >
+                  Add Child
+                </button>
+              </div>
+              {selectedNode.kind === "story" ? (
+                <div className="planner-mobile-sheet-story">
+                  <input
+                    value={newStoryStepText}
+                    onChange={(event) => setNewStoryStepText(event.target.value)}
+                    onKeyDown={(event) => {
+                      if (event.key !== "Enter") return;
+                      event.preventDefault();
+                      if (busyAction || newStoryStepText.trim().length === 0) return;
+                      void addStoryStep();
+                    }}
+                    placeholder="Add story step..."
+                    disabled={busyAction}
+                  />
+                  <button onClick={addStoryStep} disabled={busyAction || newStoryStepText.trim().length === 0}>
+                    Add Step
+                  </button>
+                </div>
+              ) : null}
+              <div className="planner-mobile-sheet-actions">
+                <button
+                  onClick={() => {
+                    setMobileSidebarSection("node");
+                    setMobileSidebarOpen(true);
+                  }}
+                >
+                  Open Full Node Panel
+                </button>
+                <button onClick={() => setMobileQuickEditorOpen(false)}>Close</button>
+              </div>
+            </>
+          ) : (
+            <div className="planner-subtle">Select a node to edit.</div>
+          )}
+        </section>
+      ) : null}
+
       <main className="planner-canvas">
         {isMobileLayout ? (
           <div className="planner-mobile-toolbar">
@@ -3036,27 +3162,45 @@ export default function PlannerPage({ user }: PlannerPageProps) {
               onClick={() => {
                 setMobileSidebarSection("project");
                 setMobileSidebarOpen(true);
+                setMobileQuickEditorOpen(false);
               }}
             >
               Controls
             </button>
             <button
               onClick={() => {
-                setMobileSidebarSection("node");
-                setMobileSidebarOpen(true);
+                setMobileSidebarOpen(false);
+                setMobileQuickEditorOpen(true);
+              }}
+              disabled={!selectedNode}
+            >
+              Edit
+            </button>
+            <button
+              onClick={() => {
+                if (!selectedNodeId) return;
+                void handleContextAddChild(selectedNodeId);
               }}
               disabled={!selectedNodeId}
             >
-              Node
+              +Child
+            </button>
+            <button
+              onClick={() => {
+                if (!selectedNodeId || !selectedNode || selectedNode.kind === "root") return;
+                const current = selectedNode.taskStatus || "none";
+                const nextStatus: TaskStatus = current === "done" ? "todo" : "done";
+                void setNodeTaskStatus(selectedNodeId, nextStatus);
+              }}
+              disabled={!selectedNode || selectedNode.kind === "root"}
+            >
+              {selectedNode?.taskStatus === "done" ? "Todo" : "Done"}
             </button>
             <button onClick={goGrandmotherView} disabled={!rootNodeId}>
               Home
             </button>
             <button onClick={goUpOneView} disabled={!currentRootNode?.parentId}>
               Up
-            </button>
-            <button onClick={openSelectedAsMaster} disabled={!selectedNodeId}>
-              Focus
             </button>
           </div>
         ) : null}
@@ -3105,8 +3249,8 @@ export default function PlannerPage({ user }: PlannerPageProps) {
             if (isMobileLayout) {
               setSelectedNodeId(node.id);
               setActivePortalRefId(null);
-              setMobileSidebarSection("node");
-              setMobileSidebarOpen(true);
+              setMobileSidebarOpen(false);
+              setMobileQuickEditorOpen(true);
               return;
             }
             setSelectedNodeId(node.id);
