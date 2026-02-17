@@ -11,6 +11,7 @@ type ContextMenuProps = {
   onAddChild: (nodeId: string) => void;
   onDelete: (nodeId: string) => void;
   onDuplicate: (nodeId: string) => void;
+  onRename: (nodeId: string) => void;
   onAddCrossRef: (nodeId: string) => void;
   onChangeType: (nodeId: string) => void;
 };
@@ -26,6 +27,7 @@ export function NodeContextMenu({
   onAddChild,
   onDelete,
   onDuplicate,
+  onRename,
   onAddCrossRef,
   onChangeType,
 }: ContextMenuProps) {
@@ -128,6 +130,11 @@ export function NodeContextMenu({
           icon="⎘"
           label="Duplicate Node"
           onClick={() => handleAction(() => onDuplicate(nodeId))}
+        />
+        <MenuItem
+          icon="✎"
+          label="Rename Node"
+          onClick={() => handleAction(() => onRename(nodeId))}
         />
         <MenuItem
           icon="🔗"

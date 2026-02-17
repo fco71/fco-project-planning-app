@@ -3,6 +3,7 @@ import ReactFlow, {
   Background,
   Handle,
   Position,
+  SelectionMode,
   applyNodeChanges,
   type Edge,
   type EdgeTypes,
@@ -16,6 +17,7 @@ import {
   arrayRemove,
   arrayUnion,
   collection,
+  deleteField,
   deleteDoc,
   doc,
   getDoc,
@@ -43,6 +45,7 @@ type TreeNodeDoc = {
   kind: "root" | "project" | "item";
   x?: number;
   y?: number;
+  color?: string;
 };
 
 type TreeNode = TreeNodeDoc & { id: string };
@@ -83,6 +86,22 @@ type PaletteItem = {
   hint?: string;
   action: () => void;
 };
+
+const HEX_COLOR_REGEX = /^#?[0-9a-fA-F]{6}$/;
+
+function normalizeHexColor(value: unknown): string | undefined {
+  if (typeof value !== "string") return undefined;
+  const trimmed = value.trim();
+  if (!HEX_COLOR_REGEX.test(trimmed)) return undefined;
+  const hex = trimmed.startsWith("#") ? trimmed.slice(1) : trimmed;
+  return `#${hex.toUpperCase()}`;
+}
+
+function defaultNodeColor(kind: "root" | "project" | "item"): string {
+  if (kind === "root") return "#3A2C0E";
+  if (kind === "project") return "#101F3E";
+  return "#10141C";
+}
 
 function normalizeCode(input: string): string {
   const cleaned = input.toUpperCase().replace(/[^A-Z0-9]/g, "").slice(0, 4);
@@ -222,6 +241,7 @@ export default function PlannerPage({ user }: PlannerPageProps) {
   const [sidebarCollapsed, setSidebarCollapsed] = useState(false);
   const [searchQuery, setSearchQuery] = useState("");
   const searchInputRef = useRef<HTMLInputElement>(null);
+  const renameInputRef = useRef<HTMLInputElement>(null);
   const [newChildTitle, setNewChildTitle] = useState("");
   const [renameTitle, setRenameTitle] = useState("");
   const [newRefLabel, setNewRefLabel] = useState("");
@@ -412,6 +432,7 @@ export default function PlannerPage({ user }: PlannerPageProps) {
                 kind: value.kind === "root" || value.kind === "project" || value.kind === "item" ? value.kind : "item",
                 x: typeof value.x === "number" ? value.x : undefined,
                 y: typeof value.y === "number" ? value.y : undefined,
+                color: normalizeHexColor(value.color),
               } satisfies TreeNode;
             });
             nextNodes.sort((a, b) => a.title.localeCompare(b.title));
@@ -514,7 +535,7 @@ export default function PlannerPage({ user }: PlannerPageProps) {
   );
 
   const applyLocalNodePatch = useCallback(
-    (nodeId: string, patch: Partial<Pick<TreeNode, "title" | "parentId" | "kind" | "x" | "y">>) => {
+    (nodeId: string, patch: Partial<Pick<TreeNode, "title" | "parentId" | "kind" | "x" | "y" | "color">>) => {
       setNodes((prevNodes) => prevNodes.map((entry) => (entry.id === nodeId ? { ...entry, ...patch } : entry)));
     },
     []
@@ -658,6 +679,12 @@ export default function PlannerPage({ user }: PlannerPageProps) {
         const isRoot = node.id === rootNodeId;
         const isSearchMatch = searchMatchingIds.has(node.id);
         const isProject = node.kind === "project";
+        const baseBackground = isRoot
+          ? "rgba(58, 44, 14, 0.92)"
+          : isProject
+            ? "rgba(16, 31, 62, 0.95)"
+            : "rgba(16, 20, 28, 0.94)";
+        const background = node.color || baseBackground;
         return {
           id: node.id,
           position,
@@ -709,13 +736,7 @@ export default function PlannerPage({ user }: PlannerPageProps) {
             borderRadius: 14,
             width: 260,
             padding: 10,
-            background: isSearchMatch
-              ? "rgba(22, 101, 52, 0.25)"
-              : isRoot
-                ? "rgba(58, 44, 14, 0.92)"
-                : isProject
-                  ? "rgba(16, 31, 62, 0.95)"
-                : "rgba(16, 20, 28, 0.94)",
+            background,
             color: "rgba(250, 252, 255, 0.95)",
             boxShadow: isSearchMatch
               ? "0 0 0 2px rgba(34, 197, 94, 0.3), 0 12px 28px rgba(0,0,0,0.4)"
@@ -1198,6 +1219,134 @@ export default function PlannerPage({ user }: PlannerPageProps) {
     }
   }, [renameTitle, selectedNodeId, user.uid]);
 
+  const setNodeColor = useCallback(
+    async (nodeId: string, color: string | undefined) => {
+      if (!db) return;
+      const normalized = normalizeHexColor(color);
+      const previousColor = nodesById.get(nodeId)?.color;
+      setBusyAction(true);
+      setError(null);
+      applyLocalNodePatch(nodeId, { color: normalized });
+      try {
+        await updateDoc(doc(db, "users", user.uid, "nodes", nodeId), {
+          color: normalized ?? deleteField(),
+          updatedAt: serverTimestamp(),
+        });
+      } catch (actionError: unknown) {
+        applyLocalNodePatch(nodeId, { color: previousColor });
+        setError(actionError instanceof Error ? actionError.message : "Could not update node color.");
+      } finally {
+        setBusyAction(false);
+      }
+    },
+    [applyLocalNodePatch, nodesById, user.uid]
+  );
+
+  const organizeVisibleTree = useCallback(async () => {
+    if (!db || filteredTreeIds.length === 0) return;
+    const plannedPositions = filteredTreeIds
+      .map((id) => {
+        const position = treeLayout.get(id);
+        if (!position) return null;
+        return { id, position };
+      })
+      .filter((entry): entry is { id: string; position: { x: number; y: number } } => !!entry);
+
+    if (plannedPositions.length === 0) return;
+
+    const nextPositions = new Map(plannedPositions.map((entry) => [entry.id, entry.position] as const));
+    setBusyAction(true);
+    setError(null);
+    setNodes((prevNodes) =>
+      prevNodes.map((entry) => {
+        const next = nextPositions.get(entry.id);
+        if (!next) return entry;
+        return { ...entry, x: next.x, y: next.y };
+      })
+    );
+
+    try {
+      let batch = writeBatch(db);
+      let operations = 0;
+      for (const entry of plannedPositions) {
+        batch.update(doc(db, "users", user.uid, "nodes", entry.id), {
+          x: entry.position.x,
+          y: entry.position.y,
+          updatedAt: serverTimestamp(),
+        });
+        operations += 1;
+        if (operations >= 450) {
+          await batch.commit();
+          batch = writeBatch(db);
+          operations = 0;
+        }
+      }
+      if (operations > 0) {
+        await batch.commit();
+      }
+    } catch (actionError: unknown) {
+      setError(actionError instanceof Error ? actionError.message : "Could not organize node layout.");
+    } finally {
+      setBusyAction(false);
+    }
+  }, [filteredTreeIds, treeLayout, user.uid]);
+
+  const cleanUpCrossRefs = useCallback(async () => {
+    if (!db) return;
+    const operations = refs
+      .map((ref) => {
+        const cleanedNodeIds = Array.from(new Set(ref.nodeIds.filter((id) => nodesById.has(id))));
+        if (cleanedNodeIds.length === 0) {
+          return { type: "delete" as const, refId: ref.id };
+        }
+        const unchanged =
+          cleanedNodeIds.length === ref.nodeIds.length &&
+          cleanedNodeIds.every((id, index) => id === ref.nodeIds[index]);
+        if (unchanged) return null;
+        return { type: "update" as const, refId: ref.id, nodeIds: cleanedNodeIds };
+      })
+      .filter((entry): entry is { type: "update"; refId: string; nodeIds: string[] } | { type: "delete"; refId: string } => !!entry);
+
+    if (operations.length === 0) return;
+
+    setBusyAction(true);
+    setError(null);
+    try {
+      let batch = writeBatch(db);
+      let count = 0;
+      for (const entry of operations) {
+        const refDoc = doc(db, "users", user.uid, "crossRefs", entry.refId);
+        if (entry.type === "delete") {
+          batch.delete(refDoc);
+        } else {
+          batch.update(refDoc, {
+            nodeIds: entry.nodeIds,
+            updatedAt: serverTimestamp(),
+          });
+        }
+        count += 1;
+        if (count >= 450) {
+          await batch.commit();
+          batch = writeBatch(db);
+          count = 0;
+        }
+      }
+      if (count > 0) {
+        await batch.commit();
+      }
+      if (activePortalRefId && operations.some((entry) => entry.type === "delete" && entry.refId === activePortalRefId)) {
+        setActivePortalRefId(null);
+      }
+      if (editRefId && operations.some((entry) => entry.type === "delete" && entry.refId === editRefId)) {
+        hydrateRefEditor(null);
+      }
+    } catch (actionError: unknown) {
+      setError(actionError instanceof Error ? actionError.message : "Could not clean up cross-reference bubbles.");
+    } finally {
+      setBusyAction(false);
+    }
+  }, [activePortalRefId, editRefId, hydrateRefEditor, nodesById, refs, user.uid]);
+
   const deleteSelected = useCallback(async () => {
     if (!db || !selectedNodeId || selectedNodeId === rootNodeId) return;
     const ids = collectDescendants(selectedNodeId, childrenByParent);
@@ -1524,6 +1673,38 @@ export default function PlannerPage({ user }: PlannerPageProps) {
     [showSaveError, user.uid]
   );
 
+  const onSelectionDragStop = useCallback(
+    async (_: React.MouseEvent, draggedNodes: Node[]) => {
+      if (!db) return;
+      const movedTreeNodes = draggedNodes.filter((entry) => !entry.id.startsWith("portal:"));
+      if (movedTreeNodes.length === 0) return;
+      try {
+        let batch = writeBatch(db);
+        let count = 0;
+        for (const entry of movedTreeNodes) {
+          batch.update(doc(db, "users", user.uid, "nodes", entry.id), {
+            x: entry.position.x,
+            y: entry.position.y,
+            updatedAt: serverTimestamp(),
+          });
+          count += 1;
+          if (count >= 450) {
+            await batch.commit();
+            batch = writeBatch(db);
+            count = 0;
+          }
+        }
+        if (count > 0) {
+          await batch.commit();
+        }
+      } catch (actionError: unknown) {
+        showSaveError();
+        setError(actionError instanceof Error ? actionError.message : "Could not save node positions.");
+      }
+    },
+    [showSaveError, user.uid]
+  );
+
   // Context menu handlers
   const handleContextAddChild = useCallback(
     async (nodeId: string) => {
@@ -1614,6 +1795,7 @@ export default function PlannerPage({ user }: PlannerPageProps) {
           kind: original.kind,
           x: (typeof original.x === "number" ? original.x : 0) + 80,
           y: (typeof original.y === "number" ? original.y : 0) + 80,
+          color: original.color,
           createdAt: serverTimestamp(),
           updatedAt: serverTimestamp(),
         } satisfies TreeNodeDoc & { createdAt: unknown; updatedAt: unknown });
@@ -1636,6 +1818,16 @@ export default function PlannerPage({ user }: PlannerPageProps) {
     },
     []
   );
+
+  const handleContextRename = useCallback((nodeId: string) => {
+    setSelectedNodeId(nodeId);
+    setActivePortalRefId(null);
+    setSidebarCollapsed(false);
+    window.setTimeout(() => {
+      renameInputRef.current?.focus();
+      renameInputRef.current?.select();
+    }, 20);
+  }, []);
 
   const handleContextChangeType = useCallback(
     async (nodeId: string) => {
@@ -1679,6 +1871,14 @@ export default function PlannerPage({ user }: PlannerPageProps) {
 
     addItem("cmd-grandmother", "Open grandmother view", "Navigation", goGrandmotherView, "grandmother root home");
     addItem("cmd-up", "Go up one level", "Navigation", goUpOneView, "up parent back");
+    addItem("cmd-organize-tree", "Organize visible tree", "Layout", organizeVisibleTree, "cleanup organize layout tidy tree");
+    addItem(
+      "cmd-clean-bubbles",
+      "Clean up cross-reference bubbles",
+      "Cross-reference",
+      cleanUpCrossRefs,
+      "cleanup cross reference bubbles stale deleted"
+    );
     if (selectedNodeId) {
       addItem("cmd-open-master", "Open selected as master", "Navigation", openSelectedAsMaster, "open selected master");
       addItem(
@@ -1758,6 +1958,7 @@ export default function PlannerPage({ user }: PlannerPageProps) {
 
     return items;
   }, [
+    cleanUpCrossRefs,
     goGrandmotherView,
     goUpOneView,
     handleContextAddChild,
@@ -1767,6 +1968,7 @@ export default function PlannerPage({ user }: PlannerPageProps) {
     nodes,
     nodesById,
     openSelectedAsMaster,
+    organizeVisibleTree,
     paletteQuery,
     refs,
     selectRefForEditing,
@@ -2021,6 +2223,9 @@ export default function PlannerPage({ user }: PlannerPageProps) {
           <button onClick={openSelectedAsMaster} disabled={!selectedNodeId}>
             Open selected as master
           </button>
+          <button onClick={organizeVisibleTree} disabled={busyAction || filteredTreeIds.length === 0}>
+            Organize visible tree
+          </button>
         </div>
 
         <div className="planner-panel-block">
@@ -2051,7 +2256,37 @@ export default function PlannerPage({ user }: PlannerPageProps) {
                 </button>
                 <button disabled>{selectedNode.kind}</button>
               </div>
-              <input value={renameTitle} onChange={(event) => setRenameTitle(event.target.value)} />
+              <div className="planner-row-label">Color</div>
+              <div className="planner-inline-buttons">
+                <input
+                  type="color"
+                  value={selectedNode.color || defaultNodeColor(selectedNode.kind)}
+                  onChange={(event) => {
+                    void setNodeColor(selectedNode.id, event.target.value);
+                  }}
+                  disabled={busyAction}
+                  style={{ width: "72px", height: "34px", padding: "4px 6px" }}
+                />
+                <button
+                  onClick={() => {
+                    void setNodeColor(selectedNode.id, undefined);
+                  }}
+                  disabled={busyAction || !selectedNode.color}
+                >
+                  Reset color
+                </button>
+              </div>
+              <input
+                ref={renameInputRef}
+                value={renameTitle}
+                onChange={(event) => setRenameTitle(event.target.value)}
+                onKeyDown={(event) => {
+                  if (event.key !== "Enter") return;
+                  event.preventDefault();
+                  if (busyAction || renameTitle.trim().length === 0) return;
+                  void renameSelected();
+                }}
+              />
               <div className="planner-inline-buttons">
                 <button onClick={renameSelected} disabled={busyAction || renameTitle.trim().length === 0}>
                   Rename
@@ -2095,6 +2330,9 @@ export default function PlannerPage({ user }: PlannerPageProps) {
           <p className="planner-subtle">
             Use these for entities shared across branches (e.g., Vendor / VN or Partner / PT).
           </p>
+          <button onClick={cleanUpCrossRefs} disabled={busyAction}>
+            Clean up stale bubbles
+          </button>
           <p className="planner-subtle">
             Anchor node: <strong>{selectedNode ? buildNodePath(selectedNode.id, nodesById) : "Select a node first"}</strong>
           </p>
@@ -2409,6 +2647,9 @@ export default function PlannerPage({ user }: PlannerPageProps) {
           fitView
           fitViewOptions={{ padding: 0.3, maxZoom: 1 }}
           nodesConnectable={false}
+          selectionOnDrag
+          selectionMode={SelectionMode.Partial}
+          multiSelectionKeyCode={["Shift", "Meta", "Control"]}
           onInit={setRfInstance}
           onNodesChange={handleNodesChange}
           onNodeClick={(_, node) => {
@@ -2429,6 +2670,7 @@ export default function PlannerPage({ user }: PlannerPageProps) {
           onEdgeMouseEnter={(_, edge) => setHoveredEdgeId(edge.id)}
           onEdgeMouseLeave={() => setHoveredEdgeId(null)}
           onNodeDragStop={onNodeDragStop}
+          onSelectionDragStop={onSelectionDragStop}
           onNodeContextMenu={(event, node) => {
             event.preventDefault();
             if (node.id.startsWith("portal:")) return;
@@ -2459,6 +2701,7 @@ export default function PlannerPage({ user }: PlannerPageProps) {
             onAddChild={handleContextAddChild}
             onDelete={handleContextDelete}
             onDuplicate={handleContextDuplicate}
+            onRename={handleContextRename}
             onAddCrossRef={handleContextAddCrossRef}
             onChangeType={handleContextChangeType}
           />
