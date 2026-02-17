@@ -239,6 +239,11 @@ export default function PlannerPage({ user }: PlannerPageProps) {
   const [selectedNodeId, setSelectedNodeId] = useState<string | null>(null);
   const [pendingSelectedNodeId, setPendingSelectedNodeId] = useState<string | null>(null);
   const [sidebarCollapsed, setSidebarCollapsed] = useState(false);
+  const [isMobileLayout, setIsMobileLayout] = useState(() =>
+    typeof window !== "undefined" ? window.matchMedia("(max-width: 980px)").matches : false
+  );
+  const [mobileSidebarOpen, setMobileSidebarOpen] = useState(false);
+  const [mobileSidebarSection, setMobileSidebarSection] = useState<"project" | "node" | "bubbles">("project");
   const [searchQuery, setSearchQuery] = useState("");
   const searchInputRef = useRef<HTMLInputElement>(null);
   const renameInputRef = useRef<HTMLInputElement>(null);
@@ -357,6 +362,42 @@ export default function PlannerPage({ user }: PlannerPageProps) {
 
     if (changed) await batch.commit();
   }, [user.displayName, user.email, user.uid]);
+
+  useEffect(() => {
+    if (typeof window === "undefined") return undefined;
+    const media = window.matchMedia("(max-width: 980px)");
+    const applyState = () => setIsMobileLayout(media.matches);
+    applyState();
+
+    const handleChange = (event: MediaQueryListEvent) => {
+      setIsMobileLayout(event.matches);
+    };
+
+    if (typeof media.addEventListener === "function") {
+      media.addEventListener("change", handleChange);
+      return () => media.removeEventListener("change", handleChange);
+    }
+
+    media.addListener(handleChange);
+    return () => media.removeListener(handleChange);
+  }, []);
+
+  useEffect(() => {
+    if (isMobileLayout) {
+      setSidebarCollapsed(false);
+      return;
+    }
+    setMobileSidebarOpen(false);
+  }, [isMobileLayout]);
+
+  useEffect(() => {
+    if (!isMobileLayout || !mobileSidebarOpen || typeof document === "undefined") return undefined;
+    const previousOverflow = document.body.style.overflow;
+    document.body.style.overflow = "hidden";
+    return () => {
+      document.body.style.overflow = previousOverflow;
+    };
+  }, [isMobileLayout, mobileSidebarOpen]);
 
   useEffect(() => {
     if (!db) {
@@ -1814,6 +1855,9 @@ export default function PlannerPage({ user }: PlannerPageProps) {
       // Select the node and scroll to cross-ref section in sidebar
       setSelectedNodeId(nodeId);
       setActivePortalRefId(null);
+      setSidebarCollapsed(false);
+      setMobileSidebarSection("bubbles");
+      setMobileSidebarOpen(true);
       // User can then add cross-ref through sidebar
     },
     []
@@ -1823,6 +1867,8 @@ export default function PlannerPage({ user }: PlannerPageProps) {
     setSelectedNodeId(nodeId);
     setActivePortalRefId(null);
     setSidebarCollapsed(false);
+    setMobileSidebarSection("node");
+    setMobileSidebarOpen(true);
     window.setTimeout(() => {
       renameInputRef.current?.focus();
       renameInputRef.current?.select();
@@ -1905,6 +1951,8 @@ export default function PlannerPage({ user }: PlannerPageProps) {
       "Sidebar",
       () => {
         setSidebarCollapsed(false);
+        setMobileSidebarSection("project");
+        setMobileSidebarOpen(true);
         window.setTimeout(() => searchInputRef.current?.focus(), 30);
       },
       "focus search find node"
@@ -1936,6 +1984,8 @@ export default function PlannerPage({ user }: PlannerPageProps) {
         hint: `${ref.entityType} · ${ref.nodeIds.length} links`,
         action: () => {
           setSidebarCollapsed(false);
+          setMobileSidebarSection("bubbles");
+          setMobileSidebarOpen(true);
           selectRefForEditing(ref.id);
         },
       });
@@ -2105,6 +2155,11 @@ export default function PlannerPage({ user }: PlannerPageProps) {
     selectedNodeId,
   ]);
 
+  const sidebarIsCollapsed = !isMobileLayout && sidebarCollapsed;
+  const showProjectSection = !isMobileLayout || mobileSidebarSection === "project";
+  const showNodeSection = !isMobileLayout || mobileSidebarSection === "node";
+  const showBubblesSection = !isMobileLayout || mobileSidebarSection === "bubbles";
+
   if (!db) {
     return (
       <div className="planner-empty-state">
@@ -2118,19 +2173,27 @@ export default function PlannerPage({ user }: PlannerPageProps) {
   }
 
   return (
-    <div className={`planner-shell ${sidebarCollapsed ? "sidebar-collapsed" : ""}`}>
-      <aside className={`planner-sidebar ${sidebarCollapsed ? "collapsed" : ""}`}>
+    <div className={`planner-shell ${sidebarIsCollapsed ? "sidebar-collapsed" : ""} ${isMobileLayout ? "mobile" : ""}`}>
+      <aside
+        className={`planner-sidebar ${sidebarIsCollapsed ? "collapsed" : ""} ${isMobileLayout ? (mobileSidebarOpen ? "mobile-open" : "mobile-hidden") : ""}`}
+      >
         <div className="planner-sidebar-header">
         <button
-          onClick={() => setSidebarCollapsed(!sidebarCollapsed)}
+          onClick={() => {
+            if (isMobileLayout) {
+              setMobileSidebarOpen(false);
+              return;
+            }
+            setSidebarCollapsed(!sidebarCollapsed);
+          }}
           className="planner-sidebar-toggle"
-          aria-label={sidebarCollapsed ? "Expand sidebar" : "Collapse sidebar"}
+          aria-label={isMobileLayout ? "Close controls" : sidebarIsCollapsed ? "Expand sidebar" : "Collapse sidebar"}
         >
-          {sidebarCollapsed ? "→" : "←"}
+          {isMobileLayout ? "Close" : sidebarIsCollapsed ? "→" : "←"}
         </button>
         </div>
 
-        {sidebarCollapsed ? (
+        {sidebarIsCollapsed ? (
           <div style={{
             display: "flex",
             flexDirection: "column",
@@ -2161,7 +2224,7 @@ export default function PlannerPage({ user }: PlannerPageProps) {
           <input
             ref={searchInputRef}
             type="text"
-            placeholder="Search nodes... (Ctrl+F)"
+            placeholder={isMobileLayout ? "Search nodes..." : "Search nodes... (Ctrl+F)"}
             value={searchQuery}
             onChange={(e) => setSearchQuery(e.target.value)}
             style={{
@@ -2171,7 +2234,7 @@ export default function PlannerPage({ user }: PlannerPageProps) {
               borderRadius: "6px",
               background: "rgba(255, 255, 255, 0.05)",
               color: "rgba(245, 248, 255, 0.94)",
-              fontSize: "13px",
+              fontSize: isMobileLayout ? "16px" : "13px",
               outline: "none",
               transition: "all 150ms ease",
             }}
@@ -2206,6 +2269,31 @@ export default function PlannerPage({ user }: PlannerPageProps) {
           </button>
         </div>
 
+        {isMobileLayout ? (
+          <div className="planner-mobile-section-tabs">
+            <button
+              className={mobileSidebarSection === "project" ? "active" : ""}
+              onClick={() => setMobileSidebarSection("project")}
+            >
+              Project
+            </button>
+            <button
+              className={mobileSidebarSection === "node" ? "active" : ""}
+              onClick={() => setMobileSidebarSection("node")}
+            >
+              Node
+            </button>
+            <button
+              className={mobileSidebarSection === "bubbles" ? "active" : ""}
+              onClick={() => setMobileSidebarSection("bubbles")}
+            >
+              Bubbles
+            </button>
+          </div>
+        ) : null}
+
+        {showProjectSection ? (
+          <>
         <div className="planner-panel-block">
           <h2>{profileName || "Main Node"}</h2>
           <p className="planner-subtle">{user.email}</p>
@@ -2239,7 +2327,10 @@ export default function PlannerPage({ user }: PlannerPageProps) {
             Add child
           </button>
         </div>
+          </>
+        ) : null}
 
+        {showNodeSection ? (
         <div className="planner-panel-block">
           <h3>Selected Node</h3>
           {selectedNode ? (
@@ -2324,7 +2415,9 @@ export default function PlannerPage({ user }: PlannerPageProps) {
             <p className="planner-subtle">No node selected.</p>
           )}
         </div>
+        ) : null}
 
+        {showBubblesSection ? (
         <div className="planner-panel-block">
           <h3>Cross-Reference Bubbles</h3>
           <p className="planner-subtle">
@@ -2604,8 +2697,9 @@ export default function PlannerPage({ user }: PlannerPageProps) {
             )}
           </div>
         </div>
+        ) : null}
 
-        {activePortalRef ? (
+        {showBubblesSection && activePortalRef ? (
           <div className="planner-panel-block">
             <h3>{`${activePortalRef.code} - ${activePortalRef.label}`}</h3>
             <p className="planner-subtle">
@@ -2638,7 +2732,31 @@ export default function PlannerPage({ user }: PlannerPageProps) {
         )}
       </aside>
 
+      {isMobileLayout && mobileSidebarOpen ? (
+        <button
+          type="button"
+          className="planner-mobile-backdrop"
+          aria-label="Close controls panel"
+          onClick={() => setMobileSidebarOpen(false)}
+        />
+      ) : null}
+
       <main className="planner-canvas">
+        {isMobileLayout ? (
+          <div className="planner-mobile-toolbar">
+            <button onClick={() => setMobileSidebarOpen(true)}>Controls</button>
+            <button onClick={goGrandmotherView} disabled={!rootNodeId}>
+              Home
+            </button>
+            <button onClick={goUpOneView} disabled={!currentRootNode?.parentId}>
+              Up
+            </button>
+            <button onClick={openSelectedAsMaster} disabled={!selectedNodeId}>
+              Focus
+            </button>
+          </div>
+        ) : null}
+
         <ReactFlow
           nodes={displayNodes}
           edges={flowEdges}
@@ -2655,10 +2773,15 @@ export default function PlannerPage({ user }: PlannerPageProps) {
           onNodeClick={(_, node) => {
             if (node.id.startsWith("portal:")) {
               selectRefForEditing(node.id.replace("portal:", ""));
+              if (isMobileLayout) {
+                setMobileSidebarSection("bubbles");
+                setMobileSidebarOpen(true);
+              }
               return;
             }
             setSelectedNodeId(node.id);
             setActivePortalRefId(null);
+            if (isMobileLayout) setMobileSidebarOpen(false);
           }}
           onNodeDoubleClick={(_, node) => {
             if (node.id.startsWith("portal:")) return;
