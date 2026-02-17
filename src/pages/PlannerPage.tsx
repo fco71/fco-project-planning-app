@@ -35,6 +35,8 @@ type PlannerPageProps = {
   user: User;
 };
 
+type EntityType = "entity" | "investor" | "partner" | "vendor" | "contact" | "client" | "organization";
+
 type TreeNodeDoc = {
   title: string;
   parentId: string | null;
@@ -49,13 +51,37 @@ type CrossRefDoc = {
   label: string;
   code: string;
   nodeIds: string[];
+  entityType?: EntityType;
+  tags?: string[];
+  notes?: string;
+  contact?: string;
+  links?: string[];
 };
 
-type CrossRef = CrossRefDoc & { id: string };
+type CrossRef = {
+  id: string;
+  label: string;
+  code: string;
+  nodeIds: string[];
+  entityType: EntityType;
+  tags: string[];
+  notes: string;
+  contact: string;
+  links: string[];
+  createdAtMs: number;
+  updatedAtMs: number;
+};
 
 type PortalData = {
   label: string;
   title: string;
+};
+
+type PaletteItem = {
+  id: string;
+  label: string;
+  hint?: string;
+  action: () => void;
 };
 
 function normalizeCode(input: string): string {
@@ -72,6 +98,56 @@ function initialsFromLabel(input: string): string {
   if (parts.length === 1) return normalizeCode(parts[0].slice(0, 4));
   const code = `${parts[0][0] || ""}${parts[1][0] || ""}`;
   return normalizeCode(code);
+}
+
+function asStringArray(value: unknown): string[] {
+  if (!Array.isArray(value)) return [];
+  return value.filter((item): item is string => typeof item === "string").map((item) => item.trim()).filter(Boolean);
+}
+
+function parseCsvLike(input: string): string[] {
+  return Array.from(
+    new Set(
+      input
+        .split(",")
+        .map((part) => part.trim())
+        .filter(Boolean)
+    )
+  );
+}
+
+function parseLineList(input: string): string[] {
+  return Array.from(
+    new Set(
+      input
+        .split(/\r?\n/)
+        .map((part) => part.trim())
+        .filter(Boolean)
+    )
+  );
+}
+
+function timestampToMs(value: unknown): number {
+  if (!value || typeof value !== "object") return 0;
+  const maybe = value as { toMillis?: () => number };
+  if (typeof maybe.toMillis !== "function") return 0;
+  try {
+    return maybe.toMillis();
+  } catch {
+    return 0;
+  }
+}
+
+function formatUpdatedTime(ms: number): string {
+  if (!ms) return "No activity yet";
+  const diffMs = Date.now() - ms;
+  const minute = 60 * 1000;
+  const hour = 60 * minute;
+  const day = 24 * hour;
+  if (diffMs < minute) return "just now";
+  if (diffMs < hour) return `${Math.max(1, Math.floor(diffMs / minute))}m ago`;
+  if (diffMs < day) return `${Math.max(1, Math.floor(diffMs / hour))}h ago`;
+  return `${Math.max(1, Math.floor(diffMs / day))}d ago`;
 }
 
 function buildNodePath(nodeId: string, nodesById: Map<string, TreeNode>): string {
@@ -129,6 +205,7 @@ const PortalNode = memo(function PortalNode({ data }: NodeProps<PortalData>) {
 
 const nodeTypes: NodeTypes = Object.freeze({ portal: PortalNode });
 const edgeTypes: EdgeTypes = Object.freeze({});
+const ENTITY_TYPES: EntityType[] = ["entity", "investor", "partner", "vendor", "contact", "client", "organization"];
 
 function collapsedKeyFromIds(ids: Iterable<string>): string {
   return Array.from(ids).sort().join("|");
@@ -149,13 +226,24 @@ export default function PlannerPage({ user }: PlannerPageProps) {
   const [renameTitle, setRenameTitle] = useState("");
   const [newRefLabel, setNewRefLabel] = useState("");
   const [newRefCode, setNewRefCode] = useState("");
+  const [newRefType, setNewRefType] = useState<EntityType>("entity");
   const [refSearchQuery, setRefSearchQuery] = useState("");
   const [editRefId, setEditRefId] = useState("");
   const [editRefLabel, setEditRefLabel] = useState("");
   const [editRefCode, setEditRefCode] = useState("");
+  const [editRefType, setEditRefType] = useState<EntityType>("entity");
+  const [editRefTags, setEditRefTags] = useState("");
+  const [editRefNotes, setEditRefNotes] = useState("");
+  const [editRefContact, setEditRefContact] = useState("");
+  const [editRefLinks, setEditRefLinks] = useState("");
+  const [mergeFromRefId, setMergeFromRefId] = useState("");
   const [linkNodeQuery, setLinkNodeQuery] = useState("");
   const [linkTargetNodeId, setLinkTargetNodeId] = useState("");
   const [activePortalRefId, setActivePortalRefId] = useState<string | null>(null);
+  const [paletteOpen, setPaletteOpen] = useState(false);
+  const [paletteQuery, setPaletteQuery] = useState("");
+  const [paletteIndex, setPaletteIndex] = useState(0);
+  const paletteInputRef = useRef<HTMLInputElement>(null);
   const [collapsedNodeIds, setCollapsedNodeIds] = useState<Set<string>>(new Set());
   const [hoveredNodeId, setHoveredNodeId] = useState<string | null>(null);
   const [hoveredEdgeId, setHoveredEdgeId] = useState<string | null>(null);
@@ -342,17 +430,27 @@ export default function PlannerPage({ user }: PlannerPageProps) {
           query(collection(db, "users", user.uid, "crossRefs")),
           (snapshot) => {
             const nextRefs = snapshot.docs.map((entry) => {
-              const value = entry.data() as Partial<CrossRefDoc>;
+              const value = entry.data() as Partial<CrossRefDoc> & { createdAt?: unknown; updatedAt?: unknown };
+              const entityType = ENTITY_TYPES.includes(value.entityType as EntityType)
+                ? (value.entityType as EntityType)
+                : "entity";
               return {
                 id: entry.id,
                 label: typeof value.label === "string" ? value.label : entry.id,
                 code: typeof value.code === "string" ? normalizeCode(value.code) : "REF",
-                nodeIds: Array.isArray(value.nodeIds)
-                  ? value.nodeIds.filter((item): item is string => typeof item === "string")
-                  : [],
+                nodeIds: asStringArray(value.nodeIds),
+                entityType,
+                tags: asStringArray(value.tags),
+                notes: typeof value.notes === "string" ? value.notes : "",
+                contact: typeof value.contact === "string" ? value.contact : "",
+                links: asStringArray(value.links),
+                createdAtMs: timestampToMs(value.createdAt),
+                updatedAtMs: timestampToMs(value.updatedAt),
               } satisfies CrossRef;
             });
-            nextRefs.sort((a, b) => a.code.localeCompare(b.code) || a.label.localeCompare(b.label));
+            nextRefs.sort(
+              (a, b) => b.updatedAtMs - a.updatedAtMs || a.code.localeCompare(b.code) || a.label.localeCompare(b.label)
+            );
             setRefs(nextRefs);
             gotRefs = true;
             markReady();
@@ -944,7 +1042,11 @@ export default function PlannerPage({ user }: PlannerPageProps) {
   const filteredRefs = useMemo(() => {
     const queryText = refSearchQuery.trim().toLowerCase();
     if (!queryText) return refs;
-    return refs.filter((ref) => `${ref.code} ${ref.label}`.toLowerCase().includes(queryText));
+    return refs.filter((ref) =>
+      `${ref.code} ${ref.label} ${ref.entityType} ${ref.tags.join(" ")} ${ref.notes} ${ref.contact} ${ref.links.join(" ")}`
+        .toLowerCase()
+        .includes(queryText)
+    );
   }, [refSearchQuery, refs]);
 
   const newRefSuggestions = useMemo(() => {
@@ -1006,6 +1108,29 @@ export default function PlannerPage({ user }: PlannerPageProps) {
       .filter((node): node is TreeNode => !!node)
       .sort((a, b) => a.title.localeCompare(b.title));
   }, [activePortalRef, nodesById]);
+
+  const recentEntityRefs = useMemo(() => {
+    return [...refs].sort((a, b) => b.updatedAtMs - a.updatedAtMs).slice(0, 6);
+  }, [refs]);
+
+  const mergeCandidateRefs = useMemo(() => {
+    if (!editRefId) return [] as CrossRef[];
+    const current = refs.find((ref) => ref.id === editRefId);
+    if (!current) return [] as CrossRef[];
+    return refs
+      .filter((ref) => ref.id !== current.id)
+      .filter((ref) => {
+        const sameCode = ref.code === current.code;
+        const sameLabel = ref.label.trim().toLowerCase() === current.label.trim().toLowerCase();
+        const codeContains = ref.code.includes(current.code) || current.code.includes(ref.code);
+        const labelContains =
+          ref.label.toLowerCase().includes(current.label.toLowerCase()) ||
+          current.label.toLowerCase().includes(ref.label.toLowerCase());
+        return sameCode || sameLabel || codeContains || labelContains;
+      })
+      .sort((a, b) => b.updatedAtMs - a.updatedAtMs)
+      .slice(0, 12);
+  }, [editRefId, refs]);
 
   const goGrandmotherView = useCallback(() => {
     if (!rootNodeId) return;
@@ -1108,6 +1233,30 @@ export default function PlannerPage({ user }: PlannerPageProps) {
     }
   }, [childrenByParent, currentRootId, nodesById, refs, rootNodeId, selectedNodeId, user.uid]);
 
+  const hydrateRefEditor = useCallback((ref: CrossRef | null) => {
+    if (!ref) {
+      setEditRefId("");
+      setEditRefLabel("");
+      setEditRefCode("");
+      setEditRefType("entity");
+      setEditRefTags("");
+      setEditRefNotes("");
+      setEditRefContact("");
+      setEditRefLinks("");
+      setMergeFromRefId("");
+      return;
+    }
+    setEditRefId(ref.id);
+    setEditRefLabel(ref.label);
+    setEditRefCode(ref.code);
+    setEditRefType(ref.entityType);
+    setEditRefTags(ref.tags.join(", "));
+    setEditRefNotes(ref.notes);
+    setEditRefContact(ref.contact);
+    setEditRefLinks(ref.links.join("\n"));
+    setMergeFromRefId("");
+  }, []);
+
   const linkCrossRefToNode = useCallback(
     async (refId: string, nodeId: string) => {
       if (!db) return;
@@ -1119,11 +1268,7 @@ export default function PlannerPage({ user }: PlannerPageProps) {
           updatedAt: serverTimestamp(),
         });
         const linked = refs.find((entry) => entry.id === refId);
-        if (linked) {
-          setEditRefId(linked.id);
-          setEditRefLabel(linked.label);
-          setEditRefCode(linked.code);
-        }
+        if (linked) hydrateRefEditor(linked);
         setActivePortalRefId(refId);
         setLinkNodeQuery("");
         setLinkTargetNodeId("");
@@ -1133,7 +1278,7 @@ export default function PlannerPage({ user }: PlannerPageProps) {
         setBusyAction(false);
       }
     },
-    [refs, user.uid]
+    [hydrateRefEditor, refs, user.uid]
   );
 
   const createCrossRef = useCallback(async () => {
@@ -1150,11 +1295,13 @@ export default function PlannerPage({ user }: PlannerPageProps) {
       if (existingExact) {
         await updateDoc(doc(db, "users", user.uid, "crossRefs", existingExact.id), {
           nodeIds: arrayUnion(selectedNodeId),
+          entityType: existingExact.entityType === "entity" ? newRefType : existingExact.entityType,
           updatedAt: serverTimestamp(),
         });
-        setEditRefId(existingExact.id);
-        setEditRefLabel(existingExact.label);
-        setEditRefCode(existingExact.code);
+        hydrateRefEditor({
+          ...existingExact,
+          entityType: existingExact.entityType === "entity" ? newRefType : existingExact.entityType,
+        });
         setActivePortalRefId(existingExact.id);
       } else {
         const newDoc = doc(collection(db, "users", user.uid, "crossRefs"));
@@ -1162,22 +1309,38 @@ export default function PlannerPage({ user }: PlannerPageProps) {
           label,
           code,
           nodeIds: [selectedNodeId],
+          entityType: newRefType,
+          tags: [],
+          notes: "",
+          contact: "",
+          links: [],
           createdAt: serverTimestamp(),
           updatedAt: serverTimestamp(),
         } satisfies CrossRefDoc & { createdAt: unknown; updatedAt: unknown });
-        setEditRefId(newDoc.id);
-        setEditRefLabel(label);
-        setEditRefCode(code);
+        hydrateRefEditor({
+          id: newDoc.id,
+          label,
+          code,
+          nodeIds: [selectedNodeId],
+          entityType: newRefType,
+          tags: [],
+          notes: "",
+          contact: "",
+          links: [],
+          createdAtMs: 0,
+          updatedAtMs: 0,
+        });
         setActivePortalRefId(newDoc.id);
       }
       setNewRefLabel("");
       setNewRefCode("");
+      setNewRefType("entity");
     } catch (actionError: unknown) {
       setError(actionError instanceof Error ? actionError.message : "Could not create cross-reference.");
     } finally {
       setBusyAction(false);
     }
-  }, [newRefCode, newRefLabel, refs, selectedNodeId, user.uid]);
+  }, [hydrateRefEditor, newRefCode, newRefLabel, newRefType, refs, selectedNodeId, user.uid]);
 
   const saveCrossRefEdits = useCallback(async () => {
     if (!db || !editRefId) return;
@@ -1187,22 +1350,82 @@ export default function PlannerPage({ user }: PlannerPageProps) {
       return;
     }
     const code = editRefCode.trim() ? normalizeCode(editRefCode) : initialsFromLabel(label);
+    const tags = parseCsvLike(editRefTags);
+    const links = parseLineList(editRefLinks);
+    const notes = editRefNotes.trim();
+    const contact = editRefContact.trim();
     setBusyAction(true);
     setError(null);
     try {
       await updateDoc(doc(db, "users", user.uid, "crossRefs", editRefId), {
         label,
         code,
+        entityType: editRefType,
+        tags,
+        notes,
+        contact,
+        links,
         updatedAt: serverTimestamp(),
       });
       setEditRefCode(code);
+      setEditRefTags(tags.join(", "));
+      setEditRefLinks(links.join("\n"));
       setActivePortalRefId(editRefId);
     } catch (actionError: unknown) {
       setError(actionError instanceof Error ? actionError.message : "Could not update bubble.");
     } finally {
       setBusyAction(false);
     }
-  }, [editRefCode, editRefId, editRefLabel, user.uid]);
+  }, [editRefCode, editRefContact, editRefId, editRefLabel, editRefLinks, editRefNotes, editRefTags, editRefType, user.uid]);
+
+  const mergeCrossRefIntoEdited = useCallback(async () => {
+    if (!db || !editRefId || !mergeFromRefId || editRefId === mergeFromRefId) return;
+    const primary = refs.find((ref) => ref.id === editRefId);
+    const duplicate = refs.find((ref) => ref.id === mergeFromRefId);
+    if (!primary || !duplicate) return;
+
+    const mergedNodeIds = Array.from(new Set([...primary.nodeIds, ...duplicate.nodeIds]));
+    const mergedTags = Array.from(new Set([...primary.tags, ...duplicate.tags].map((tag) => tag.trim()).filter(Boolean)));
+    const mergedLinks = Array.from(new Set([...primary.links, ...duplicate.links].map((link) => link.trim()).filter(Boolean)));
+    const mergedNotes = [primary.notes.trim(), duplicate.notes.trim()].filter(Boolean).join("\n\n");
+    const mergedContact = primary.contact.trim() || duplicate.contact.trim();
+    const mergedType = primary.entityType !== "entity" ? primary.entityType : duplicate.entityType;
+
+    setBusyAction(true);
+    setError(null);
+    try {
+      const batch = writeBatch(db);
+      batch.update(doc(db, "users", user.uid, "crossRefs", primary.id), {
+        nodeIds: mergedNodeIds,
+        tags: mergedTags,
+        links: mergedLinks,
+        notes: mergedNotes,
+        contact: mergedContact,
+        entityType: mergedType,
+        updatedAt: serverTimestamp(),
+      });
+      batch.delete(doc(db, "users", user.uid, "crossRefs", duplicate.id));
+      await batch.commit();
+
+      setMergeFromRefId("");
+      if (activePortalRefId === duplicate.id) {
+        setActivePortalRefId(primary.id);
+      }
+      hydrateRefEditor({
+        ...primary,
+        nodeIds: mergedNodeIds,
+        tags: mergedTags,
+        links: mergedLinks,
+        notes: mergedNotes,
+        contact: mergedContact,
+        entityType: mergedType,
+      });
+    } catch (actionError: unknown) {
+      setError(actionError instanceof Error ? actionError.message : "Could not merge entities.");
+    } finally {
+      setBusyAction(false);
+    }
+  }, [activePortalRefId, editRefId, hydrateRefEditor, mergeFromRefId, refs, user.uid]);
 
   const deleteCrossRefBubble = useCallback(async () => {
     if (!db || !editRefId) return;
@@ -1213,9 +1436,7 @@ export default function PlannerPage({ user }: PlannerPageProps) {
       if (activePortalRefId === editRefId) {
         setActivePortalRefId(null);
       }
-      setEditRefId("");
-      setEditRefLabel("");
-      setEditRefCode("");
+      hydrateRefEditor(null);
       setLinkNodeQuery("");
       setLinkTargetNodeId("");
     } catch (actionError: unknown) {
@@ -1223,30 +1444,26 @@ export default function PlannerPage({ user }: PlannerPageProps) {
     } finally {
       setBusyAction(false);
     }
-  }, [activePortalRefId, editRefId, user.uid]);
+  }, [activePortalRefId, editRefId, hydrateRefEditor, user.uid]);
 
   const selectRefForEditing = useCallback(
     (refId: string) => {
       setActivePortalRefId(refId);
-      setEditRefId(refId);
       const ref = refs.find((entry) => entry.id === refId);
-      setEditRefLabel(ref?.label || "");
-      setEditRefCode(ref?.code || "");
+      hydrateRefEditor(ref || null);
       setLinkNodeQuery("");
       setLinkTargetNodeId("");
     },
-    [refs]
+    [hydrateRefEditor, refs]
   );
 
   useEffect(() => {
     if (!editRefId) return;
     if (refs.some((ref) => ref.id === editRefId)) return;
-    setEditRefId("");
-    setEditRefLabel("");
-    setEditRefCode("");
+    hydrateRefEditor(null);
     setLinkNodeQuery("");
     setLinkTargetNodeId("");
-  }, [editRefId, refs]);
+  }, [editRefId, hydrateRefEditor, refs]);
 
   useEffect(() => {
     if (!linkTargetNodeId) return;
@@ -1450,15 +1667,178 @@ export default function PlannerPage({ user }: PlannerPageProps) {
     [applyLocalNodePatch, nodesById, user.uid]
   );
 
+  const paletteItems = useMemo(() => {
+    const items: PaletteItem[] = [];
+    const queryText = paletteQuery.trim().toLowerCase();
+    const includesQuery = (value: string) => !queryText || value.toLowerCase().includes(queryText);
+
+    const addItem = (id: string, label: string, hint: string | undefined, action: () => void, searchBlob = label) => {
+      if (!includesQuery(searchBlob)) return;
+      items.push({ id, label, hint, action });
+    };
+
+    addItem("cmd-grandmother", "Open grandmother view", "Navigation", goGrandmotherView, "grandmother root home");
+    addItem("cmd-up", "Go up one level", "Navigation", goUpOneView, "up parent back");
+    if (selectedNodeId) {
+      addItem("cmd-open-master", "Open selected as master", "Navigation", openSelectedAsMaster, "open selected master");
+      addItem(
+        "cmd-add-child",
+        "Add child to selected node",
+        "Create",
+        () => handleContextAddChild(selectedNodeId),
+        "add child create node"
+      );
+      const selected = nodesById.get(selectedNodeId);
+      if (selected && selected.kind !== "root") {
+        addItem(
+          "cmd-toggle-type",
+          selected.kind === "project" ? "Set selected node as item" : "Set selected node as project",
+          "Node type",
+          () => handleContextChangeType(selectedNodeId),
+          "toggle type project item"
+        );
+      }
+    }
+    addItem(
+      "cmd-focus-search",
+      "Focus node search",
+      "Sidebar",
+      () => {
+        setSidebarCollapsed(false);
+        window.setTimeout(() => searchInputRef.current?.focus(), 30);
+      },
+      "focus search find node"
+    );
+
+    const nodeMatches = nodes
+      .map((node) => ({ node, path: buildNodePath(node.id, nodesById) }))
+      .filter((entry) => includesQuery(`${entry.node.title} ${entry.path}`))
+      .sort((a, b) => a.path.localeCompare(b.path))
+      .slice(0, 8);
+    nodeMatches.forEach((entry) => {
+      items.push({
+        id: `node:${entry.node.id}`,
+        label: entry.node.title,
+        hint: entry.path,
+        action: () => jumpToReferencedNode(entry.node.id),
+      });
+    });
+
+    const entityMatches = refs
+      .filter((ref) =>
+        includesQuery(`${ref.code} ${ref.label} ${ref.entityType} ${ref.tags.join(" ")} ${ref.notes} ${ref.contact}`)
+      )
+      .slice(0, 8);
+    entityMatches.forEach((ref) => {
+      items.push({
+        id: `entity:${ref.id}`,
+        label: `${ref.code} - ${ref.label}`,
+        hint: `${ref.entityType} · ${ref.nodeIds.length} links`,
+        action: () => {
+          setSidebarCollapsed(false);
+          selectRefForEditing(ref.id);
+        },
+      });
+    });
+
+    if (selectedNodeId) {
+      refs
+        .filter((ref) => !ref.nodeIds.includes(selectedNodeId))
+        .filter((ref) => includesQuery(`link ${ref.code} ${ref.label} ${ref.entityType} ${ref.tags.join(" ")}`))
+        .slice(0, 6)
+        .forEach((ref) => {
+          items.push({
+            id: `link:${ref.id}`,
+            label: `Link selected to ${ref.code} - ${ref.label}`,
+            hint: "Entity link",
+            action: () => linkCrossRefToNode(ref.id, selectedNodeId),
+          });
+        });
+    }
+
+    return items;
+  }, [
+    goGrandmotherView,
+    goUpOneView,
+    handleContextAddChild,
+    handleContextChangeType,
+    jumpToReferencedNode,
+    linkCrossRefToNode,
+    nodes,
+    nodesById,
+    openSelectedAsMaster,
+    paletteQuery,
+    refs,
+    selectRefForEditing,
+    selectedNodeId,
+  ]);
+
+  useEffect(() => {
+    if (!paletteOpen) return;
+    setPaletteIndex(0);
+    const id = window.setTimeout(() => {
+      paletteInputRef.current?.focus();
+      paletteInputRef.current?.select();
+    }, 10);
+    return () => window.clearTimeout(id);
+  }, [paletteOpen]);
+
+  const runPaletteAction = useCallback((item: PaletteItem) => {
+    item.action();
+    setPaletteOpen(false);
+    setPaletteQuery("");
+    setPaletteIndex(0);
+  }, []);
+
   // Keyboard shortcuts
   useEffect(() => {
     const handleKeyDown = (e: KeyboardEvent) => {
       const isMac = navigator.platform.toUpperCase().indexOf('MAC') >= 0;
       const cmdOrCtrl = isMac ? e.metaKey : e.ctrlKey;
 
+      if (cmdOrCtrl && e.key.toLowerCase() === "k") {
+        e.preventDefault();
+        setPaletteOpen((prev) => {
+          const next = !prev;
+          if (next) {
+            setPaletteQuery("");
+            setPaletteIndex(0);
+          }
+          return next;
+        });
+        return;
+      }
+
+      if (paletteOpen) {
+        if (e.key === "Escape") {
+          e.preventDefault();
+          setPaletteOpen(false);
+          setPaletteQuery("");
+          setPaletteIndex(0);
+          return;
+        }
+        if (e.key === "ArrowDown") {
+          e.preventDefault();
+          setPaletteIndex((prev) => Math.min(prev + 1, Math.max(0, paletteItems.length - 1)));
+          return;
+        }
+        if (e.key === "ArrowUp") {
+          e.preventDefault();
+          setPaletteIndex((prev) => Math.max(0, prev - 1));
+          return;
+        }
+        if (e.key === "Enter") {
+          e.preventDefault();
+          const item = paletteItems[paletteIndex];
+          if (item) runPaletteAction(item);
+          return;
+        }
+        return;
+      }
+
       // Ignore if typing in input/textarea or if context menu is open
       const target = e.target as HTMLElement;
-      if (target.tagName === 'INPUT' || target.tagName === 'TEXTAREA' || contextMenu) {
+      if (target.tagName === 'INPUT' || target.tagName === 'TEXTAREA' || target.isContentEditable || contextMenu) {
         return;
       }
 
@@ -1510,7 +1890,18 @@ export default function PlannerPage({ user }: PlannerPageProps) {
 
     document.addEventListener('keydown', handleKeyDown);
     return () => document.removeEventListener('keydown', handleKeyDown);
-  }, [contextMenu, handleContextAddChild, handleContextDelete, handleContextDuplicate, searchQuery, selectedNodeId]);
+  }, [
+    contextMenu,
+    handleContextAddChild,
+    handleContextDelete,
+    handleContextDuplicate,
+    paletteIndex,
+    paletteItems,
+    paletteOpen,
+    runPaletteAction,
+    searchQuery,
+    selectedNodeId,
+  ]);
 
   if (!db) {
     return (
@@ -1601,6 +1992,16 @@ export default function PlannerPage({ user }: PlannerPageProps) {
               {searchMatchingIds.size} match{searchMatchingIds.size !== 1 ? "es" : ""} found
             </div>
           )}
+          <button
+            style={{ marginTop: "8px", width: "100%" }}
+            onClick={() => {
+              setPaletteOpen(true);
+              setPaletteQuery("");
+              setPaletteIndex(0);
+            }}
+          >
+            Command palette (Cmd/Ctrl+K)
+          </button>
         </div>
 
         <div className="planner-panel-block">
@@ -1707,6 +2108,13 @@ export default function PlannerPage({ user }: PlannerPageProps) {
             onChange={(event) => setNewRefCode(event.target.value)}
             placeholder="Bubble code (optional, e.g., VN)"
           />
+          <select value={newRefType} onChange={(event) => setNewRefType(event.target.value as EntityType)}>
+            {ENTITY_TYPES.map((entityType) => (
+              <option key={entityType} value={entityType}>
+                {entityType}
+              </option>
+            ))}
+          </select>
           <button onClick={createCrossRef} disabled={busyAction || !selectedNodeId || newRefLabel.trim().length === 0}>
             Create bubble and attach to selected
           </button>
@@ -1725,7 +2133,7 @@ export default function PlannerPage({ user }: PlannerPageProps) {
                     }}
                     title={describeRefTargets(ref, 4)}
                   >
-                    {`${ref.code} - ${ref.label}`}
+                    {`${ref.code} - ${ref.label} (${ref.entityType})`}
                   </button>
                 ))}
               </div>
@@ -1742,7 +2150,7 @@ export default function PlannerPage({ user }: PlannerPageProps) {
                   <button
                     onClick={() => selectRefForEditing(ref.id)}
                     title={describeRefTargets(ref, 4)}
-                  >{`${ref.code} - ${ref.label} (${ref.nodeIds.length})`}</button>
+                  >{`${ref.code} - ${ref.label} (${ref.entityType}, ${ref.nodeIds.length})`}</button>
                   <button
                     className="chip-action"
                     onClick={() => detachCrossRef(ref.id, selectedNodeId)}
@@ -1772,7 +2180,9 @@ export default function PlannerPage({ user }: PlannerPageProps) {
                 return (
                   <div key={ref.id} className="planner-reference-item">
                     <button onClick={() => selectRefForEditing(ref.id)}>{`${ref.code} - ${ref.label}`}</button>
-                    <div className="planner-reference-preview">{describeRefTargets(ref, 2)}</div>
+                    <div className="planner-reference-preview">
+                      {`${ref.entityType}${ref.tags.length > 0 ? ` · ${ref.tags.join(", ")}` : ""} · ${describeRefTargets(ref, 2)}`}
+                    </div>
                     <div className="planner-reference-actions">
                       <button
                         onClick={() => {
@@ -1798,15 +2208,31 @@ export default function PlannerPage({ user }: PlannerPageProps) {
             )}
           </div>
 
+          <div className="planner-row-label">Recent entities</div>
+          <div className="planner-chip-list">
+            {recentEntityRefs.length === 0 ? (
+              <span className="planner-subtle">No recent entities yet.</span>
+            ) : (
+              recentEntityRefs.map((ref) => (
+                <button
+                  key={ref.id}
+                  className="chip"
+                  onClick={() => selectRefForEditing(ref.id)}
+                  title={describeRefTargets(ref, 4)}
+                >
+                  {`${ref.code} · ${formatUpdatedTime(ref.updatedAtMs)}`}
+                </button>
+              ))
+            )}
+          </div>
+
           <div className="planner-row-label">Edit bubble</div>
           <select
             value={editRefId}
             onChange={(event) => {
               const refId = event.target.value;
               if (!refId) {
-                setEditRefId("");
-                setEditRefLabel("");
-                setEditRefCode("");
+                hydrateRefEditor(null);
                 setActivePortalRefId(null);
                 setLinkNodeQuery("");
                 setLinkTargetNodeId("");
@@ -1818,7 +2244,7 @@ export default function PlannerPage({ user }: PlannerPageProps) {
             <option value="">Select bubble to edit...</option>
             {refs.map((ref) => (
               <option key={ref.id} value={ref.id}>
-                {`${ref.code} - ${ref.label}`}
+                {`${ref.code} - ${ref.label} (${ref.entityType})`}
               </option>
             ))}
           </select>
@@ -1834,6 +2260,39 @@ export default function PlannerPage({ user }: PlannerPageProps) {
             placeholder="Bubble code"
             disabled={!editRefId}
           />
+          <select value={editRefType} onChange={(event) => setEditRefType(event.target.value as EntityType)} disabled={!editRefId}>
+            {ENTITY_TYPES.map((entityType) => (
+              <option key={entityType} value={entityType}>
+                {entityType}
+              </option>
+            ))}
+          </select>
+          <input
+            value={editRefTags}
+            onChange={(event) => setEditRefTags(event.target.value)}
+            placeholder="Tags (comma-separated)"
+            disabled={!editRefId}
+          />
+          <input
+            value={editRefContact}
+            onChange={(event) => setEditRefContact(event.target.value)}
+            placeholder="Contact info (email / phone / person)"
+            disabled={!editRefId}
+          />
+          <textarea
+            value={editRefLinks}
+            onChange={(event) => setEditRefLinks(event.target.value)}
+            placeholder="One URL per line"
+            rows={3}
+            disabled={!editRefId}
+          />
+          <textarea
+            value={editRefNotes}
+            onChange={(event) => setEditRefNotes(event.target.value)}
+            placeholder="Entity notes"
+            rows={4}
+            disabled={!editRefId}
+          />
           <div className="planner-inline-buttons">
             <button onClick={saveCrossRefEdits} disabled={busyAction || !editRefId || editRefLabel.trim().length === 0}>
               Save bubble
@@ -1842,6 +2301,21 @@ export default function PlannerPage({ user }: PlannerPageProps) {
               Delete bubble
             </button>
           </div>
+
+          <div className="planner-row-label">Merge duplicate into this entity</div>
+          <select value={mergeFromRefId} onChange={(event) => setMergeFromRefId(event.target.value)} disabled={!editRefId}>
+            <option value="">
+              {editRefId ? "Select duplicate entity..." : "Select an entity to enable merging..."}
+            </option>
+            {mergeCandidateRefs.map((ref) => (
+              <option key={ref.id} value={ref.id}>
+                {`${ref.code} - ${ref.label} (${ref.entityType})`}
+              </option>
+            ))}
+          </select>
+          <button onClick={mergeCrossRefIntoEdited} disabled={busyAction || !editRefId || !mergeFromRefId}>
+            Merge selected duplicate
+          </button>
 
           <div className="planner-row-label">Link this bubble to any node</div>
           <input
@@ -1896,6 +2370,20 @@ export default function PlannerPage({ user }: PlannerPageProps) {
         {activePortalRef ? (
           <div className="planner-panel-block">
             <h3>{`${activePortalRef.code} - ${activePortalRef.label}`}</h3>
+            <p className="planner-subtle">
+              {`${activePortalRef.entityType}${activePortalRef.tags.length > 0 ? ` · ${activePortalRef.tags.join(", ")}` : ""}`}
+            </p>
+            {activePortalRef.contact ? <p className="planner-subtle">{`Contact: ${activePortalRef.contact}`}</p> : null}
+            {activePortalRef.notes ? <p className="planner-subtle">{activePortalRef.notes}</p> : null}
+            {activePortalRef.links.length > 0 ? (
+              <div className="planner-reference-list">
+                {activePortalRef.links.map((url) => (
+                  <a key={url} href={url} target="_blank" rel="noreferrer">
+                    {url}
+                  </a>
+                ))}
+              </div>
+            ) : null}
             <p className="planner-subtle">All locations where this bubble exists:</p>
             <div className="planner-reference-list">
               {activePortalTargets.map((target) => (
@@ -1974,6 +2462,46 @@ export default function PlannerPage({ user }: PlannerPageProps) {
             onAddCrossRef={handleContextAddCrossRef}
             onChangeType={handleContextChangeType}
           />
+        )}
+
+        {paletteOpen && (
+          <div
+            className="planner-palette-backdrop"
+            onClick={() => {
+              setPaletteOpen(false);
+              setPaletteQuery("");
+              setPaletteIndex(0);
+            }}
+          >
+            <div className="planner-palette" onClick={(event) => event.stopPropagation()}>
+              <input
+                ref={paletteInputRef}
+                value={paletteQuery}
+                onChange={(event) => {
+                  setPaletteQuery(event.target.value);
+                  setPaletteIndex(0);
+                }}
+                placeholder="Type a command, node, or entity..."
+              />
+              <div className="planner-palette-list">
+                {paletteItems.length === 0 ? (
+                  <div className="planner-palette-empty">No matches</div>
+                ) : (
+                  paletteItems.map((item, index) => (
+                    <button
+                      key={item.id}
+                      className={`planner-palette-item ${index === paletteIndex ? "active" : ""}`}
+                      onMouseEnter={() => setPaletteIndex(index)}
+                      onClick={() => runPaletteAction(item)}
+                    >
+                      <span>{item.label}</span>
+                      {item.hint ? <span>{item.hint}</span> : null}
+                    </button>
+                  ))
+                )}
+              </div>
+            </div>
+          </div>
         )}
 
         {/* Save error indicator (successful autosaves are silent). */}
