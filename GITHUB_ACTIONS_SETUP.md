@@ -31,7 +31,20 @@ This will:
 4. Value: Paste the token from step 1
 5. Click **"Add secret"**
 
-### 3. Push Workflow Files to GitHub
+### 3. Add Build Secrets for Vite
+
+Add these repository secrets in the same GitHub Secrets page:
+
+- `VITE_FIREBASE_API_KEY`
+- `VITE_FIREBASE_AUTH_DOMAIN`
+- `VITE_FIREBASE_PROJECT_ID`
+- `VITE_FIREBASE_STORAGE_BUCKET`
+- `VITE_FIREBASE_MESSAGING_SENDER_ID`
+- `VITE_FIREBASE_APP_ID`
+
+These are required for `npm run build` in GitHub Actions.
+
+### 4. Push Workflow Files to GitHub
 
 ```bash
 git add .github/
@@ -39,7 +52,7 @@ git commit -m "Add GitHub Actions for automatic Firebase deployment"
 git push origin main
 ```
 
-### 4. Watch It Deploy! 🎉
+### 5. Watch It Deploy! 🎉
 
 Once you push:
 1. Go to: https://github.com/fco71/fco-project-planning-app/actions
@@ -97,6 +110,7 @@ npx firebase deploy --only hosting
 
 **Build fails in GitHub Actions**
 - Check that `npm run build` works locally first
+- Verify all required `VITE_FIREBASE_*` secrets are present in repo settings
 - View detailed logs in the Actions tab
 
 **Deploy succeeds but site doesn't update**

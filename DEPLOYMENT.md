@@ -7,8 +7,14 @@ Your app is now configured for Firebase Hosting and ready to deploy!
 ### Prerequisites
 - Firebase project: `fco-planning-app` (already configured)
 - Firebase CLI installed (already installed as dev dependency)
+- Environment variables configured locally (`.env` / `.env.production`) and not committed to git
 
 ### Deployment Steps
+
+#### 0. Configure Environment Variables
+Create local env files from `.env.example` as needed.
+
+Do not commit `.env.production` or any real keys to the repository.
 
 #### 1. Login to Firebase (First time only)
 ```bash
@@ -90,9 +96,9 @@ npx firebase use --add
 
 ### Continuous Deployment
 Consider setting up GitHub Actions for automatic deployment:
-1. Add Firebase service account credentials to GitHub Secrets
-2. Create `.github/workflows/deploy.yml` with Firebase deploy action
-3. Auto-deploy on every push to main branch
+1. Add `FIREBASE_TOKEN` to GitHub Secrets
+2. Add all required `VITE_FIREBASE_*` values as GitHub Secrets for build-time env vars
+3. Use the existing workflows in `.github/workflows/`
 
 ### Performance Tips
 - All static assets are cached for 1 year

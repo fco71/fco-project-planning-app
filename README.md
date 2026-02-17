@@ -28,6 +28,8 @@ npm install
 - `VITE_FIREBASE_MESSAGING_SENDER_ID`
 - `VITE_FIREBASE_APP_ID`
 
+Never commit real `.env` or `.env.production` files to git.
+
 3. Run locally:
 
 ```bash
