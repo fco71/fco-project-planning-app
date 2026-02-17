@@ -1284,6 +1284,30 @@ export default function PlannerPage({ user }: PlannerPageProps) {
       .slice(0, 12);
   }, [editRefId, refs]);
 
+  const hydrateRefEditor = useCallback((ref: CrossRef | null) => {
+    if (!ref) {
+      setEditRefId("");
+      setEditRefLabel("");
+      setEditRefCode("");
+      setEditRefType("entity");
+      setEditRefTags("");
+      setEditRefNotes("");
+      setEditRefContact("");
+      setEditRefLinks("");
+      setMergeFromRefId("");
+      return;
+    }
+    setEditRefId(ref.id);
+    setEditRefLabel(ref.label);
+    setEditRefCode(ref.code);
+    setEditRefType(ref.entityType);
+    setEditRefTags(ref.tags.join(", "));
+    setEditRefNotes(ref.notes);
+    setEditRefContact(ref.contact);
+    setEditRefLinks(ref.links.join("\n"));
+    setMergeFromRefId("");
+  }, []);
+
   const goGrandmotherView = useCallback(() => {
     if (!rootNodeId) return;
     setCurrentRootId(rootNodeId);
@@ -1600,30 +1624,6 @@ export default function PlannerPage({ user }: PlannerPageProps) {
       setBusyAction(false);
     }
   }, [childrenByParent, currentRootId, nodesById, refs, rootNodeId, selectedNodeId, user.uid]);
-
-  const hydrateRefEditor = useCallback((ref: CrossRef | null) => {
-    if (!ref) {
-      setEditRefId("");
-      setEditRefLabel("");
-      setEditRefCode("");
-      setEditRefType("entity");
-      setEditRefTags("");
-      setEditRefNotes("");
-      setEditRefContact("");
-      setEditRefLinks("");
-      setMergeFromRefId("");
-      return;
-    }
-    setEditRefId(ref.id);
-    setEditRefLabel(ref.label);
-    setEditRefCode(ref.code);
-    setEditRefType(ref.entityType);
-    setEditRefTags(ref.tags.join(", "));
-    setEditRefNotes(ref.notes);
-    setEditRefContact(ref.contact);
-    setEditRefLinks(ref.links.join("\n"));
-    setMergeFromRefId("");
-  }, []);
 
   const linkCrossRefToNode = useCallback(
     async (refId: string, nodeId: string) => {
