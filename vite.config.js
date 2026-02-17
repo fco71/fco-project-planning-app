@@ -1,6 +1,5 @@
 import { defineConfig } from "vite";
 import react from "@vitejs/plugin-react";
-import { VitePWA } from "vite-plugin-pwa";
 import { existsSync, readFileSync } from "node:fs";
 import { resolve } from "node:path";
 
@@ -34,51 +33,6 @@ export default defineConfig({
   },
   plugins: [
     react(),
-    VitePWA({
-      registerType: "autoUpdate",
-      injectRegister: false,
-      includeAssets: [
-        "icon-16.png",
-        "icon-32.png",
-        "icon-192.png",
-        "icon-512.png",
-        "apple-touch-icon.png",
-      ],
-      manifest: {
-        name: "FCO Planning App",
-        short_name: "FCO Planner",
-        description: "Editable planning trees with cross-reference portals.",
-        version: buildLabel,
-        theme_color: "#07090c",
-        background_color: "#07090c",
-        display: "standalone",
-        scope: "/",
-        start_url: "/",
-        icons: [
-          {
-            src: "icon-192.png",
-            sizes: "192x192",
-            type: "image/png",
-            purpose: "any",
-          },
-          {
-            src: "icon-512.png",
-            sizes: "512x512",
-            type: "image/png",
-            purpose: "any",
-          },
-        ],
-      },
-      workbox: {
-        globPatterns: ["**/*.{js,css,html,ico,png,svg,json}"],
-        navigateFallback: "/index.html",
-      },
-      devOptions: {
-        // Disable PWA in dev by default to avoid stale cache issues
-        // Set VITE_PWA_DEV_ENABLED=1 to enable in dev if needed
-        enabled: process.env.NODE_ENV === "production" || process.env.VITE_PWA_DEV_ENABLED === "1",
-      },
-    }),
   ],
   server: httpsConfig
     ? {
