@@ -58,6 +58,7 @@ type TreeNodeDoc = {
   color?: string;
   taskStatus?: TaskStatus;
   storySteps?: StoryStep[];
+  body?: string;
 };
 
 type TreeNode = TreeNodeDoc & { id: string };
@@ -143,6 +144,11 @@ function normalizeStorySteps(value: unknown): StoryStep[] {
       } satisfies StoryStep;
     })
     .filter((entry): entry is StoryStep => !!entry);
+}
+
+function normalizeNodeBody(value: unknown): string {
+  if (typeof value !== "string") return "";
+  return value;
 }
 
 function createStoryStep(text: string): StoryStep {
@@ -317,6 +323,10 @@ export default function PlannerPage({ user }: PlannerPageProps) {
   const [newChildTitle, setNewChildTitle] = useState("");
   const [newStoryStepText, setNewStoryStepText] = useState("");
   const [renameTitle, setRenameTitle] = useState("");
+  const [bodyDraft, setBodyDraft] = useState("");
+  const [pendingRenameNodeId, setPendingRenameNodeId] = useState<string | null>(null);
+  const [storyLaneMode, setStoryLaneMode] = useState(false);
+  const [expandedStoryNodeIds, setExpandedStoryNodeIds] = useState<Set<string>>(new Set());
   const [newRefLabel, setNewRefLabel] = useState("");
   const [newRefCode, setNewRefCode] = useState("");
   const [newRefType, setNewRefType] = useState<EntityType>("entity");
@@ -556,6 +566,7 @@ export default function PlannerPage({ user }: PlannerPageProps) {
                 color: normalizeHexColor(value.color),
                 taskStatus: normalizeTaskStatus(value.taskStatus),
                 storySteps: normalizeStorySteps(value.storySteps),
+                body: normalizeNodeBody(value.body),
               } satisfies TreeNode;
             });
             nextNodes.sort((a, b) => a.title.localeCompare(b.title));
@@ -660,7 +671,7 @@ export default function PlannerPage({ user }: PlannerPageProps) {
   const applyLocalNodePatch = useCallback(
     (
       nodeId: string,
-      patch: Partial<Pick<TreeNode, "title" | "parentId" | "kind" | "x" | "y" | "color" | "taskStatus" | "storySteps">>
+      patch: Partial<Pick<TreeNode, "title" | "parentId" | "kind" | "x" | "y" | "color" | "taskStatus" | "storySteps" | "body">>
     ) => {
       setNodes((prevNodes) => prevNodes.map((entry) => (entry.id === nodeId ? { ...entry, ...patch } : entry)));
     },
@@ -670,6 +681,31 @@ export default function PlannerPage({ user }: PlannerPageProps) {
   useEffect(() => {
     setRenameTitle(selectedNode?.title || "");
   }, [selectedNode?.id, selectedNode?.title]);
+
+  useEffect(() => {
+    setBodyDraft(selectedNode?.body || "");
+  }, [selectedNode?.body, selectedNode?.id]);
+
+  useEffect(() => {
+    if (!storyLaneMode) return;
+    const current = currentRootId ? nodesById.get(currentRootId) : null;
+    if (current?.kind === "story") return;
+    setStoryLaneMode(false);
+  }, [currentRootId, nodesById, storyLaneMode]);
+
+  useEffect(() => {
+    if (!pendingRenameNodeId) return;
+    if (!selectedNodeId || selectedNodeId !== pendingRenameNodeId) return;
+    const timeout = window.setTimeout(() => {
+      setSidebarCollapsed(false);
+      setMobileSidebarSection("node");
+      if (isMobileLayout) setMobileSidebarOpen(true);
+      renameInputRef.current?.focus();
+      renameInputRef.current?.select();
+      setPendingRenameNodeId(null);
+    }, 60);
+    return () => window.clearTimeout(timeout);
+  }, [isMobileLayout, pendingRenameNodeId, selectedNodeId]);
 
   useEffect(() => {
     setNewStoryStepText("");
@@ -752,13 +788,59 @@ export default function PlannerPage({ user }: PlannerPageProps) {
     return matches;
   }, [filteredTreeIds, nodesById, searchQuery]);
 
+  const currentRootKind = currentRootId ? nodesById.get(currentRootId)?.kind || null : null;
+
   const treeLayout = useMemo(() => {
     const map = new Map<string, { x: number; y: number }>();
     if (!currentRootId) return map;
+    const filteredIdSet = new Set(filteredTreeIds);
+
+    if (storyLaneMode && currentRootKind === "story") {
+      map.set(currentRootId, { x: 0, y: 0 });
+
+      const firstChildren = (childrenByParent.get(currentRootId) || []).filter((child) => filteredIdSet.has(child));
+      const orderedChildren = [...firstChildren].sort((a, b) => {
+        const aNode = nodesById.get(a);
+        const bNode = nodesById.get(b);
+        const ax = typeof aNode?.x === "number" ? aNode.x : Number.POSITIVE_INFINITY;
+        const bx = typeof bNode?.x === "number" ? bNode.x : Number.POSITIVE_INFINITY;
+        if (ax !== bx) return ax - bx;
+        const ay = typeof aNode?.y === "number" ? aNode.y : Number.POSITIVE_INFINITY;
+        const by = typeof bNode?.y === "number" ? bNode.y : Number.POSITIVE_INFINITY;
+        if (ay !== by) return ay - by;
+        return (aNode?.title || "").localeCompare(bNode?.title || "");
+      });
+
+      const laneXGap = 340;
+      const laneY = 260;
+      const branchXGap = 220;
+      const branchYGap = 150;
+
+      const placeBranch = (parentId: string, parentX: number, parentY: number) => {
+        const isCollapsed = collapsedNodeIds.has(parentId);
+        const children = isCollapsed
+          ? []
+          : (childrenByParent.get(parentId) || []).filter((child) => filteredIdSet.has(child));
+        children.forEach((childId, index) => {
+          const x = parentX + branchXGap;
+          const y = parentY + branchYGap + index * branchYGap;
+          if (!map.has(childId)) map.set(childId, { x, y });
+          placeBranch(childId, x, y);
+        });
+      };
+
+      orderedChildren.forEach((childId, index) => {
+        const x = index * laneXGap;
+        map.set(childId, { x, y: laneY });
+        placeBranch(childId, x, laneY);
+      });
+
+      return map;
+    }
+
     let nextRow = 0;
     const xGap = 280;
     const yGap = 140;
-    const filteredIdSet = new Set(filteredTreeIds);
 
     const walk = (nodeId: string, depth: number): number => {
       // Don't traverse children of collapsed nodes
@@ -780,7 +862,7 @@ export default function PlannerPage({ user }: PlannerPageProps) {
 
     walk(currentRootId, 0);
     return map;
-  }, [childrenByParent, collapsedNodeIds, currentRootId, filteredTreeIds]);
+  }, [childrenByParent, collapsedNodeIds, currentRootId, currentRootKind, filteredTreeIds, nodesById, storyLaneMode]);
 
   const resolveNodePosition = useCallback(
     (nodeId: string) => {
@@ -793,6 +875,18 @@ export default function PlannerPage({ user }: PlannerPageProps) {
     },
     [nodesById, treeLayout]
   );
+
+  const toggleStoryCardExpand = useCallback((nodeId: string) => {
+    setExpandedStoryNodeIds((prev) => {
+      const next = new Set(prev);
+      if (next.has(nodeId)) {
+        next.delete(nodeId);
+      } else {
+        next.add(nodeId);
+      }
+      return next;
+    });
+  }, []);
 
   const baseTreeNodes = useMemo(() => {
     return filteredTreeIds
@@ -812,6 +906,10 @@ export default function PlannerPage({ user }: PlannerPageProps) {
         const isStory = node.kind === "story";
         const isTaskTodo = node.taskStatus === "todo";
         const isTaskDone = node.taskStatus === "done";
+        const isStoryLaneBeat = storyLaneMode && currentRootKind === "story" && node.id !== currentRootId;
+        const showStoryBody = isStory || isStoryLaneBeat;
+        const isExpandedStoryCard = expandedStoryNodeIds.has(node.id);
+        const bodyText = (node.body || "").trim();
         const baseBackground = isRoot
           ? "rgba(58, 44, 14, 0.92)"
           : isProject
@@ -825,43 +923,62 @@ export default function PlannerPage({ user }: PlannerPageProps) {
           position,
           data: {
             label: (
-              <div className="planner-node-label">
-                {childCount > 0 && (
-                  <button
-                    onClick={(e) => {
-                      e.stopPropagation();
-                      toggleNodeCollapse(node.id);
-                    }}
-                    style={{
-                      marginRight: "6px",
-                      padding: "2px 6px",
-                      border: "none",
-                      background: "rgba(255, 255, 255, 0.1)",
-                      color: "rgba(255, 255, 255, 0.8)",
-                      borderRadius: "4px",
-                      cursor: "pointer",
-                      fontSize: "10px",
-                      fontWeight: 700,
-                      transition: "background 150ms ease",
-                    }}
-                    onMouseEnter={(e) => {
-                      (e.target as HTMLButtonElement).style.background = "rgba(255, 255, 255, 0.2)";
-                    }}
-                    onMouseLeave={(e) => {
-                      (e.target as HTMLButtonElement).style.background = "rgba(255, 255, 255, 0.1)";
-                    }}
-                  >
-                    {isCollapsed ? "▶" : "▼"}
-                  </button>
-                )}
-                <span className={isTaskDone ? "planner-node-title done" : "planner-node-title"}>{node.title}</span>
-                {!isRoot ? <span className={`planner-kind-badge ${node.kind}`}>{node.kind}</span> : null}
-                {!isRoot && (isTaskTodo || isTaskDone) ? (
-                  <span className={`planner-task-badge ${isTaskDone ? "done" : "todo"}`}>
-                    {isTaskDone ? "Done" : "Task"}
-                  </span>
+              <div className={`planner-node-card${showStoryBody ? " story" : ""}`}>
+                <div className="planner-node-label">
+                  {childCount > 0 && (
+                    <button
+                      onClick={(e) => {
+                        e.stopPropagation();
+                        toggleNodeCollapse(node.id);
+                      }}
+                      style={{
+                        marginRight: "6px",
+                        padding: "2px 6px",
+                        border: "none",
+                        background: "rgba(255, 255, 255, 0.1)",
+                        color: "rgba(255, 255, 255, 0.8)",
+                        borderRadius: "4px",
+                        cursor: "pointer",
+                        fontSize: "10px",
+                        fontWeight: 700,
+                        transition: "background 150ms ease",
+                      }}
+                      onMouseEnter={(e) => {
+                        (e.target as HTMLButtonElement).style.background = "rgba(255, 255, 255, 0.2)";
+                      }}
+                      onMouseLeave={(e) => {
+                        (e.target as HTMLButtonElement).style.background = "rgba(255, 255, 255, 0.1)";
+                      }}
+                    >
+                      {isCollapsed ? "▶" : "▼"}
+                    </button>
+                  )}
+                  <span className={isTaskDone ? "planner-node-title done" : "planner-node-title"}>{node.title}</span>
+                  {!isRoot ? <span className={`planner-kind-badge ${node.kind}`}>{node.kind}</span> : null}
+                  {!isRoot && (isTaskTodo || isTaskDone) ? (
+                    <span className={`planner-task-badge ${isTaskDone ? "done" : "todo"}`}>
+                      {isTaskDone ? "Done" : "Task"}
+                    </span>
+                  ) : null}
+                  {childCount > 0 ? <span className="planner-node-count">{childCount}</span> : null}
+                </div>
+                {showStoryBody ? (
+                  <>
+                    <div className={`planner-node-body-preview ${isExpandedStoryCard ? "expanded" : ""}`}>
+                      {bodyText || "No body text yet. Select this node and add text in the Body panel."}
+                    </div>
+                    <button
+                      className="planner-story-card-expand"
+                      onClick={(event) => {
+                        event.stopPropagation();
+                        toggleStoryCardExpand(node.id);
+                      }}
+                      type="button"
+                    >
+                      {isExpandedStoryCard ? "Collapse text" : "Expand text"}
+                    </button>
+                  </>
                 ) : null}
-                {childCount > 0 ? <span className="planner-node-count">{childCount}</span> : null}
               </div>
             ),
           },
@@ -875,9 +992,10 @@ export default function PlannerPage({ user }: PlannerPageProps) {
                 : isStory
                   ? "1px solid rgba(45, 212, 191, 0.65)"
                 : "1px solid rgba(255, 255, 255, 0.18)",
-            borderRadius: 14,
-            width: 260,
-            padding: 10,
+            borderRadius: isStoryLaneBeat ? 10 : 14,
+            width: isStoryLaneBeat ? 300 : showStoryBody ? 280 : 260,
+            minHeight: showStoryBody ? (isExpandedStoryCard ? 280 : 190) : undefined,
+            padding: showStoryBody ? 12 : 10,
             background,
             color: "rgba(250, 252, 255, 0.95)",
             boxShadow: isSearchMatch
@@ -890,7 +1008,21 @@ export default function PlannerPage({ user }: PlannerPageProps) {
           selectable: true,
         } as Node;
       });
-  }, [childrenByParent, collapsedNodeIds, filteredTreeIds, nodesById, rootNodeId, searchMatchingIds, toggleNodeCollapse, treeLayout]);
+  }, [
+    childrenByParent,
+    collapsedNodeIds,
+    currentRootId,
+    currentRootKind,
+    expandedStoryNodeIds,
+    filteredTreeIds,
+    nodesById,
+    rootNodeId,
+    searchMatchingIds,
+    storyLaneMode,
+    toggleNodeCollapse,
+    toggleStoryCardExpand,
+    treeLayout,
+  ]);
 
   const baseTreeEdges = useMemo(() => {
     const filteredIdSet = new Set(filteredTreeIds);
@@ -1336,25 +1468,64 @@ export default function PlannerPage({ user }: PlannerPageProps) {
   const goGrandmotherView = useCallback(() => {
     if (!rootNodeId) return;
     setCurrentRootId(rootNodeId);
+    setStoryLaneMode(false);
     setActivePortalRefId(null);
   }, [rootNodeId]);
 
   const goUpOneView = useCallback(() => {
     if (!currentRootNode?.parentId) return;
     setCurrentRootId(currentRootNode.parentId);
+    setStoryLaneMode(false);
     setActivePortalRefId(null);
   }, [currentRootNode?.parentId]);
 
   const openSelectedAsMaster = useCallback(() => {
     if (!selectedNodeId) return;
     setCurrentRootId(selectedNodeId);
+    setStoryLaneMode(false);
     setActivePortalRefId(null);
   }, [selectedNodeId]);
 
+  const openSelectedAsStoryLane = useCallback(() => {
+    if (!selectedNodeId) return;
+    const selected = nodesById.get(selectedNodeId);
+    if (!selected || selected.kind !== "story") return;
+    setCurrentRootId(selectedNodeId);
+    setStoryLaneMode(true);
+    setActivePortalRefId(null);
+  }, [nodesById, selectedNodeId]);
+
+  const saveNodeBody = useCallback(
+    async (nodeId: string, nextBody: string) => {
+      if (!db) return;
+      const previousBody = nodesById.get(nodeId)?.body || "";
+      const normalizedBody = nextBody.trim();
+      setBusyAction(true);
+      setError(null);
+      applyLocalNodePatch(nodeId, { body: normalizedBody });
+      try {
+        await updateDoc(doc(db, "users", user.uid, "nodes", nodeId), {
+          body: normalizedBody ? normalizedBody : deleteField(),
+          updatedAt: serverTimestamp(),
+        });
+      } catch (actionError: unknown) {
+        applyLocalNodePatch(nodeId, { body: previousBody });
+        setError(actionError instanceof Error ? actionError.message : "Could not save node body text.");
+      } finally {
+        setBusyAction(false);
+      }
+    },
+    [applyLocalNodePatch, nodesById, user.uid]
+  );
+
+  const saveSelectedBody = useCallback(async () => {
+    if (!selectedNodeId) return;
+    await saveNodeBody(selectedNodeId, bodyDraft);
+  }, [bodyDraft, saveNodeBody, selectedNodeId]);
+
   const createChild = useCallback(async () => {
     if (!db) return;
-    const title = newChildTitle.trim();
-    if (!title) return;
+    const title = newChildTitle.trim() || "New Node";
     const parentId = selectedNodeId || currentRootId || rootNodeId;
     if (!parentId) return;
     const newDoc = doc(collection(db, "users", user.uid, "nodes"));
@@ -1374,6 +1545,7 @@ export default function PlannerPage({ user }: PlannerPageProps) {
       } satisfies TreeNodeDoc & { createdAt: unknown; updatedAt: unknown });
       setNewChildTitle("");
       setPendingSelectedNodeId(newDoc.id);
+      setPendingRenameNodeId(newDoc.id);
     } catch (actionError: unknown) {
       setError(actionError instanceof Error ? actionError.message : "Could not create node.");
     } finally {
@@ -1384,7 +1556,12 @@ export default function PlannerPage({ user }: PlannerPageProps) {
   const renameSelected = useCallback(async () => {
     if (!db || !selectedNodeId) return;
     const title = renameTitle.trim();
-    if (!title) return;
+    const currentTitle = nodesById.get(selectedNodeId)?.title || "";
+    if (!title) {
+      setRenameTitle(currentTitle);
+      return;
+    }
+    if (title === currentTitle) return;
     setBusyAction(true);
     setError(null);
     try {
@@ -1397,7 +1574,7 @@ export default function PlannerPage({ user }: PlannerPageProps) {
     } finally {
       setBusyAction(false);
     }
-  }, [renameTitle, selectedNodeId, user.uid]);
+  }, [nodesById, renameTitle, selectedNodeId, user.uid]);
 
   const setNodeTaskStatus = useCallback(
     async (nodeId: string, taskStatus: TaskStatus) => {
@@ -1970,6 +2147,7 @@ export default function PlannerPage({ user }: PlannerPageProps) {
           updatedAt: serverTimestamp(),
         } satisfies TreeNodeDoc & { createdAt: unknown; updatedAt: unknown });
         setPendingSelectedNodeId(newDoc.id);
+        setPendingRenameNodeId(newDoc.id);
       } catch (actionError: unknown) {
         setError(actionError instanceof Error ? actionError.message : "Could not create node.");
       } finally {
@@ -2042,10 +2220,12 @@ export default function PlannerPage({ user }: PlannerPageProps) {
           ...(original.color ? { color: original.color } : {}),
           ...(original.taskStatus && original.taskStatus !== "none" ? { taskStatus: original.taskStatus } : {}),
           ...(original.storySteps && original.storySteps.length > 0 ? { storySteps: original.storySteps } : {}),
+          ...(original.body ? { body: original.body } : {}),
           createdAt: serverTimestamp(),
           updatedAt: serverTimestamp(),
         } satisfies TreeNodeDoc & { createdAt: unknown; updatedAt: unknown });
         setPendingSelectedNodeId(newDoc.id);
+        setPendingRenameNodeId(newDoc.id);
       } catch (actionError: unknown) {
         setError(actionError instanceof Error ? actionError.message : "Could not duplicate node.");
       } finally {
@@ -2133,7 +2313,7 @@ export default function PlannerPage({ user }: PlannerPageProps) {
 
     addItem("cmd-grandmother", "Open top view (root)", "Navigation", goGrandmotherView, "top root grandmother home");
     addItem("cmd-up", "Go to parent view", "Navigation", goUpOneView, "up parent back one level");
-    addItem("cmd-organize-tree", "Auto-arrange visible tree", "Layout", organizeVisibleTree, "cleanup organize layout tidy tree auto arrange");
+    addItem("cmd-organize-tree", "Clean up tree layout", "Layout", organizeVisibleTree, "cleanup organize layout tidy tree auto arrange");
     addItem(
       "cmd-clean-bubbles",
       "Clean up cross-reference bubbles",
@@ -2141,8 +2321,27 @@ export default function PlannerPage({ user }: PlannerPageProps) {
       cleanUpCrossRefs,
       "cleanup cross reference bubbles stale deleted"
     );
+    if (currentRootKind === "story") {
+      addItem(
+        "cmd-toggle-story-lane",
+        storyLaneMode ? "Disable story lane view" : "Enable story lane view",
+        "Layout",
+        () => setStoryLaneMode((prev) => !prev),
+        "story lane linear sequence timeline"
+      );
+    }
     if (selectedNodeId) {
       addItem("cmd-open-master", "Open selected as master", "Navigation", openSelectedAsMaster, "open selected master");
+      const selected = nodesById.get(selectedNodeId);
+      if (selected?.kind === "story") {
+        addItem(
+          "cmd-open-story-lane",
+          "Open selected in story lane",
+          "Navigation",
+          openSelectedAsStoryLane,
+          "story lane linear sequence open"
+        );
+      }
       addItem(
         "cmd-add-child",
         "Add child to selected node",
@@ -2150,7 +2349,6 @@ export default function PlannerPage({ user }: PlannerPageProps) {
         () => handleContextAddChild(selectedNodeId),
         "add child create node"
       );
-      const selected = nodesById.get(selectedNodeId);
       if (selected && selected.kind !== "root") {
         const nextKind = nextNodeKind(selected.kind);
         addItem(
@@ -2233,6 +2431,7 @@ export default function PlannerPage({ user }: PlannerPageProps) {
     return items;
   }, [
     cleanUpCrossRefs,
+    currentRootKind,
     goGrandmotherView,
     goUpOneView,
     handleContextAddChild,
@@ -2243,11 +2442,13 @@ export default function PlannerPage({ user }: PlannerPageProps) {
     nodes,
     nodesById,
     openSelectedAsMaster,
+    openSelectedAsStoryLane,
     organizeVisibleTree,
     paletteQuery,
     refs,
     selectRefForEditing,
     selectedNodeId,
+    storyLaneMode,
   ]);
 
   useEffect(() => {
@@ -2502,6 +2703,16 @@ export default function PlannerPage({ user }: PlannerPageProps) {
           >
             Command palette (Cmd/Ctrl+K)
           </button>
+          {!isMobileLayout ? (
+            <div className="planner-top-actions">
+              <button onClick={organizeVisibleTree} disabled={busyAction || filteredTreeIds.length === 0}>
+                Clean up tree layout
+              </button>
+              <button onClick={cleanUpCrossRefs} disabled={busyAction}>
+                Clean stale bubbles
+              </button>
+            </div>
+          ) : null}
         </div>
 
         {isMobileLayout ? (
@@ -2547,10 +2758,18 @@ export default function PlannerPage({ user }: PlannerPageProps) {
           <button onClick={openSelectedAsMaster} disabled={!selectedNodeId}>
             Open selected as master
           </button>
+          <div className="planner-inline-buttons">
+            <button onClick={openSelectedAsStoryLane} disabled={!selectedNodeId || selectedNode?.kind !== "story"}>
+              Open selected in story lane
+            </button>
+            <button onClick={() => setStoryLaneMode((prev) => !prev)} disabled={currentRootKind !== "story"}>
+              {storyLaneMode ? "Story lane: on" : "Story lane: off"}
+            </button>
+          </div>
           <div className="planner-row-label">Quick maintenance</div>
           <div className="planner-inline-buttons">
             <button onClick={organizeVisibleTree} disabled={busyAction || filteredTreeIds.length === 0}>
-              Auto-arrange tree
+              Clean up tree layout
             </button>
             <button onClick={cleanUpCrossRefs} disabled={busyAction}>
               Clean stale bubbles
@@ -2560,12 +2779,22 @@ export default function PlannerPage({ user }: PlannerPageProps) {
 
         <div className="planner-panel-block">
           <h3>Add Child Node</h3>
+          <p className="planner-subtle">Leave blank to create a default node name and rename immediately.</p>
           <input
             value={newChildTitle}
             onChange={(event) => setNewChildTitle(event.target.value)}
+            onKeyDown={(event) => {
+              if (event.key !== "Enter") return;
+              event.preventDefault();
+              if (busyAction) return;
+              void createChild();
+            }}
             placeholder="Film Production, Education, Finance..."
           />
-          <button onClick={createChild} disabled={busyAction || newChildTitle.trim().length === 0}>
+          <button
+            onClick={createChild}
+            disabled={busyAction || (!selectedNodeId && !currentRootId && !rootNodeId)}
+          >
             Add child
           </button>
         </div>
@@ -2640,7 +2869,7 @@ export default function PlannerPage({ user }: PlannerPageProps) {
                 onKeyDown={(event) => {
                   if (event.key !== "Enter") return;
                   event.preventDefault();
-                  if (busyAction || renameTitle.trim().length === 0) return;
+                  if (busyAction) return;
                   void renameSelected();
                 }}
               />
@@ -2656,6 +2885,21 @@ export default function PlannerPage({ user }: PlannerPageProps) {
                   Delete subtree
                 </button>
               </div>
+              <div className="planner-row-label">Body text</div>
+              <textarea
+                value={bodyDraft}
+                onChange={(event) => setBodyDraft(event.target.value)}
+                placeholder={
+                  selectedNode.kind === "story"
+                    ? "Write scene/story details for this node..."
+                    : "Write extended notes for this node..."
+                }
+                rows={selectedNode.kind === "story" ? 7 : 5}
+                disabled={busyAction}
+              />
+              <button onClick={saveSelectedBody} disabled={busyAction || bodyDraft.trim() === (selectedNode.body || "").trim()}>
+                Save body text
+              </button>
 
               <div className="planner-row-label">Children</div>
               <div className="planner-chip-list">
@@ -2679,77 +2923,96 @@ export default function PlannerPage({ user }: PlannerPageProps) {
 
               {selectedNode.kind === "story" ? (
                 <>
-                  <div className="planner-row-label">Story sequence (linear)</div>
-                  <div className="planner-reference-list">
-                    {(selectedNode.storySteps || []).length === 0 ? (
-                      <span className="planner-subtle">No steps yet. Add beats for your story flow.</span>
-                    ) : (
-                      (selectedNode.storySteps || []).map((step, index) => (
-                        <div key={step.id} className="planner-story-step-item">
-                          <button
-                            className="planner-story-step-toggle"
-                            onClick={() => {
-                              void toggleStoryStepDone(step.id);
-                            }}
-                            disabled={busyAction}
-                            title={step.done ? "Mark as not done" : "Mark as done"}
-                          >
-                            {step.done ? "☑" : "☐"}
-                          </button>
-                          <span className={step.done ? "planner-story-step-text done" : "planner-story-step-text"}>
-                            {`${index + 1}. ${step.text}`}
-                          </span>
-                          <div className="planner-story-step-actions">
-                            <button
-                              onClick={() => {
-                                void moveStoryStep(step.id, -1);
-                              }}
-                              disabled={busyAction || index === 0}
-                              title="Move up"
-                            >
-                              ↑
-                            </button>
-                            <button
-                              onClick={() => {
-                                void moveStoryStep(step.id, 1);
-                              }}
-                              disabled={busyAction || index === (selectedNode.storySteps || []).length - 1}
-                              title="Move down"
-                            >
-                              ↓
-                            </button>
-                            <button
-                              className="danger"
-                              onClick={() => {
-                                void deleteStoryStep(step.id);
-                              }}
-                              disabled={busyAction}
-                              title="Delete step"
-                            >
-                              x
-                            </button>
-                          </div>
-                        </div>
-                      ))
-                    )}
-                  </div>
-                  <div className="planner-story-step-add">
-                    <input
-                      value={newStoryStepText}
-                      onChange={(event) => setNewStoryStepText(event.target.value)}
-                      onKeyDown={(event) => {
-                        if (event.key !== "Enter") return;
-                        event.preventDefault();
-                        if (busyAction || newStoryStepText.trim().length === 0) return;
-                        void addStoryStep();
+                  <div className="planner-row-label">Story lane</div>
+                  <div className="planner-inline-buttons">
+                    <button onClick={openSelectedAsStoryLane}>Open this story in lane view</button>
+                    <button
+                      onClick={() => {
+                        void handleContextAddChild(selectedNode.id);
                       }}
-                      placeholder="Add next story beat..."
                       disabled={busyAction}
-                    />
-                    <button onClick={addStoryStep} disabled={busyAction || newStoryStepText.trim().length === 0}>
-                      Add step
+                    >
+                      Add beat node
                     </button>
                   </div>
+                  <p className="planner-subtle">
+                    Lane view arranges child nodes left-to-right as beats. Use each beat node's body text for long scene notes.
+                  </p>
+                  <details className="planner-advanced-tools">
+                    <summary>Legacy checklist beats (optional)</summary>
+                    <div className="planner-advanced-tools-content">
+                      <div className="planner-reference-list">
+                        {(selectedNode.storySteps || []).length === 0 ? (
+                          <span className="planner-subtle">No checklist beats yet.</span>
+                        ) : (
+                          (selectedNode.storySteps || []).map((step, index) => (
+                            <div key={step.id} className="planner-story-step-item">
+                              <button
+                                className="planner-story-step-toggle"
+                                onClick={() => {
+                                  void toggleStoryStepDone(step.id);
+                                }}
+                                disabled={busyAction}
+                                title={step.done ? "Mark as not done" : "Mark as done"}
+                              >
+                                {step.done ? "☑" : "☐"}
+                              </button>
+                              <span className={step.done ? "planner-story-step-text done" : "planner-story-step-text"}>
+                                {`${index + 1}. ${step.text}`}
+                              </span>
+                              <div className="planner-story-step-actions">
+                                <button
+                                  onClick={() => {
+                                    void moveStoryStep(step.id, -1);
+                                  }}
+                                  disabled={busyAction || index === 0}
+                                  title="Move up"
+                                >
+                                  ↑
+                                </button>
+                                <button
+                                  onClick={() => {
+                                    void moveStoryStep(step.id, 1);
+                                  }}
+                                  disabled={busyAction || index === (selectedNode.storySteps || []).length - 1}
+                                  title="Move down"
+                                >
+                                  ↓
+                                </button>
+                                <button
+                                  className="danger"
+                                  onClick={() => {
+                                    void deleteStoryStep(step.id);
+                                  }}
+                                  disabled={busyAction}
+                                  title="Delete step"
+                                >
+                                  x
+                                </button>
+                              </div>
+                            </div>
+                          ))
+                        )}
+                      </div>
+                      <div className="planner-story-step-add">
+                        <input
+                          value={newStoryStepText}
+                          onChange={(event) => setNewStoryStepText(event.target.value)}
+                          onKeyDown={(event) => {
+                            if (event.key !== "Enter") return;
+                            event.preventDefault();
+                            if (busyAction || newStoryStepText.trim().length === 0) return;
+                            void addStoryStep();
+                          }}
+                          placeholder="Add checklist beat..."
+                          disabled={busyAction}
+                        />
+                        <button onClick={addStoryStep} disabled={busyAction || newStoryStepText.trim().length === 0}>
+                          Add step
+                        </button>
+                      </div>
+                    </div>
+                  </details>
                 </>
               ) : null}
             </>
@@ -3143,11 +3406,20 @@ export default function PlannerPage({ user }: PlannerPageProps) {
                 onKeyDown={(event) => {
                   if (event.key !== "Enter") return;
                   event.preventDefault();
-                  if (busyAction || renameTitle.trim().length === 0) return;
+                  if (busyAction) return;
                   void renameSelected();
                 }}
                 placeholder="Rename node..."
               />
+              <textarea
+                value={bodyDraft}
+                onChange={(event) => setBodyDraft(event.target.value)}
+                placeholder={selectedNode.kind === "story" ? "Scene/story body..." : "Node notes..."}
+                rows={selectedNode.kind === "story" ? 6 : 4}
+              />
+              <button onClick={saveSelectedBody} disabled={busyAction || bodyDraft.trim() === (selectedNode.body || "").trim()}>
+                Save Body
+              </button>
               <div className="planner-mobile-sheet-grid">
                 <button
                   onClick={() => {
@@ -3187,20 +3459,14 @@ export default function PlannerPage({ user }: PlannerPageProps) {
               </div>
               {selectedNode.kind === "story" ? (
                 <div className="planner-mobile-sheet-story">
-                  <input
-                    value={newStoryStepText}
-                    onChange={(event) => setNewStoryStepText(event.target.value)}
-                    onKeyDown={(event) => {
-                      if (event.key !== "Enter") return;
-                      event.preventDefault();
-                      if (busyAction || newStoryStepText.trim().length === 0) return;
-                      void addStoryStep();
+                  <button onClick={openSelectedAsStoryLane}>Open Story Lane</button>
+                  <button
+                    onClick={() => {
+                      void handleContextAddChild(selectedNode.id);
                     }}
-                    placeholder="Add story step..."
                     disabled={busyAction}
-                  />
-                  <button onClick={addStoryStep} disabled={busyAction || newStoryStepText.trim().length === 0}>
-                    Add Step
+                  >
+                    Add Beat Node
                   </button>
                 </div>
               ) : null}

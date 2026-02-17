@@ -261,6 +261,23 @@ textarea {
   border-color: rgba(125, 211, 252, 0.72);
 }
 
+.planner-top-actions {
+  margin-top: 8px;
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 6px;
+}
+
+.planner-top-actions button {
+  border: 1px solid rgba(255, 255, 255, 0.16);
+  background: rgba(255, 255, 255, 0.06);
+  color: rgba(245, 248, 255, 0.92);
+  border-radius: 8px;
+  padding: 7px 8px;
+  font-size: 10.5px;
+  font-weight: 700;
+}
+
 .planner-sidebar.collapsed {
   padding: 8px;
   overflow: hidden;
@@ -588,7 +605,8 @@ textarea {
 }
 
 .planner-mobile-sheet input,
-.planner-mobile-sheet select {
+.planner-mobile-sheet select,
+.planner-mobile-sheet textarea {
   width: 100%;
   border: 1px solid rgba(255, 255, 255, 0.14);
   background: rgba(255, 255, 255, 0.06);
@@ -668,6 +686,16 @@ textarea {
   gap: 8px;
 }
 
+.planner-node-card {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.planner-node-card.story {
+  gap: 10px;
+}
+
 .planner-node-title {
   flex: 1;
   min-width: 0;
@@ -734,6 +762,30 @@ textarea {
   border: 1px solid rgba(45, 212, 191, 0.52);
   background: rgba(13, 148, 136, 0.25);
   color: rgba(204, 251, 241, 0.95);
+}
+
+.planner-node-body-preview {
+  font-size: 11px;
+  line-height: 1.35;
+  color: rgba(234, 246, 254, 0.86);
+  overflow-wrap: anywhere;
+  max-height: 96px;
+  overflow: hidden;
+}
+
+.planner-node-body-preview.expanded {
+  max-height: 420px;
+}
+
+.planner-story-card-expand {
+  align-self: flex-start;
+  border: 1px solid rgba(255, 255, 255, 0.16);
+  background: rgba(255, 255, 255, 0.08);
+  color: rgba(245, 248, 255, 0.94);
+  border-radius: 7px;
+  padding: 4px 8px;
+  font-size: 10px;
+  font-weight: 700;
 }
 
 .planner-story-step-item {
