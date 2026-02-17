@@ -236,6 +236,31 @@ textarea {
   font-weight: 700;
 }
 
+.planner-palette-launcher {
+  margin-top: 8px;
+  width: 100%;
+  border: 1px solid rgba(255, 255, 255, 0.16);
+  background: rgba(255, 255, 255, 0.04);
+  color: rgba(245, 248, 255, 0.78);
+  border-radius: 8px;
+  padding: 7px 9px;
+  font-size: 11px;
+  font-weight: 650;
+  text-align: left;
+  cursor: pointer;
+  transition: border-color 140ms ease, background 140ms ease, color 140ms ease;
+}
+
+.planner-palette-launcher:hover {
+  background: rgba(255, 255, 255, 0.08);
+  color: rgba(245, 248, 255, 0.9);
+}
+
+.planner-palette-launcher:focus-visible {
+  outline: none;
+  border-color: rgba(125, 211, 252, 0.72);
+}
+
 .planner-sidebar.collapsed {
   padding: 8px;
   overflow: hidden;
@@ -430,6 +455,18 @@ textarea {
   color: rgba(229, 236, 246, 0.72);
   overflow-wrap: anywhere;
   padding: 0 2px;
+}
+
+.planner-filter-toggle {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 6px;
+}
+
+.planner-filter-toggle button.active {
+  border-color: rgba(125, 211, 252, 0.7);
+  background: rgba(14, 116, 144, 0.35);
+  color: rgba(240, 249, 255, 0.98);
 }
 
 .planner-reference-target-item {

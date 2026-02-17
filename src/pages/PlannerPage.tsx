@@ -46,7 +46,8 @@ type StoryStep = {
   done: boolean;
 };
 
-type EntityType = "entity" | "investor" | "partner" | "vendor" | "contact" | "client" | "organization";
+type EntityType = "entity" | "investor" | "partner" | "vendor" | "contact" | "client" | "organization" | "person";
+type RefCategoryFilter = "all" | "people" | "other";
 
 type TreeNodeDoc = {
   title: string;
@@ -280,7 +281,16 @@ const PortalNode = memo(function PortalNode({ data }: NodeProps<PortalData>) {
 
 const nodeTypes: NodeTypes = Object.freeze({ portal: PortalNode });
 const edgeTypes: EdgeTypes = Object.freeze({});
-const ENTITY_TYPES: EntityType[] = ["entity", "investor", "partner", "vendor", "contact", "client", "organization"];
+const ENTITY_TYPES: EntityType[] = ["entity", "organization", "partner", "vendor", "investor", "person", "contact", "client"];
+const PEOPLE_ENTITY_TYPES = new Set<EntityType>(["person", "contact", "client"]);
+const ENTITY_TYPE_GROUPS: Array<{ label: string; options: EntityType[] }> = [
+  { label: "General", options: ["entity", "organization", "partner", "vendor", "investor"] },
+  { label: "People", options: ["person", "contact", "client"] },
+];
+
+function isPeopleEntityType(entityType: EntityType): boolean {
+  return PEOPLE_ENTITY_TYPES.has(entityType);
+}
 
 function collapsedKeyFromIds(ids: Iterable<string>): string {
   return Array.from(ids).sort().join("|");
@@ -311,6 +321,7 @@ export default function PlannerPage({ user }: PlannerPageProps) {
   const [newRefCode, setNewRefCode] = useState("");
   const [newRefType, setNewRefType] = useState<EntityType>("entity");
   const [refSearchQuery, setRefSearchQuery] = useState("");
+  const [refCategoryFilter, setRefCategoryFilter] = useState<RefCategoryFilter>("all");
   const [editRefId, setEditRefId] = useState("");
   const [editRefLabel, setEditRefLabel] = useState("");
   const [editRefCode, setEditRefCode] = useState("");
@@ -1194,18 +1205,26 @@ export default function PlannerPage({ user }: PlannerPageProps) {
   const describeRefLibraryPreview = useCallback((ref: CrossRef) => {
     const tagPreview = ref.tags.length > 0 ? ` · ${ref.tags.slice(0, 2).join(", ")}` : "";
     const linkPreview = ref.nodeIds.length === 0 ? "unlinked" : `${ref.nodeIds.length} link${ref.nodeIds.length === 1 ? "" : "s"}`;
-    return `${ref.entityType}${tagPreview} · ${linkPreview}`;
+    const category = isPeopleEntityType(ref.entityType) ? "people" : "other";
+    return `${ref.entityType}${tagPreview} · ${category} · ${linkPreview}`;
   }, []);
 
   const filteredRefs = useMemo(() => {
     const queryText = refSearchQuery.trim().toLowerCase();
-    if (!queryText) return refs;
-    return refs.filter((ref) =>
-      `${ref.code} ${ref.label} ${ref.entityType} ${ref.tags.join(" ")} ${ref.notes} ${ref.contact} ${ref.links.join(" ")}`
+    return refs.filter((ref) => {
+      const categoryMatch =
+        refCategoryFilter === "all"
+          ? true
+          : refCategoryFilter === "people"
+            ? isPeopleEntityType(ref.entityType)
+            : !isPeopleEntityType(ref.entityType);
+      if (!categoryMatch) return false;
+      if (!queryText) return true;
+      return `${ref.code} ${ref.label} ${ref.entityType} ${ref.tags.join(" ")} ${ref.notes} ${ref.contact} ${ref.links.join(" ")}`
         .toLowerCase()
-        .includes(queryText)
-    );
-  }, [refSearchQuery, refs]);
+        .includes(queryText);
+    });
+  }, [refCategoryFilter, refSearchQuery, refs]);
 
   const newRefSuggestions = useMemo(() => {
     if (!selectedNodeId) return [] as CrossRef[];
@@ -2474,7 +2493,7 @@ export default function PlannerPage({ user }: PlannerPageProps) {
             </div>
           )}
           <button
-            style={{ marginTop: "8px", width: "100%" }}
+            className="planner-palette-launcher"
             onClick={() => {
               setPaletteOpen(true);
               setPaletteQuery("");
@@ -2744,7 +2763,7 @@ export default function PlannerPage({ user }: PlannerPageProps) {
         <div className="planner-panel-block">
           <h3>Cross-Reference Bubbles</h3>
           <p className="planner-subtle">
-            Use these for entities shared across branches (e.g., Vendor / VN or Partner / PT).
+            Use these for shared entities across branches (e.g., vendor, partner, person).
           </p>
           <p className="planner-subtle">
             Anchor node: <strong>{selectedNode ? buildNodePath(selectedNode.id, nodesById) : "Select a node first"}</strong>
@@ -2752,7 +2771,7 @@ export default function PlannerPage({ user }: PlannerPageProps) {
           <input
             value={newRefLabel}
             onChange={(event) => setNewRefLabel(event.target.value)}
-            placeholder="Reference name (e.g., Vendor, Investor, Partner)"
+            placeholder="Reference name (e.g., Vendor, Partner, Person)"
           />
           <input
             value={newRefCode}
@@ -2760,10 +2779,14 @@ export default function PlannerPage({ user }: PlannerPageProps) {
             placeholder="Bubble code (optional, e.g., VN)"
           />
           <select value={newRefType} onChange={(event) => setNewRefType(event.target.value as EntityType)}>
-            {ENTITY_TYPES.map((entityType) => (
-              <option key={entityType} value={entityType}>
-                {entityType}
-              </option>
+            {ENTITY_TYPE_GROUPS.map((group) => (
+              <optgroup key={group.label} label={group.label}>
+                {group.options.map((entityType) => (
+                  <option key={entityType} value={entityType}>
+                    {entityType}
+                  </option>
+                ))}
+              </optgroup>
             ))}
           </select>
           <button onClick={createCrossRef} disabled={busyAction || !selectedNodeId || newRefLabel.trim().length === 0}>
@@ -2820,10 +2843,37 @@ export default function PlannerPage({ user }: PlannerPageProps) {
             onChange={(event) => setRefSearchQuery(event.target.value)}
             placeholder="Search bubbles by code or name..."
           />
+          <div className="planner-filter-toggle">
+            <button
+              type="button"
+              className={refCategoryFilter === "all" ? "active" : ""}
+              onClick={() => setRefCategoryFilter("all")}
+            >
+              All
+            </button>
+            <button
+              type="button"
+              className={refCategoryFilter === "people" ? "active" : ""}
+              onClick={() => setRefCategoryFilter("people")}
+            >
+              People
+            </button>
+            <button
+              type="button"
+              className={refCategoryFilter === "other" ? "active" : ""}
+              onClick={() => setRefCategoryFilter("other")}
+            >
+              Other
+            </button>
+          </div>
           <div className="planner-reference-list">
             {filteredRefs.length === 0 ? (
               <span className="planner-subtle">
-                {refs.length === 0 ? "No bubbles created yet." : "No bubbles match this search."}
+                {refs.length === 0
+                  ? "No bubbles created yet."
+                  : refCategoryFilter === "all"
+                    ? "No bubbles match this search."
+                    : "No bubbles match this filter yet."}
               </span>
             ) : (
               filteredRefs.map((ref) => {
@@ -2892,10 +2942,14 @@ export default function PlannerPage({ user }: PlannerPageProps) {
             disabled={!editRefId}
           />
           <select value={editRefType} onChange={(event) => setEditRefType(event.target.value as EntityType)} disabled={!editRefId}>
-            {ENTITY_TYPES.map((entityType) => (
-              <option key={entityType} value={entityType}>
-                {entityType}
-              </option>
+            {ENTITY_TYPE_GROUPS.map((group) => (
+              <optgroup key={group.label} label={group.label}>
+                {group.options.map((entityType) => (
+                  <option key={entityType} value={entityType}>
+                    {entityType}
+                  </option>
+                ))}
+              </optgroup>
             ))}
           </select>
           <input
