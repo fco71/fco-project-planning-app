@@ -1183,13 +1183,19 @@ export default function PlannerPage({ user }: PlannerPageProps) {
   const describeRefTargets = useCallback(
     (ref: CrossRef, limit = 2) => {
       const paths = refTargetPathsById.get(ref.id) || [];
-      if (paths.length === 0) return "No linked nodes yet.";
+      if (paths.length === 0) return "Unlinked";
       const preview = paths.slice(0, limit).join(" | ");
       const remaining = paths.length - limit;
       return remaining > 0 ? `${preview} +${remaining} more` : preview;
     },
     [refTargetPathsById]
   );
+
+  const describeRefLibraryPreview = useCallback((ref: CrossRef) => {
+    const tagPreview = ref.tags.length > 0 ? ` · ${ref.tags.slice(0, 2).join(", ")}` : "";
+    const linkPreview = ref.nodeIds.length === 0 ? "unlinked" : `${ref.nodeIds.length} link${ref.nodeIds.length === 1 ? "" : "s"}`;
+    return `${ref.entityType}${tagPreview} · ${linkPreview}`;
+  }, []);
 
   const filteredRefs = useMemo(() => {
     const queryText = refSearchQuery.trim().toLowerCase();
@@ -2106,9 +2112,9 @@ export default function PlannerPage({ user }: PlannerPageProps) {
       items.push({ id, label, hint, action });
     };
 
-    addItem("cmd-grandmother", "Open grandmother view", "Navigation", goGrandmotherView, "grandmother root home");
-    addItem("cmd-up", "Go up one level", "Navigation", goUpOneView, "up parent back");
-    addItem("cmd-organize-tree", "Organize visible tree", "Layout", organizeVisibleTree, "cleanup organize layout tidy tree");
+    addItem("cmd-grandmother", "Open top view (root)", "Navigation", goGrandmotherView, "top root grandmother home");
+    addItem("cmd-up", "Go to parent view", "Navigation", goUpOneView, "up parent back one level");
+    addItem("cmd-organize-tree", "Auto-arrange visible tree", "Layout", organizeVisibleTree, "cleanup organize layout tidy tree auto arrange");
     addItem(
       "cmd-clean-bubbles",
       "Clean up cross-reference bubbles",
@@ -2511,19 +2517,26 @@ export default function PlannerPage({ user }: PlannerPageProps) {
             Current view: <strong>{currentRootPath || "No selection"}</strong>
           </p>
           <div className="planner-inline-buttons">
-            <button onClick={goGrandmotherView} disabled={!rootNodeId}>
-              Grandmother view
+            <button onClick={goGrandmotherView} disabled={!rootNodeId} title="Jump to your root project view">
+              Top view (root)
             </button>
-            <button onClick={goUpOneView} disabled={!currentRootNode?.parentId}>
-              Up one level
+            <button onClick={goUpOneView} disabled={!currentRootNode?.parentId} title="Move one level up from the current view">
+              Parent view
             </button>
           </div>
+          <p className="planner-subtle">Top view jumps to your root project. Parent view moves one level up.</p>
           <button onClick={openSelectedAsMaster} disabled={!selectedNodeId}>
             Open selected as master
           </button>
-          <button onClick={organizeVisibleTree} disabled={busyAction || filteredTreeIds.length === 0}>
-            Organize visible tree
-          </button>
+          <div className="planner-row-label">Quick maintenance</div>
+          <div className="planner-inline-buttons">
+            <button onClick={organizeVisibleTree} disabled={busyAction || filteredTreeIds.length === 0}>
+              Auto-arrange tree
+            </button>
+            <button onClick={cleanUpCrossRefs} disabled={busyAction}>
+              Clean stale bubbles
+            </button>
+          </div>
         </div>
 
         <div className="planner-panel-block">
@@ -2733,9 +2746,6 @@ export default function PlannerPage({ user }: PlannerPageProps) {
           <p className="planner-subtle">
             Use these for entities shared across branches (e.g., Vendor / VN or Partner / PT).
           </p>
-          <button onClick={cleanUpCrossRefs} disabled={busyAction}>
-            Clean up stale bubbles
-          </button>
           <p className="planner-subtle">
             Anchor node: <strong>{selectedNode ? buildNodePath(selectedNode.id, nodesById) : "Select a node first"}</strong>
           </p>
@@ -2762,7 +2772,7 @@ export default function PlannerPage({ user }: PlannerPageProps) {
 
           {newRefSuggestions.length > 0 ? (
             <>
-              <div className="planner-row-label">Use an existing bubble instead</div>
+              <div className="planner-row-label">Attach an existing bubble</div>
               <div className="planner-chip-list">
                 {newRefSuggestions.map((ref) => (
                   <button
@@ -2781,10 +2791,10 @@ export default function PlannerPage({ user }: PlannerPageProps) {
             </>
           ) : null}
 
-          <div className="planner-row-label">Bubbles on selected node</div>
+          <div className="planner-row-label">Attached to selected node</div>
           <div className="planner-chip-list">
             {selectedNodeRefs.length === 0 || !selectedNodeId ? (
-              <span className="planner-subtle">No bubbles attached.</span>
+              <span className="planner-subtle">No bubbles attached to selected node.</span>
             ) : (
               selectedNodeRefs.map((ref) => (
                 <div key={ref.id} className="chip with-action">
@@ -2804,7 +2814,7 @@ export default function PlannerPage({ user }: PlannerPageProps) {
             )}
           </div>
 
-          <div className="planner-row-label">Bubble library</div>
+          <div className="planner-row-label">All bubbles</div>
           <input
             value={refSearchQuery}
             onChange={(event) => setRefSearchQuery(event.target.value)}
@@ -2821,9 +2831,7 @@ export default function PlannerPage({ user }: PlannerPageProps) {
                 return (
                   <div key={ref.id} className="planner-reference-item">
                     <button onClick={() => selectRefForEditing(ref.id)}>{`${ref.code} - ${ref.label}`}</button>
-                    <div className="planner-reference-preview">
-                      {`${ref.entityType}${ref.tags.length > 0 ? ` · ${ref.tags.join(", ")}` : ""} · ${describeRefTargets(ref, 2)}`}
-                    </div>
+                    <div className="planner-reference-preview">{describeRefLibraryPreview(ref)}</div>
                     <div className="planner-reference-actions">
                       <button
                         onClick={() => {
@@ -2849,25 +2857,7 @@ export default function PlannerPage({ user }: PlannerPageProps) {
             )}
           </div>
 
-          <div className="planner-row-label">Recent entities</div>
-          <div className="planner-chip-list">
-            {recentEntityRefs.length === 0 ? (
-              <span className="planner-subtle">No recent entities yet.</span>
-            ) : (
-              recentEntityRefs.map((ref) => (
-                <button
-                  key={ref.id}
-                  className="chip"
-                  onClick={() => selectRefForEditing(ref.id)}
-                  title={describeRefTargets(ref, 4)}
-                >
-                  {`${ref.code} · ${formatUpdatedTime(ref.updatedAtMs)}`}
-                </button>
-              ))
-            )}
-          </div>
-
-          <div className="planner-row-label">Edit bubble</div>
+          <div className="planner-row-label">Selected bubble</div>
           <select
             value={editRefId}
             onChange={(event) => {
@@ -2934,78 +2924,101 @@ export default function PlannerPage({ user }: PlannerPageProps) {
             rows={4}
             disabled={!editRefId}
           />
-          <div className="planner-inline-buttons">
-            <button onClick={saveCrossRefEdits} disabled={busyAction || !editRefId || editRefLabel.trim().length === 0}>
-              Save bubble
-            </button>
-            <button className="danger" onClick={deleteCrossRefBubble} disabled={busyAction || !editRefId}>
-              Delete bubble
-            </button>
-          </div>
-
-          <div className="planner-row-label">Merge duplicate into this entity</div>
-          <select value={mergeFromRefId} onChange={(event) => setMergeFromRefId(event.target.value)} disabled={!editRefId}>
-            <option value="">
-              {editRefId ? "Select duplicate entity..." : "Select an entity to enable merging..."}
-            </option>
-            {mergeCandidateRefs.map((ref) => (
-              <option key={ref.id} value={ref.id}>
-                {`${ref.code} - ${ref.label} (${ref.entityType})`}
-              </option>
-            ))}
-          </select>
-          <button onClick={mergeCrossRefIntoEdited} disabled={busyAction || !editRefId || !mergeFromRefId}>
-            Merge selected duplicate
+          <button onClick={saveCrossRefEdits} disabled={busyAction || !editRefId || editRefLabel.trim().length === 0}>
+            Save changes
           </button>
 
-          <div className="planner-row-label">Link this bubble to any node</div>
-          <input
-            value={linkNodeQuery}
-            onChange={(event) => setLinkNodeQuery(event.target.value)}
-            placeholder="Search node path across all projects..."
-            disabled={!editRefId}
-          />
-          <select
-            value={linkTargetNodeId}
-            onChange={(event) => setLinkTargetNodeId(event.target.value)}
-            disabled={!editRefId}
-          >
-            <option value="">
-              {editRefId ? "Choose a node to link..." : "Select a bubble first..."}
-            </option>
-            {linkableNodeOptions.map((entry) => (
-              <option key={entry.id} value={entry.id}>
-                {entry.path}
-              </option>
-            ))}
-          </select>
-          <button
-            onClick={() => {
-              if (!editRefId || !linkTargetNodeId) return;
-              linkCrossRefToNode(editRefId, linkTargetNodeId);
-            }}
-            disabled={busyAction || !editRefId || !linkTargetNodeId}
-          >
-            Link node
-          </button>
+          <details className="planner-advanced-tools">
+            <summary>Advanced bubble tools</summary>
+            <div className="planner-advanced-tools-content">
+              <div className="planner-row-label">Recent bubbles</div>
+              <div className="planner-chip-list">
+                {recentEntityRefs.length === 0 ? (
+                  <span className="planner-subtle">No recent bubbles yet.</span>
+                ) : (
+                  recentEntityRefs.map((ref) => (
+                    <button
+                      key={ref.id}
+                      className="chip"
+                      onClick={() => selectRefForEditing(ref.id)}
+                      title={describeRefTargets(ref, 4)}
+                    >
+                      {`${ref.code} · ${formatUpdatedTime(ref.updatedAtMs)}`}
+                    </button>
+                  ))
+                )}
+              </div>
 
-          <div className="planner-row-label">Linked nodes in this bubble</div>
-          <div className="planner-reference-list">
-            {!editRefId ? (
-              <span className="planner-subtle">Select a bubble to manage its links.</span>
-            ) : editableRefTargets.length === 0 ? (
-              <span className="planner-subtle">This bubble is not linked to any node yet.</span>
-            ) : (
-              editableRefTargets.map((entry) => (
-                <div key={entry.id} className="planner-reference-target-item">
-                  <button onClick={() => jumpToReferencedNode(entry.id)}>{entry.path}</button>
-                  <button className="danger" onClick={() => detachCrossRef(editRefId, entry.id)} disabled={busyAction}>
-                    Unlink
-                  </button>
-                </div>
-              ))
-            )}
-          </div>
+              <div className="planner-row-label">Merge likely duplicate</div>
+              <select value={mergeFromRefId} onChange={(event) => setMergeFromRefId(event.target.value)} disabled={!editRefId}>
+                <option value="">
+                  {editRefId ? "Select duplicate bubble..." : "Select a bubble first..."}
+                </option>
+                {mergeCandidateRefs.map((ref) => (
+                  <option key={ref.id} value={ref.id}>
+                    {`${ref.code} - ${ref.label} (${ref.entityType})`}
+                  </option>
+                ))}
+              </select>
+              <button onClick={mergeCrossRefIntoEdited} disabled={busyAction || !editRefId || !mergeFromRefId}>
+                Merge duplicate
+              </button>
+
+              <div className="planner-row-label">Link selected bubble to another node</div>
+              <input
+                value={linkNodeQuery}
+                onChange={(event) => setLinkNodeQuery(event.target.value)}
+                placeholder="Search node path across all projects..."
+                disabled={!editRefId}
+              />
+              <select
+                value={linkTargetNodeId}
+                onChange={(event) => setLinkTargetNodeId(event.target.value)}
+                disabled={!editRefId}
+              >
+                <option value="">
+                  {editRefId ? "Choose node to link..." : "Select a bubble first..."}
+                </option>
+                {linkableNodeOptions.map((entry) => (
+                  <option key={entry.id} value={entry.id}>
+                    {entry.path}
+                  </option>
+                ))}
+              </select>
+              <button
+                onClick={() => {
+                  if (!editRefId || !linkTargetNodeId) return;
+                  linkCrossRefToNode(editRefId, linkTargetNodeId);
+                }}
+                disabled={busyAction || !editRefId || !linkTargetNodeId}
+              >
+                Link node
+              </button>
+
+              <div className="planner-row-label">Linked nodes</div>
+              <div className="planner-reference-list">
+                {!editRefId ? (
+                  <span className="planner-subtle">Select a bubble to manage links.</span>
+                ) : editableRefTargets.length === 0 ? (
+                  <span className="planner-subtle">This bubble is not linked yet.</span>
+                ) : (
+                  editableRefTargets.map((entry) => (
+                    <div key={entry.id} className="planner-reference-target-item">
+                      <button onClick={() => jumpToReferencedNode(entry.id)}>{entry.path}</button>
+                      <button className="danger" onClick={() => detachCrossRef(editRefId, entry.id)} disabled={busyAction}>
+                        Unlink
+                      </button>
+                    </div>
+                  ))
+                )}
+              </div>
+
+              <div className="planner-row-label">Danger zone</div>
+              <button className="danger" onClick={deleteCrossRefBubble} disabled={busyAction || !editRefId}>
+                Delete bubble
+              </button>
+            </div>
+          </details>
         </div>
         ) : null}
 

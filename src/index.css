@@ -444,6 +444,31 @@ textarea {
   text-align: left;
 }
 
+.planner-advanced-tools {
+  border: 1px dashed rgba(255, 255, 255, 0.16);
+  border-radius: 10px;
+  padding: 7px 8px;
+  background: rgba(255, 255, 255, 0.03);
+}
+
+.planner-advanced-tools summary {
+  cursor: pointer;
+  font-size: 11px;
+  font-weight: 760;
+  color: rgba(229, 236, 246, 0.9);
+  user-select: none;
+}
+
+.planner-advanced-tools[open] summary {
+  margin-bottom: 8px;
+}
+
+.planner-advanced-tools-content {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
 .planner-error {
   border-radius: 10px;
   padding: 8px;
