@@ -37,15 +37,26 @@ type PlannerPageProps = {
   user: User;
 };
 
+type NodeKind = "root" | "project" | "item" | "story";
+type TaskStatus = "none" | "todo" | "done";
+
+type StoryStep = {
+  id: string;
+  text: string;
+  done: boolean;
+};
+
 type EntityType = "entity" | "investor" | "partner" | "vendor" | "contact" | "client" | "organization";
 
 type TreeNodeDoc = {
   title: string;
   parentId: string | null;
-  kind: "root" | "project" | "item";
+  kind: NodeKind;
   x?: number;
   y?: number;
   color?: string;
+  taskStatus?: TaskStatus;
+  storySteps?: StoryStep[];
 };
 
 type TreeNode = TreeNodeDoc & { id: string };
@@ -97,10 +108,55 @@ function normalizeHexColor(value: unknown): string | undefined {
   return `#${hex.toUpperCase()}`;
 }
 
-function defaultNodeColor(kind: "root" | "project" | "item"): string {
+function defaultNodeColor(kind: NodeKind): string {
   if (kind === "root") return "#3A2C0E";
   if (kind === "project") return "#101F3E";
+  if (kind === "story") return "#10302A";
   return "#10141C";
+}
+
+function normalizeNodeKind(value: unknown): NodeKind {
+  if (value === "root" || value === "project" || value === "item" || value === "story") return value;
+  return "item";
+}
+
+function normalizeTaskStatus(value: unknown): TaskStatus {
+  if (value === "todo" || value === "done") return value;
+  return "none";
+}
+
+function normalizeStorySteps(value: unknown): StoryStep[] {
+  if (!Array.isArray(value)) return [];
+  return value
+    .map((entry, index) => {
+      if (!entry || typeof entry !== "object") return null;
+      const raw = entry as { id?: unknown; text?: unknown; title?: unknown; done?: unknown };
+      const textCandidate = typeof raw.text === "string" ? raw.text : typeof raw.title === "string" ? raw.title : "";
+      const text = textCandidate.trim();
+      if (!text) return null;
+      const id = typeof raw.id === "string" && raw.id.trim() ? raw.id : `step-${index + 1}`;
+      return {
+        id,
+        text,
+        done: raw.done === true,
+      } satisfies StoryStep;
+    })
+    .filter((entry): entry is StoryStep => !!entry);
+}
+
+function createStoryStep(text: string): StoryStep {
+  return {
+    id: `step-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 8)}`,
+    text: text.trim(),
+    done: false,
+  };
+}
+
+function nextNodeKind(kind: NodeKind): NodeKind {
+  if (kind === "project") return "item";
+  if (kind === "item") return "story";
+  if (kind === "story") return "project";
+  return "root";
 }
 
 function normalizeCode(input: string): string {
@@ -248,6 +304,7 @@ export default function PlannerPage({ user }: PlannerPageProps) {
   const searchInputRef = useRef<HTMLInputElement>(null);
   const renameInputRef = useRef<HTMLInputElement>(null);
   const [newChildTitle, setNewChildTitle] = useState("");
+  const [newStoryStepText, setNewStoryStepText] = useState("");
   const [renameTitle, setRenameTitle] = useState("");
   const [newRefLabel, setNewRefLabel] = useState("");
   const [newRefCode, setNewRefCode] = useState("");
@@ -470,10 +527,12 @@ export default function PlannerPage({ user }: PlannerPageProps) {
                 id: entry.id,
                 title: typeof value.title === "string" ? value.title : "Untitled",
                 parentId: typeof value.parentId === "string" ? value.parentId : null,
-                kind: value.kind === "root" || value.kind === "project" || value.kind === "item" ? value.kind : "item",
+                kind: normalizeNodeKind(value.kind),
                 x: typeof value.x === "number" ? value.x : undefined,
                 y: typeof value.y === "number" ? value.y : undefined,
                 color: normalizeHexColor(value.color),
+                taskStatus: normalizeTaskStatus(value.taskStatus),
+                storySteps: normalizeStorySteps(value.storySteps),
               } satisfies TreeNode;
             });
             nextNodes.sort((a, b) => a.title.localeCompare(b.title));
@@ -576,7 +635,10 @@ export default function PlannerPage({ user }: PlannerPageProps) {
   );
 
   const applyLocalNodePatch = useCallback(
-    (nodeId: string, patch: Partial<Pick<TreeNode, "title" | "parentId" | "kind" | "x" | "y" | "color">>) => {
+    (
+      nodeId: string,
+      patch: Partial<Pick<TreeNode, "title" | "parentId" | "kind" | "x" | "y" | "color" | "taskStatus" | "storySteps">>
+    ) => {
       setNodes((prevNodes) => prevNodes.map((entry) => (entry.id === nodeId ? { ...entry, ...patch } : entry)));
     },
     []
@@ -585,6 +647,10 @@ export default function PlannerPage({ user }: PlannerPageProps) {
   useEffect(() => {
     setRenameTitle(selectedNode?.title || "");
   }, [selectedNode?.id, selectedNode?.title]);
+
+  useEffect(() => {
+    setNewStoryStepText("");
+  }, [selectedNode?.id]);
 
   const visibleTreeIds = useMemo(() => {
     if (!currentRootId) return [] as string[];
@@ -720,10 +786,15 @@ export default function PlannerPage({ user }: PlannerPageProps) {
         const isRoot = node.id === rootNodeId;
         const isSearchMatch = searchMatchingIds.has(node.id);
         const isProject = node.kind === "project";
+        const isStory = node.kind === "story";
+        const isTaskTodo = node.taskStatus === "todo";
+        const isTaskDone = node.taskStatus === "done";
         const baseBackground = isRoot
           ? "rgba(58, 44, 14, 0.92)"
           : isProject
             ? "rgba(16, 31, 62, 0.95)"
+          : isStory
+            ? "rgba(16, 48, 42, 0.95)"
             : "rgba(16, 20, 28, 0.94)";
         const background = node.color || baseBackground;
         return {
@@ -760,8 +831,13 @@ export default function PlannerPage({ user }: PlannerPageProps) {
                     {isCollapsed ? "▶" : "▼"}
                   </button>
                 )}
-                <span>{node.title}</span>
+                <span className={isTaskDone ? "planner-node-title done" : "planner-node-title"}>{node.title}</span>
                 {!isRoot ? <span className={`planner-kind-badge ${node.kind}`}>{node.kind}</span> : null}
+                {!isRoot && (isTaskTodo || isTaskDone) ? (
+                  <span className={`planner-task-badge ${isTaskDone ? "done" : "todo"}`}>
+                    {isTaskDone ? "Done" : "Task"}
+                  </span>
+                ) : null}
                 {childCount > 0 ? <span className="planner-node-count">{childCount}</span> : null}
               </div>
             ),
@@ -773,6 +849,8 @@ export default function PlannerPage({ user }: PlannerPageProps) {
                 ? "2px solid rgba(253, 228, 129, 0.9)"
                 : isProject
                   ? "1px solid rgba(96, 165, 250, 0.6)"
+                : isStory
+                  ? "1px solid rgba(45, 212, 191, 0.65)"
                 : "1px solid rgba(255, 255, 255, 0.18)",
             borderRadius: 14,
             width: 260,
@@ -1259,6 +1337,94 @@ export default function PlannerPage({ user }: PlannerPageProps) {
       setBusyAction(false);
     }
   }, [renameTitle, selectedNodeId, user.uid]);
+
+  const setNodeTaskStatus = useCallback(
+    async (nodeId: string, taskStatus: TaskStatus) => {
+      if (!db) return;
+      const previousTaskStatus = nodesById.get(nodeId)?.taskStatus || "none";
+      setBusyAction(true);
+      setError(null);
+      applyLocalNodePatch(nodeId, { taskStatus });
+      try {
+        await updateDoc(doc(db, "users", user.uid, "nodes", nodeId), {
+          taskStatus: taskStatus === "none" ? deleteField() : taskStatus,
+          updatedAt: serverTimestamp(),
+        });
+      } catch (actionError: unknown) {
+        applyLocalNodePatch(nodeId, { taskStatus: previousTaskStatus });
+        setError(actionError instanceof Error ? actionError.message : "Could not update task status.");
+      } finally {
+        setBusyAction(false);
+      }
+    },
+    [applyLocalNodePatch, nodesById, user.uid]
+  );
+
+  const saveStorySteps = useCallback(
+    async (nodeId: string, storySteps: StoryStep[]) => {
+      if (!db) return;
+      const previousStorySteps = nodesById.get(nodeId)?.storySteps || [];
+      setBusyAction(true);
+      setError(null);
+      applyLocalNodePatch(nodeId, { storySteps });
+      try {
+        await updateDoc(doc(db, "users", user.uid, "nodes", nodeId), {
+          storySteps: storySteps.length > 0 ? storySteps : deleteField(),
+          updatedAt: serverTimestamp(),
+        });
+      } catch (actionError: unknown) {
+        applyLocalNodePatch(nodeId, { storySteps: previousStorySteps });
+        setError(actionError instanceof Error ? actionError.message : "Could not save story steps.");
+      } finally {
+        setBusyAction(false);
+      }
+    },
+    [applyLocalNodePatch, nodesById, user.uid]
+  );
+
+  const addStoryStep = useCallback(async () => {
+    if (!selectedNode || selectedNode.kind !== "story") return;
+    const text = newStoryStepText.trim();
+    if (!text) return;
+    const nextSteps = [...(selectedNode.storySteps || []), createStoryStep(text)];
+    await saveStorySteps(selectedNode.id, nextSteps);
+    setNewStoryStepText("");
+  }, [newStoryStepText, saveStorySteps, selectedNode]);
+
+  const toggleStoryStepDone = useCallback(
+    async (stepId: string) => {
+      if (!selectedNode || selectedNode.kind !== "story") return;
+      const nextSteps = (selectedNode.storySteps || []).map((step) =>
+        step.id === stepId ? { ...step, done: !step.done } : step
+      );
+      await saveStorySteps(selectedNode.id, nextSteps);
+    },
+    [saveStorySteps, selectedNode]
+  );
+
+  const deleteStoryStep = useCallback(
+    async (stepId: string) => {
+      if (!selectedNode || selectedNode.kind !== "story") return;
+      const nextSteps = (selectedNode.storySteps || []).filter((step) => step.id !== stepId);
+      await saveStorySteps(selectedNode.id, nextSteps);
+    },
+    [saveStorySteps, selectedNode]
+  );
+
+  const moveStoryStep = useCallback(
+    async (stepId: string, direction: -1 | 1) => {
+      if (!selectedNode || selectedNode.kind !== "story") return;
+      const current = [...(selectedNode.storySteps || [])];
+      const index = current.findIndex((step) => step.id === stepId);
+      if (index < 0) return;
+      const targetIndex = index + direction;
+      if (targetIndex < 0 || targetIndex >= current.length) return;
+      const [moved] = current.splice(index, 1);
+      current.splice(targetIndex, 0, moved);
+      await saveStorySteps(selectedNode.id, current);
+    },
+    [saveStorySteps, selectedNode]
+  );
 
   const setNodeColor = useCallback(
     async (nodeId: string, color: string | undefined) => {
@@ -1836,7 +2002,9 @@ export default function PlannerPage({ user }: PlannerPageProps) {
           kind: original.kind,
           x: (typeof original.x === "number" ? original.x : 0) + 80,
           y: (typeof original.y === "number" ? original.y : 0) + 80,
-          color: original.color,
+          ...(original.color ? { color: original.color } : {}),
+          ...(original.taskStatus && original.taskStatus !== "none" ? { taskStatus: original.taskStatus } : {}),
+          ...(original.storySteps && original.storySteps.length > 0 ? { storySteps: original.storySteps } : {}),
           createdAt: serverTimestamp(),
           updatedAt: serverTimestamp(),
         } satisfies TreeNodeDoc & { createdAt: unknown; updatedAt: unknown });
@@ -1881,9 +2049,9 @@ export default function PlannerPage({ user }: PlannerPageProps) {
       const node = nodesById.get(nodeId);
       if (!node || node.kind === "root") return;
 
-      // Toggle between project and item
+      // Cycle between project, item, and story.
       const previousKind = node.kind;
-      const newKind = previousKind === "project" ? "item" : "project";
+      const newKind = nextNodeKind(previousKind);
 
       setBusyAction(true);
       setError(null);
@@ -1903,6 +2071,17 @@ export default function PlannerPage({ user }: PlannerPageProps) {
       }
     },
     [applyLocalNodePatch, nodesById, user.uid]
+  );
+
+  const handleContextToggleTaskStatus = useCallback(
+    (nodeId: string) => {
+      const node = nodesById.get(nodeId);
+      if (!node || node.kind === "root") return;
+      const current = node.taskStatus || "none";
+      const nextStatus: TaskStatus = current === "done" ? "todo" : "done";
+      void setNodeTaskStatus(nodeId, nextStatus);
+    },
+    [nodesById, setNodeTaskStatus]
   );
 
   const paletteItems = useMemo(() => {
@@ -1936,12 +2115,20 @@ export default function PlannerPage({ user }: PlannerPageProps) {
       );
       const selected = nodesById.get(selectedNodeId);
       if (selected && selected.kind !== "root") {
+        const nextKind = nextNodeKind(selected.kind);
         addItem(
           "cmd-toggle-type",
-          selected.kind === "project" ? "Set selected node as item" : "Set selected node as project",
+          `Set selected node as ${nextKind}`,
           "Node type",
           () => handleContextChangeType(selectedNodeId),
-          "toggle type project item"
+          "toggle type project item story"
+        );
+        addItem(
+          "cmd-toggle-task-status",
+          selected.taskStatus === "done" ? "Mark selected task as todo" : "Mark selected task as done",
+          "Task",
+          () => handleContextToggleTaskStatus(selectedNodeId),
+          "task done complete strike toggle"
         );
       }
     }
@@ -2013,6 +2200,7 @@ export default function PlannerPage({ user }: PlannerPageProps) {
     goUpOneView,
     handleContextAddChild,
     handleContextChangeType,
+    handleContextToggleTaskStatus,
     jumpToReferencedNode,
     linkCrossRefToNode,
     nodes,
@@ -2343,9 +2531,33 @@ export default function PlannerPage({ user }: PlannerPageProps) {
                   onClick={() => handleContextChangeType(selectedNode.id)}
                   disabled={busyAction || selectedNode.kind === "root"}
                 >
-                  {selectedNode.kind === "project" ? "Set as item" : selectedNode.kind === "item" ? "Set as project" : "Root"}
+                  {selectedNode.kind === "root" ? "Root" : `Set as ${nextNodeKind(selectedNode.kind)}`}
                 </button>
                 <button disabled>{selectedNode.kind}</button>
+              </div>
+              <div className="planner-row-label">Task status</div>
+              <div className="planner-inline-buttons">
+                <select
+                  value={selectedNode.taskStatus || "none"}
+                  onChange={(event) => {
+                    void setNodeTaskStatus(selectedNode.id, event.target.value as TaskStatus);
+                  }}
+                  disabled={busyAction || selectedNode.kind === "root"}
+                >
+                  <option value="none">No task</option>
+                  <option value="todo">Todo</option>
+                  <option value="done">Done</option>
+                </select>
+                <button
+                  onClick={() => {
+                    const current = selectedNode.taskStatus || "none";
+                    const nextStatus: TaskStatus = current === "done" ? "todo" : "done";
+                    void setNodeTaskStatus(selectedNode.id, nextStatus);
+                  }}
+                  disabled={busyAction || selectedNode.kind === "root"}
+                >
+                  {selectedNode.taskStatus === "done" ? "Mark todo" : "Mark done"}
+                </button>
               </div>
               <div className="planner-row-label">Color</div>
               <div className="planner-inline-buttons">
@@ -2405,11 +2617,87 @@ export default function PlannerPage({ user }: PlannerPageProps) {
                         setActivePortalRefId(null);
                       }}
                     >
-                      {child.title}
+                      <span className={child.taskStatus === "done" ? "planner-node-title done" : ""}>{child.title}</span>
                     </button>
                   ))
                 )}
               </div>
+
+              {selectedNode.kind === "story" ? (
+                <>
+                  <div className="planner-row-label">Story sequence (linear)</div>
+                  <div className="planner-reference-list">
+                    {(selectedNode.storySteps || []).length === 0 ? (
+                      <span className="planner-subtle">No steps yet. Add beats for your story flow.</span>
+                    ) : (
+                      (selectedNode.storySteps || []).map((step, index) => (
+                        <div key={step.id} className="planner-story-step-item">
+                          <button
+                            className="planner-story-step-toggle"
+                            onClick={() => {
+                              void toggleStoryStepDone(step.id);
+                            }}
+                            disabled={busyAction}
+                            title={step.done ? "Mark as not done" : "Mark as done"}
+                          >
+                            {step.done ? "☑" : "☐"}
+                          </button>
+                          <span className={step.done ? "planner-story-step-text done" : "planner-story-step-text"}>
+                            {`${index + 1}. ${step.text}`}
+                          </span>
+                          <div className="planner-story-step-actions">
+                            <button
+                              onClick={() => {
+                                void moveStoryStep(step.id, -1);
+                              }}
+                              disabled={busyAction || index === 0}
+                              title="Move up"
+                            >
+                              ↑
+                            </button>
+                            <button
+                              onClick={() => {
+                                void moveStoryStep(step.id, 1);
+                              }}
+                              disabled={busyAction || index === (selectedNode.storySteps || []).length - 1}
+                              title="Move down"
+                            >
+                              ↓
+                            </button>
+                            <button
+                              className="danger"
+                              onClick={() => {
+                                void deleteStoryStep(step.id);
+                              }}
+                              disabled={busyAction}
+                              title="Delete step"
+                            >
+                              x
+                            </button>
+                          </div>
+                        </div>
+                      ))
+                    )}
+                  </div>
+                  <div className="planner-story-step-add">
+                    <input
+                      value={newStoryStepText}
+                      onChange={(event) => setNewStoryStepText(event.target.value)}
+                      onKeyDown={(event) => {
+                        if (event.key !== "Enter") return;
+                        event.preventDefault();
+                        if (busyAction || newStoryStepText.trim().length === 0) return;
+                        void addStoryStep();
+                      }}
+                      placeholder="Add next story beat..."
+                      disabled={busyAction}
+                    />
+                    <button onClick={addStoryStep} disabled={busyAction || newStoryStepText.trim().length === 0}>
+                      Add step
+                    </button>
+                  </div>
+                </>
+              ) : null}
             </>
           ) : (
             <p className="planner-subtle">No node selected.</p>
@@ -2744,7 +3032,23 @@ export default function PlannerPage({ user }: PlannerPageProps) {
       <main className="planner-canvas">
         {isMobileLayout ? (
           <div className="planner-mobile-toolbar">
-            <button onClick={() => setMobileSidebarOpen(true)}>Controls</button>
+            <button
+              onClick={() => {
+                setMobileSidebarSection("project");
+                setMobileSidebarOpen(true);
+              }}
+            >
+              Controls
+            </button>
+            <button
+              onClick={() => {
+                setMobileSidebarSection("node");
+                setMobileSidebarOpen(true);
+              }}
+              disabled={!selectedNodeId}
+            >
+              Node
+            </button>
             <button onClick={goGrandmotherView} disabled={!rootNodeId}>
               Home
             </button>
@@ -2765,8 +3069,8 @@ export default function PlannerPage({ user }: PlannerPageProps) {
           fitView
           fitViewOptions={{ padding: 0.3, maxZoom: 1 }}
           nodesConnectable={false}
-          selectionOnDrag
-          selectionMode={SelectionMode.Partial}
+          selectionOnDrag={!isMobileLayout}
+          selectionMode={isMobileLayout ? SelectionMode.Full : SelectionMode.Partial}
           multiSelectionKeyCode={["Shift", "Meta", "Control"]}
           onInit={setRfInstance}
           onNodesChange={handleNodesChange}
@@ -2785,6 +3089,7 @@ export default function PlannerPage({ user }: PlannerPageProps) {
           }}
           onNodeDoubleClick={(_, node) => {
             if (node.id.startsWith("portal:")) return;
+            if (isMobileLayout) return;
             // Zoom only; changing view root is an explicit action.
             onNodeDoubleClick(_, node);
           }}
@@ -2797,6 +3102,13 @@ export default function PlannerPage({ user }: PlannerPageProps) {
           onNodeContextMenu={(event, node) => {
             event.preventDefault();
             if (node.id.startsWith("portal:")) return;
+            if (isMobileLayout) {
+              setSelectedNodeId(node.id);
+              setActivePortalRefId(null);
+              setMobileSidebarSection("node");
+              setMobileSidebarOpen(true);
+              return;
+            }
             setSelectedNodeId(node.id);
             setActivePortalRefId(null);
             setContextMenu({
@@ -2819,6 +3131,7 @@ export default function PlannerPage({ user }: PlannerPageProps) {
             nodeId={contextMenu.nodeId}
             nodeTitle={nodesById.get(contextMenu.nodeId)?.title || "Node"}
             nodeKind={nodesById.get(contextMenu.nodeId)?.kind || "item"}
+            taskStatus={nodesById.get(contextMenu.nodeId)?.taskStatus || "none"}
             hasChildren={(childrenByParent.get(contextMenu.nodeId) || []).length > 0}
             onClose={() => setContextMenu(null)}
             onAddChild={handleContextAddChild}
@@ -2827,6 +3140,7 @@ export default function PlannerPage({ user }: PlannerPageProps) {
             onRename={handleContextRename}
             onAddCrossRef={handleContextAddCrossRef}
             onChangeType={handleContextChangeType}
+            onToggleTaskStatus={handleContextToggleTaskStatus}
           />
         )}
 

@@ -1,11 +1,15 @@
 import React, { useEffect, useRef } from "react";
 
+type NodeKind = "root" | "project" | "item" | "story";
+type TaskStatus = "none" | "todo" | "done";
+
 type ContextMenuProps = {
   x: number;
   y: number;
   nodeId: string;
   nodeTitle: string;
-  nodeKind: "root" | "project" | "item";
+  nodeKind: NodeKind;
+  taskStatus: TaskStatus;
   hasChildren: boolean;
   onClose: () => void;
   onAddChild: (nodeId: string) => void;
@@ -14,6 +18,7 @@ type ContextMenuProps = {
   onRename: (nodeId: string) => void;
   onAddCrossRef: (nodeId: string) => void;
   onChangeType: (nodeId: string) => void;
+  onToggleTaskStatus: (nodeId: string) => void;
 };
 
 export function NodeContextMenu({
@@ -22,6 +27,7 @@ export function NodeContextMenu({
   nodeId,
   nodeTitle,
   nodeKind,
+  taskStatus,
   hasChildren,
   onClose,
   onAddChild,
@@ -30,6 +36,7 @@ export function NodeContextMenu({
   onRename,
   onAddCrossRef,
   onChangeType,
+  onToggleTaskStatus,
 }: ContextMenuProps) {
   const menuRef = useRef<HTMLDivElement>(null);
 
@@ -84,7 +91,8 @@ export function NodeContextMenu({
     onClose();
   };
 
-  const nextKind = nodeKind === "project" ? "item" : "project";
+  const nextKind = nodeKind === "project" ? "item" : nodeKind === "item" ? "story" : "project";
+  const taskAction = taskStatus === "done" ? "Mark Task Todo" : "Mark Task Done";
 
   return (
     <div
@@ -147,6 +155,13 @@ export function NodeContextMenu({
           onClick={() => handleAction(() => onChangeType(nodeId))}
           disabled={nodeKind === "root"}
           title={nodeKind === "root" ? "Root node type cannot be changed" : undefined}
+        />
+        <MenuItem
+          icon="☑"
+          label={taskAction}
+          onClick={() => handleAction(() => onToggleTaskStatus(nodeId))}
+          disabled={nodeKind === "root"}
+          title={nodeKind === "root" ? "Root node cannot be a task" : undefined}
         />
 
         <div
