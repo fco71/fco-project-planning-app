@@ -68,6 +68,7 @@ type CrossRefDoc = {
   label: string;
   code: string;
   nodeIds: string[];
+  anchorNodeId?: string;
   entityType?: EntityType;
   tags?: string[];
   notes?: string;
@@ -80,6 +81,7 @@ type CrossRef = {
   label: string;
   code: string;
   nodeIds: string[];
+  anchorNodeId: string | null;
   entityType: EntityType;
   tags: string[];
   notes: string;
@@ -210,6 +212,24 @@ function parseLineList(input: string): string[] {
   );
 }
 
+function getNudge(seed: string, xRange = 12, yRange = 8): { x: number; y: number } {
+  let hash = 0;
+  for (let i = 0; i < seed.length; i += 1) {
+    hash = (hash << 5) - hash + seed.charCodeAt(i);
+    hash |= 0;
+  }
+  const x = ((hash % (xRange * 2 + 1)) + (xRange * 2 + 1)) % (xRange * 2 + 1) - xRange;
+  const yHash = ((hash >> 8) % (yRange * 2 + 1) + (yRange * 2 + 1)) % (yRange * 2 + 1) - yRange;
+  return { x, y: yHash };
+}
+
+function chooseAnchorNodeId(nodeIds: string[], ...preferredIds: Array<string | null | undefined>): string | null {
+  for (const preferred of preferredIds) {
+    if (preferred && nodeIds.includes(preferred)) return preferred;
+  }
+  return nodeIds[0] || null;
+}
+
 function timestampToMs(value: unknown): number {
   if (!value || typeof value !== "object") return 0;
   const maybe = value as { toMillis?: () => number };
@@ -278,7 +298,7 @@ function getMasterNodeFor(nodeId: string, rootNodeId: string | null, nodesById: 
 
 const PortalNode = memo(function PortalNode({ data }: NodeProps<PortalData>) {
   return (
-    <div className="planner-portal-label" title={data.title}>
+    <div className="planner-portal-label" data-tooltip={data.title} title={data.title}>
       <Handle type="target" position={Position.Top} isConnectable={false} className="planner-handle-hidden" />
       <Handle type="source" position={Position.Bottom} isConnectable={false} className="planner-handle-hidden" />
       {data.label}
@@ -598,6 +618,7 @@ export default function PlannerPage({ user }: PlannerPageProps) {
                 label: typeof value.label === "string" ? value.label : entry.id,
                 code: typeof value.code === "string" ? normalizeCode(value.code) : "REF",
                 nodeIds: asStringArray(value.nodeIds),
+                anchorNodeId: typeof value.anchorNodeId === "string" ? value.anchorNodeId : null,
                 entityType,
                 tags: asStringArray(value.tags),
                 notes: typeof value.notes === "string" ? value.notes : "",
@@ -1049,63 +1070,147 @@ export default function PlannerPage({ user }: PlannerPageProps) {
 
   const visiblePortals = useMemo(() => {
     return refs
-      .map((ref) => ({ ref, inView: ref.nodeIds.filter((id) => visibleTreeIdSet.has(id)) }))
-      .filter((entry) => entry.inView.length > 0)
-      .sort((a, b) => a.ref.code.localeCompare(b.ref.code) || a.ref.label.localeCompare(b.ref.label));
-  }, [refs, visibleTreeIdSet]);
+      .map((ref) => {
+        const validNodeIds = ref.nodeIds.filter((id) => nodesById.has(id));
+        const inView = validNodeIds.filter((id) => visibleTreeIdSet.has(id));
+        const resolvedAnchorId = chooseAnchorNodeId(validNodeIds, ref.anchorNodeId);
+        const anchorId = chooseAnchorNodeId(inView, resolvedAnchorId);
+        return { ref: { ...ref, anchorNodeId: resolvedAnchorId }, inView, anchorId };
+      })
+      .filter((entry): entry is { ref: CrossRef; inView: string[]; anchorId: string } => entry.inView.length > 0 && !!entry.anchorId)
+      .sort((a, b) => {
+        if (a.anchorId !== b.anchorId) return a.anchorId.localeCompare(b.anchorId);
+        return a.ref.code.localeCompare(b.ref.code) || a.ref.label.localeCompare(b.ref.label);
+      });
+  }, [nodesById, refs, visibleTreeIdSet]);
+
+  const nodeRectById = useMemo(() => {
+    const map = new Map<string, { x: number; y: number; width: number; height: number }>();
+    baseTreeNodes.forEach((node) => {
+      const style = (node.style || {}) as React.CSSProperties;
+      const width = typeof style.width === "number" ? style.width : 280;
+      const minHeight = typeof style.minHeight === "number" ? style.minHeight : undefined;
+      const height = minHeight || (typeof style.height === "number" ? style.height : 120);
+      map.set(node.id, {
+        x: node.position.x,
+        y: node.position.y,
+        width,
+        height,
+      });
+    });
+    return map;
+  }, [baseTreeNodes]);
 
   const basePortalNodes = useMemo(() => {
-    const occupied: Array<{ x: number; y: number }> = [];
-    const minGap = 64;
-    const nudgeY = 58;
-    return visiblePortals.map((entry) => {
-      const linkedPositions = entry.inView.map((nodeId) => resolveNodePosition(nodeId));
-      const anchor = linkedPositions[0] || { x: 0, y: 0 };
-      const centroid = linkedPositions.reduce(
-        (acc, position) => ({ x: acc.x + position.x, y: acc.y + position.y }),
-        { x: 0, y: 0 }
-      );
-      const normalizedCentroid =
-        linkedPositions.length > 0
-          ? { x: centroid.x / linkedPositions.length, y: centroid.y / linkedPositions.length }
-          : anchor;
-      let x = linkedPositions.length === 1 ? anchor.x + 172 : normalizedCentroid.x + 148;
-      let y = linkedPositions.length === 1 ? anchor.y - 38 : normalizedCentroid.y - 28;
+    if (visiblePortals.length === 0) return [] as Node<PortalData>[];
 
-      let guard = 0;
-      while (occupied.some((position) => Math.hypot(position.x - x, position.y - y) < minGap) && guard < 40) {
-        y += nudgeY;
-        guard += 1;
-      }
-      occupied.push({ x, y });
+    const portalWidth = 46;
+    const portalHeight = 46;
+    const stackGap = 56;
+    const sideGap = 78;
+    const topBottomGap = 72;
 
-      return {
-        id: `portal:${entry.ref.id}`,
-        type: "portal",
-        position: { x, y },
-        data: {
-          label: `${entry.ref.code}${entry.ref.nodeIds.length > 1 ? `·${entry.ref.nodeIds.length}` : ""}`,
-          title: `${entry.ref.label} (${entry.ref.nodeIds.length} links)`,
-        } satisfies PortalData,
-        style: {
-          width: 56,
-          height: 56,
-          borderRadius: 999,
-          border: "2px solid rgba(251, 146, 60, 0.85)",
-          background: "rgba(82, 36, 8, 0.9)",
-          color: "rgba(255, 235, 220, 0.97)",
-          fontSize: 11,
-          fontWeight: 800,
-          boxShadow: "0 10px 20px rgba(0,0,0,0.35)",
-          display: "grid",
-          placeItems: "center",
-          cursor: "pointer",
-        } as React.CSSProperties,
-        draggable: false,
-        selectable: true,
-      } as Node<PortalData>;
+    const bounds = baseTreeNodes.reduce(
+      (acc, node) => {
+        acc.minX = Math.min(acc.minX, node.position.x);
+        acc.maxX = Math.max(acc.maxX, node.position.x);
+        acc.minY = Math.min(acc.minY, node.position.y);
+        acc.maxY = Math.max(acc.maxY, node.position.y);
+        return acc;
+      },
+      { minX: 0, maxX: 0, minY: 0, maxY: 0 }
+    );
+    const midX = (bounds.minX + bounds.maxX) / 2;
+    const midY = (bounds.minY + bounds.maxY) / 2;
+    const minY = bounds.minY - 70;
+    const maxY = bounds.maxY + 70;
+
+    const groupedByAnchor = new Map<string, typeof visiblePortals>();
+    visiblePortals.forEach((entry) => {
+      if (!groupedByAnchor.has(entry.anchorId)) groupedByAnchor.set(entry.anchorId, []);
+      groupedByAnchor.get(entry.anchorId)?.push(entry);
     });
-  }, [resolveNodePosition, visiblePortals]);
+
+    const occupied: Array<{ x: number; y: number; width: number; height: number }> = [];
+    const nodes: Node<PortalData>[] = [];
+    Array.from(groupedByAnchor.entries()).forEach(([anchorId, entries]) => {
+      const anchorRect = nodeRectById.get(anchorId) || {
+        x: resolveNodePosition(anchorId).x,
+        y: resolveNodePosition(anchorId).y,
+        width: 280,
+        height: 120,
+      };
+      const stackHeight = (entries.length - 1) * stackGap;
+      const nudge = getNudge(anchorId, 10, 6);
+      const stackX = anchorRect.x + anchorRect.width / 2 - portalWidth / 2 + nudge.x;
+      const placeBelow = anchorRect.y <= midY;
+      let stackStartY = placeBelow
+        ? anchorRect.y + anchorRect.height + topBottomGap
+        : anchorRect.y - topBottomGap - stackHeight - portalHeight;
+      stackStartY += nudge.y;
+      if (stackStartY < minY) stackStartY = minY;
+      if (stackStartY + stackHeight + portalHeight > maxY) stackStartY = maxY - stackHeight - portalHeight;
+
+      const sideX = anchorRect.x + (anchorRect.x >= midX ? -(sideGap + portalWidth) : anchorRect.width + sideGap);
+      let sideStartY = anchorRect.y + anchorRect.height / 2 - stackHeight / 2 + nudge.y;
+      if (sideStartY < minY) sideStartY = minY;
+      if (sideStartY + stackHeight + portalHeight > maxY) sideStartY = maxY - stackHeight - portalHeight;
+
+      entries.forEach((entry, index) => {
+        const offsetNudge = getNudge(entry.ref.id, 6, 4);
+        let x = stackX + offsetNudge.x;
+        let y = stackStartY + index * stackGap + offsetNudge.y;
+        const overlapsAnchor = !(
+          x + portalWidth < anchorRect.x ||
+          x > anchorRect.x + anchorRect.width ||
+          y + portalHeight < anchorRect.y ||
+          y > anchorRect.y + anchorRect.height
+        );
+        if (overlapsAnchor) {
+          x = sideX + offsetNudge.x;
+          y = sideStartY + index * stackGap + offsetNudge.y;
+        }
+
+        let guard = 0;
+        while (
+          occupied.some((box) => !(x + portalWidth < box.x || x > box.x + box.width || y + portalHeight < box.y || y > box.y + box.height)) &&
+          guard < 10
+        ) {
+          y += stackGap * 0.7;
+          guard += 1;
+        }
+        occupied.push({ x, y, width: portalWidth, height: portalHeight });
+
+        nodes.push({
+          id: `portal:${entry.ref.id}`,
+          type: "portal",
+          className: "planner-portal-node",
+          position: { x, y },
+          data: {
+            label: `${entry.ref.code}${entry.ref.nodeIds.length > 1 ? `·${entry.ref.nodeIds.length}` : ""}`,
+            title: `${entry.ref.label} (${entry.ref.nodeIds.length} links)`,
+          } satisfies PortalData,
+          style: {
+            width: portalWidth,
+            height: portalHeight,
+            borderRadius: 999,
+            border: "2px solid rgba(251, 146, 60, 0.85)",
+            background: "rgba(82, 36, 8, 0.9)",
+            color: "rgba(255, 235, 220, 0.97)",
+            fontSize: 11,
+            fontWeight: 800,
+            boxShadow: "0 10px 20px rgba(0,0,0,0.35)",
+            display: "grid",
+            placeItems: "center",
+            cursor: "pointer",
+          } as React.CSSProperties,
+          draggable: false,
+          selectable: true,
+        } as Node<PortalData>);
+      });
+    });
+    return nodes;
+  }, [baseTreeNodes, nodeRectById, resolveNodePosition, visiblePortals]);
 
   const basePortalEdges = useMemo(() => {
     return visiblePortals.flatMap((entry) =>
@@ -1744,13 +1849,18 @@ export default function PlannerPage({ user }: PlannerPageProps) {
         if (cleanedNodeIds.length === 0) {
           return { type: "delete" as const, refId: ref.id };
         }
+        const cleanedAnchorNodeId = chooseAnchorNodeId(cleanedNodeIds, ref.anchorNodeId);
         const unchanged =
           cleanedNodeIds.length === ref.nodeIds.length &&
-          cleanedNodeIds.every((id, index) => id === ref.nodeIds[index]);
+          cleanedNodeIds.every((id, index) => id === ref.nodeIds[index]) &&
+          cleanedAnchorNodeId === (ref.anchorNodeId || null);
         if (unchanged) return null;
-        return { type: "update" as const, refId: ref.id, nodeIds: cleanedNodeIds };
+        return { type: "update" as const, refId: ref.id, nodeIds: cleanedNodeIds, anchorNodeId: cleanedAnchorNodeId };
       })
-      .filter((entry): entry is { type: "update"; refId: string; nodeIds: string[] } | { type: "delete"; refId: string } => !!entry);
+      .filter(
+        (entry): entry is { type: "update"; refId: string; nodeIds: string[]; anchorNodeId: string | null } | { type: "delete"; refId: string } =>
+          !!entry
+      );
 
     if (operations.length === 0) return;
 
@@ -1766,6 +1876,7 @@ export default function PlannerPage({ user }: PlannerPageProps) {
         } else {
           batch.update(refDoc, {
             nodeIds: entry.nodeIds,
+            anchorNodeId: entry.anchorNodeId ?? deleteField(),
             updatedAt: serverTimestamp(),
           });
         }
@@ -1811,7 +1922,12 @@ export default function PlannerPage({ user }: PlannerPageProps) {
         if (remaining.length === 0) {
           batch.delete(refDoc);
         } else {
-          batch.update(refDoc, { nodeIds: remaining, updatedAt: serverTimestamp() });
+          const nextAnchorNodeId = chooseAnchorNodeId(remaining, ref.anchorNodeId);
+          batch.update(refDoc, {
+            nodeIds: remaining,
+            anchorNodeId: nextAnchorNodeId ?? deleteField(),
+            updatedAt: serverTimestamp(),
+          });
         }
       });
       await batch.commit();
@@ -1830,15 +1946,24 @@ export default function PlannerPage({ user }: PlannerPageProps) {
   const linkCrossRefToNode = useCallback(
     async (refId: string, nodeId: string) => {
       if (!db) return;
+      const linked = refs.find((entry) => entry.id === refId);
+      const nextNodeIds = linked ? (linked.nodeIds.includes(nodeId) ? linked.nodeIds : [...linked.nodeIds, nodeId]) : [nodeId];
+      const nextAnchorNodeId = chooseAnchorNodeId(nextNodeIds, linked?.anchorNodeId, nodeId);
       setBusyAction(true);
       setError(null);
       try {
         await updateDoc(doc(db, "users", user.uid, "crossRefs", refId), {
           nodeIds: arrayUnion(nodeId),
+          anchorNodeId: nextAnchorNodeId ?? deleteField(),
           updatedAt: serverTimestamp(),
         });
-        const linked = refs.find((entry) => entry.id === refId);
-        if (linked) hydrateRefEditor(linked);
+        if (linked) {
+          hydrateRefEditor({
+            ...linked,
+            nodeIds: nextNodeIds,
+            anchorNodeId: nextAnchorNodeId,
+          });
+        }
         setActivePortalRefId(refId);
         setLinkNodeQuery("");
         setLinkTargetNodeId("");
@@ -1863,13 +1988,20 @@ export default function PlannerPage({ user }: PlannerPageProps) {
     setError(null);
     try {
       if (existingExact) {
+        const nextNodeIds = existingExact.nodeIds.includes(selectedNodeId)
+          ? existingExact.nodeIds
+          : [...existingExact.nodeIds, selectedNodeId];
+        const nextAnchorNodeId = chooseAnchorNodeId(nextNodeIds, existingExact.anchorNodeId, selectedNodeId);
         await updateDoc(doc(db, "users", user.uid, "crossRefs", existingExact.id), {
           nodeIds: arrayUnion(selectedNodeId),
+          anchorNodeId: nextAnchorNodeId ?? deleteField(),
           entityType: existingExact.entityType === "entity" ? newRefType : existingExact.entityType,
           updatedAt: serverTimestamp(),
         });
         hydrateRefEditor({
           ...existingExact,
+          nodeIds: nextNodeIds,
+          anchorNodeId: nextAnchorNodeId,
           entityType: existingExact.entityType === "entity" ? newRefType : existingExact.entityType,
         });
         setActivePortalRefId(existingExact.id);
@@ -1879,6 +2011,7 @@ export default function PlannerPage({ user }: PlannerPageProps) {
           label,
           code,
           nodeIds: [selectedNodeId],
+          anchorNodeId: selectedNodeId,
           entityType: newRefType,
           tags: [],
           notes: "",
@@ -1892,6 +2025,7 @@ export default function PlannerPage({ user }: PlannerPageProps) {
           label,
           code,
           nodeIds: [selectedNodeId],
+          anchorNodeId: selectedNodeId,
           entityType: newRefType,
           tags: [],
           notes: "",
@@ -1925,6 +2059,7 @@ export default function PlannerPage({ user }: PlannerPageProps) {
         index += 1;
       }
       const duplicateNodeIds = Array.from(new Set(source.nodeIds));
+      const duplicateAnchorNodeId = chooseAnchorNodeId(duplicateNodeIds, source.anchorNodeId);
       setBusyAction(true);
       setError(null);
       try {
@@ -1933,6 +2068,7 @@ export default function PlannerPage({ user }: PlannerPageProps) {
           label: duplicateLabel,
           code: source.code,
           nodeIds: duplicateNodeIds,
+          ...(duplicateAnchorNodeId ? { anchorNodeId: duplicateAnchorNodeId } : {}),
           entityType: source.entityType,
           tags: source.tags,
           notes: source.notes,
@@ -1947,6 +2083,7 @@ export default function PlannerPage({ user }: PlannerPageProps) {
           id: newDoc.id,
           label: duplicateLabel,
           nodeIds: duplicateNodeIds,
+          anchorNodeId: duplicateAnchorNodeId,
           createdAtMs: 0,
           updatedAtMs: 0,
         });
@@ -2007,6 +2144,7 @@ export default function PlannerPage({ user }: PlannerPageProps) {
     const mergedNotes = [primary.notes.trim(), duplicate.notes.trim()].filter(Boolean).join("\n\n");
     const mergedContact = primary.contact.trim() || duplicate.contact.trim();
     const mergedType = primary.entityType !== "entity" ? primary.entityType : duplicate.entityType;
+    const mergedAnchorNodeId = chooseAnchorNodeId(mergedNodeIds, primary.anchorNodeId, duplicate.anchorNodeId);
 
     setBusyAction(true);
     setError(null);
@@ -2014,6 +2152,7 @@ export default function PlannerPage({ user }: PlannerPageProps) {
       const batch = writeBatch(db);
       batch.update(doc(db, "users", user.uid, "crossRefs", primary.id), {
         nodeIds: mergedNodeIds,
+        anchorNodeId: mergedAnchorNodeId ?? deleteField(),
         tags: mergedTags,
         links: mergedLinks,
         notes: mergedNotes,
@@ -2031,6 +2170,7 @@ export default function PlannerPage({ user }: PlannerPageProps) {
       hydrateRefEditor({
         ...primary,
         nodeIds: mergedNodeIds,
+        anchorNodeId: mergedAnchorNodeId,
         tags: mergedTags,
         links: mergedLinks,
         notes: mergedNotes,
@@ -2091,20 +2231,38 @@ export default function PlannerPage({ user }: PlannerPageProps) {
   const detachCrossRef = useCallback(
     async (refId: string, nodeId: string) => {
       if (!db) return;
+      const target = refs.find((entry) => entry.id === refId);
       setBusyAction(true);
       setError(null);
       try {
-        await updateDoc(doc(db, "users", user.uid, "crossRefs", refId), {
-          nodeIds: arrayRemove(nodeId),
-          updatedAt: serverTimestamp(),
-        });
+        if (target) {
+          const remainingNodeIds = target.nodeIds.filter((id) => id !== nodeId);
+          const nextAnchorNodeId = chooseAnchorNodeId(remainingNodeIds, target.anchorNodeId);
+          await updateDoc(doc(db, "users", user.uid, "crossRefs", refId), {
+            nodeIds: remainingNodeIds,
+            anchorNodeId: nextAnchorNodeId ?? deleteField(),
+            updatedAt: serverTimestamp(),
+          });
+          if (editRefId === refId) {
+            hydrateRefEditor({
+              ...target,
+              nodeIds: remainingNodeIds,
+              anchorNodeId: nextAnchorNodeId,
+            });
+          }
+        } else {
+          await updateDoc(doc(db, "users", user.uid, "crossRefs", refId), {
+            nodeIds: arrayRemove(nodeId),
+            updatedAt: serverTimestamp(),
+          });
+        }
       } catch (actionError: unknown) {
         setError(actionError instanceof Error ? actionError.message : "Could not detach cross-reference.");
       } finally {
         setBusyAction(false);
       }
     },
-    [user.uid]
+    [editRefId, hydrateRefEditor, refs, user.uid]
   );
 
   const jumpToReferencedNode = useCallback(
@@ -2224,8 +2382,10 @@ export default function PlannerPage({ user }: PlannerPageProps) {
             if (keep.length === 0) {
               batch.delete(doc(db, "users", user.uid, "crossRefs", ref.id));
             } else {
+              const nextAnchorNodeId = chooseAnchorNodeId(keep, ref.anchorNodeId);
               batch.update(doc(db, "users", user.uid, "crossRefs", ref.id), {
                 nodeIds: keep,
+                anchorNodeId: nextAnchorNodeId ?? deleteField(),
                 updatedAt: serverTimestamp(),
               });
             }

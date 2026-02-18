@@ -831,7 +831,17 @@ textarea {
   align-items: center;
 }
 
+.react-flow__node.planner-portal-node {
+  transition: transform 150ms ease, box-shadow 150ms ease;
+}
+
+.react-flow__node.planner-portal-node:hover {
+  transform: translateY(-2px);
+  box-shadow: 0 0 0 3px rgba(251, 146, 60, 0.32), 0 16px 32px rgba(0, 0, 0, 0.48) !important;
+}
+
 .planner-portal-label {
+  position: relative;
   width: 100%;
   height: 100%;
   border-radius: 999px;
@@ -840,6 +850,45 @@ textarea {
   font-size: 11px;
   font-weight: 850;
   letter-spacing: 0.3px;
+}
+
+.planner-portal-label::after {
+  content: attr(data-tooltip);
+  position: absolute;
+  left: 50%;
+  bottom: calc(100% + 10px);
+  transform: translateX(-50%) translateY(4px);
+  border-radius: 9px;
+  border: 1px solid rgba(255, 255, 255, 0.18);
+  background: rgba(10, 14, 20, 0.95);
+  color: rgba(245, 248, 255, 0.94);
+  box-shadow: 0 12px 28px rgba(0, 0, 0, 0.45);
+  padding: 6px 9px;
+  font-size: 10.5px;
+  font-weight: 650;
+  white-space: nowrap;
+  opacity: 0;
+  pointer-events: none;
+  transition: opacity 140ms ease, transform 140ms ease;
+  z-index: 16;
+}
+
+.planner-portal-label::before {
+  content: "";
+  position: absolute;
+  left: 50%;
+  bottom: calc(100% + 4px);
+  transform: translateX(-50%);
+  border: 6px solid transparent;
+  border-top-color: rgba(10, 14, 20, 0.95);
+  opacity: 0;
+  transition: opacity 140ms ease;
+}
+
+.react-flow__node.planner-portal-node:hover .planner-portal-label::after,
+.react-flow__node.planner-portal-node:hover .planner-portal-label::before {
+  opacity: 1;
+  transform: translateX(-50%) translateY(0);
 }
 
 .planner-handle-hidden {
