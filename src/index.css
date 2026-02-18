@@ -868,74 +868,46 @@ textarea {
   align-items: center;
 }
 
-.react-flow__node.planner-portal-node {
-  /* transform is driven by the spring physics loop — no CSS easing on position */
-  transition: box-shadow 150ms ease;
+/* ── Cross-reference badge chips on node cards ─────────────────────── */
+.planner-ref-badge-row {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px;
+  padding-top: 5px;
 }
 
-.react-flow__node.planner-portal-node:hover {
-  transform: translateY(-2px);
-  box-shadow: 0 0 0 3px rgba(251, 146, 60, 0.32), 0 16px 32px rgba(0, 0, 0, 0.48) !important;
-}
-
-.planner-portal-label {
-  position: relative;
-  width: 100%;
-  height: 100%;
+.planner-ref-badge {
+  display: inline-flex;
+  align-items: center;
+  gap: 3px;
+  padding: 2px 7px;
   border-radius: 999px;
-  display: grid;
-  place-items: center;
-  font-size: 11px;
+  border: 1px solid rgba(251, 146, 60, 0.5);
+  background: rgba(82, 36, 8, 0.55);
+  color: rgba(255, 221, 187, 0.95);
+  font-size: 9.5px;
   font-weight: 850;
-  letter-spacing: 0.3px;
+  letter-spacing: 0.25px;
+  cursor: pointer;
+  transition: border-color 140ms ease, background 140ms ease, box-shadow 140ms ease;
+  pointer-events: all;
 }
 
-.planner-portal-label::after {
-  content: attr(data-tooltip);
-  position: absolute;
-  left: 50%;
-  bottom: calc(100% + 10px);
-  transform: translateX(-50%) translateY(4px);
-  border-radius: 9px;
-  border: 1px solid rgba(255, 255, 255, 0.18);
-  background: rgba(10, 14, 20, 0.95);
-  color: rgba(245, 248, 255, 0.94);
-  box-shadow: 0 12px 28px rgba(0, 0, 0, 0.45);
-  padding: 6px 9px;
-  font-size: 10.5px;
-  font-weight: 650;
-  white-space: nowrap;
-  opacity: 0;
-  pointer-events: none;
-  transition: opacity 140ms ease, transform 140ms ease;
-  z-index: 16;
+.planner-ref-badge:hover {
+  border-color: rgba(251, 146, 60, 0.82);
+  background: rgba(120, 52, 10, 0.7);
 }
 
-.planner-portal-label::before {
-  content: "";
-  position: absolute;
-  left: 50%;
-  bottom: calc(100% + 4px);
-  transform: translateX(-50%);
-  border: 6px solid transparent;
-  border-top-color: rgba(10, 14, 20, 0.95);
-  opacity: 0;
-  transition: opacity 140ms ease;
+.planner-ref-badge.active {
+  border-color: rgba(254, 215, 170, 0.95);
+  background: rgba(161, 64, 6, 0.75);
+  box-shadow: 0 0 0 2px rgba(251, 146, 60, 0.28);
 }
 
-.react-flow__node.planner-portal-node:hover .planner-portal-label::after,
-.react-flow__node.planner-portal-node:hover .planner-portal-label::before {
-  opacity: 1;
-  transform: translateX(-50%) translateY(0);
-}
-
-.planner-handle-hidden {
-  width: 6px;
-  height: 6px;
-  opacity: 0;
-  border: none;
-  background: transparent;
-  pointer-events: none;
+.planner-ref-badge-count {
+  font-size: 8.5px;
+  font-weight: 750;
+  opacity: 0.85;
 }
 
 .planner-empty-state {

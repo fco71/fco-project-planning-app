@@ -100,10 +100,6 @@ type CrossRef = {
   updatedAtMs: number;
 };
 
-type PortalData = {
-  label: string;
-  title: string;
-};
 
 type PaletteItem = {
   id: string;
@@ -133,11 +129,6 @@ function storyContainerColor(): string {
   return "#5B2A86";
 }
 
-const BUBBLE_MOTION_SETTINGS_KEY = "planner:bubbleMotionSettings:v1";
-
-function clampNumber(value: number, min: number, max: number): number {
-  return Math.min(max, Math.max(min, value));
-}
 
 function normalizeNodeKind(value: unknown): NodeKind {
   if (value === "root" || value === "project" || value === "item" || value === "story") return value;
@@ -354,17 +345,7 @@ function getMasterNodeFor(nodeId: string, rootNodeId: string | null, nodesById: 
   return cursor.id || rootNodeId;
 }
 
-const PortalNode = memo(function PortalNode({ data }: NodeProps<PortalData>) {
-  return (
-    <div className="planner-portal-label" data-tooltip={data.title} title={data.title}>
-      <Handle type="target" position={Position.Top} isConnectable={false} className="planner-handle-hidden" />
-      <Handle type="source" position={Position.Bottom} isConnectable={false} className="planner-handle-hidden" />
-      {data.label}
-    </div>
-  );
-});
-
-const nodeTypes: NodeTypes = Object.freeze({ portal: PortalNode });
+const nodeTypes: NodeTypes = Object.freeze({});
 const edgeTypes: EdgeTypes = Object.freeze({});
 const ENTITY_TYPES: EntityType[] = ["entity", "organization", "partner", "vendor", "investor", "person", "contact", "client"];
 const PEOPLE_ENTITY_TYPES = new Set<EntityType>(["person", "contact", "client"]);
@@ -380,36 +361,6 @@ function isPeopleEntityType(entityType: EntityType): boolean {
 function collapsedKeyFromIds(ids: Iterable<string>): string {
   return Array.from(ids).sort().join("|");
 }
-
-// ── Portal bubble spring physics ───────────────────────────────────────────
-const SPRING_STIFFNESS       = 170;  // higher → snappier response
-const SPRING_DAMPING         = 22;   // higher → less oscillation
-const SPRING_SETTLE_THRESHOLD = 0.15; // px — below this → treat as at rest
-
-type SpringParticle = {
-  x: number; y: number;   // current simulated position
-  vx: number; vy: number; // current velocity (px/s)
-  targetX: number; targetY: number; // spring pull target
-};
-
-function stepSpring(p: SpringParticle, dt: number): void {
-  const ax = -SPRING_STIFFNESS * (p.x - p.targetX) - SPRING_DAMPING * p.vx;
-  const ay = -SPRING_STIFFNESS * (p.y - p.targetY) - SPRING_DAMPING * p.vy;
-  p.vx += ax * dt;
-  p.vy += ay * dt;
-  p.x  += p.vx * dt;
-  p.y  += p.vy * dt;
-}
-
-function isSpringSettled(p: SpringParticle): boolean {
-  return (
-    Math.abs(p.x  - p.targetX) < SPRING_SETTLE_THRESHOLD &&
-    Math.abs(p.y  - p.targetY) < SPRING_SETTLE_THRESHOLD &&
-    Math.abs(p.vx) < SPRING_SETTLE_THRESHOLD &&
-    Math.abs(p.vy) < SPRING_SETTLE_THRESHOLD
-  );
-}
-// ──────────────────────────────────────────────────────────────────────────
 
 export default function PlannerPage({ user }: PlannerPageProps) {
   const [profileName, setProfileName] = useState("");
@@ -460,14 +411,10 @@ export default function PlannerPage({ user }: PlannerPageProps) {
   const [paletteIndex, setPaletteIndex] = useState(0);
   const paletteInputRef = useRef<HTMLInputElement>(null);
   const [collapsedNodeIds, setCollapsedNodeIds] = useState<Set<string>>(new Set());
-  const [liveNodePositions, setLiveNodePositions] = useState<Record<string, { x: number; y: number }>>({});
-  const [bubbleRepulsionStrength, setBubbleRepulsionStrength] = useState(0.55);
-  const [bubbleMaxDriftPx, setBubbleMaxDriftPx] = useState(34);
   const [hoveredNodeId, setHoveredNodeId] = useState<string | null>(null);
   const [hoveredEdgeId, setHoveredEdgeId] = useState<string | null>(null);
   const [dropTargetNodeId, setDropTargetNodeId] = useState<string | null>(null);
   const [contextMenu, setContextMenu] = useState<{ x: number; y: number; nodeId: string } | null>(null);
-  const [portalContextMenu, setPortalContextMenu] = useState<{ x: number; y: number; refId: string } | null>(null);
   const [saveStatus, setSaveStatus] = useState<"idle" | "error">("idle");
   const saveTimeoutRef = useRef<NodeJS.Timeout | null>(null);
   const [busyAction, setBusyAction] = useState(false);
@@ -524,53 +471,6 @@ export default function PlannerPage({ user }: PlannerPageProps) {
   // ─────────────────────────────────────────────────────────────────────────
 
   const nodesById = useMemo(() => new Map(nodes.map((node) => [node.id, node] as const)), [nodes]);
-
-  useEffect(() => {
-    setLiveNodePositions((previous) => {
-      const next: Record<string, { x: number; y: number }> = {};
-      let changed = false;
-      Object.entries(previous).forEach(([id, position]) => {
-        if (!nodesById.has(id)) {
-          changed = true;
-          return;
-        }
-        next[id] = position;
-      });
-      return changed ? next : previous;
-    });
-  }, [nodesById]);
-
-  useEffect(() => {
-    if (typeof window === "undefined") return;
-    try {
-      const raw = window.localStorage.getItem(BUBBLE_MOTION_SETTINGS_KEY);
-      if (!raw) return;
-      const parsed = JSON.parse(raw) as { repulsionStrength?: unknown; maxDriftPx?: unknown };
-      if (typeof parsed.repulsionStrength === "number") {
-        setBubbleRepulsionStrength(clampNumber(parsed.repulsionStrength, 0.2, 1.3));
-      }
-      if (typeof parsed.maxDriftPx === "number") {
-        setBubbleMaxDriftPx(clampNumber(Math.round(parsed.maxDriftPx), 8, 96));
-      }
-    } catch {
-      // Ignore invalid local settings.
-    }
-  }, []);
-
-  useEffect(() => {
-    if (typeof window === "undefined") return;
-    try {
-      window.localStorage.setItem(
-        BUBBLE_MOTION_SETTINGS_KEY,
-        JSON.stringify({
-          repulsionStrength: bubbleRepulsionStrength,
-          maxDriftPx: bubbleMaxDriftPx,
-        })
-      );
-    } catch {
-      // Ignore storage write failures.
-    }
-  }, [bubbleMaxDriftPx, bubbleRepulsionStrength]);
 
   const childrenByParent = useMemo(() => {
     const map = new Map<string, string[]>();
@@ -1083,8 +983,6 @@ export default function PlannerPage({ user }: PlannerPageProps) {
 
   const resolveNodePosition = useCallback(
     (nodeId: string) => {
-      const livePosition = liveNodePositions[nodeId];
-      if (livePosition) return livePosition;
       const node = nodesById.get(nodeId);
       const autoPosition = treeLayout.get(nodeId) || { x: 0, y: 0 };
       return {
@@ -1092,7 +990,7 @@ export default function PlannerPage({ user }: PlannerPageProps) {
         y: typeof node?.y === "number" ? node.y : autoPosition.y,
       };
     },
-    [liveNodePositions, nodesById, treeLayout]
+    [nodesById, treeLayout]
   );
 
   const toggleStoryCardExpand = useCallback((nodeId: string) => {
@@ -1106,6 +1004,25 @@ export default function PlannerPage({ user }: PlannerPageProps) {
       return next;
     });
   }, []);
+
+  // Maps each visible nodeId → the CrossRefs it belongs to, for inline badge display.
+  const nodeRefBadges = useMemo((): Map<string, CrossRef[]> => {
+    const map = new Map<string, CrossRef[]>();
+    for (const ref of refs) {
+      const inView = ref.nodeIds.filter((id) => filteredTreeIdSet.has(id));
+      if (inView.length === 0) continue;
+      for (const nodeId of inView) {
+        const existing = map.get(nodeId);
+        if (existing) {
+          existing.push(ref);
+        } else {
+          map.set(nodeId, [ref]);
+        }
+      }
+    }
+    map.forEach((badges) => badges.sort((a, b) => a.code.localeCompare(b.code)));
+    return map;
+  }, [refs, filteredTreeIdSet]);
 
   const baseTreeNodes = useMemo(() => {
     return filteredTreeIds
@@ -1185,6 +1102,32 @@ export default function PlannerPage({ user }: PlannerPageProps) {
                   ) : null}
                   {childCount > 0 ? <span className="planner-node-count">{childCount}</span> : null}
                 </div>
+                {(() => {
+                  const badges = nodeRefBadges.get(node.id);
+                  if (!badges || badges.length === 0) return null;
+                  return (
+                    <div className="planner-ref-badge-row">
+                      {badges.map((ref) => {
+                        const count = ref.nodeIds.length;
+                        return (
+                          <button
+                            key={ref.id}
+                            type="button"
+                            className={`planner-ref-badge${activePortalRefId === ref.id ? " active" : ""}`}
+                            title={`${ref.label} · ${count} linked node${count !== 1 ? "s" : ""}`}
+                            onClick={(e) => {
+                              e.stopPropagation();
+                              setActivePortalRefId((prev) => prev === ref.id ? null : ref.id);
+                            }}
+                          >
+                            {ref.code}
+                            {count > 1 ? <span className="planner-ref-badge-count">×{count}</span> : null}
+                          </button>
+                        );
+                      })}
+                    </div>
+                  );
+                })()}
                 {showStoryBody ? (
                   <>
                     <div className={`planner-node-body-preview ${isExpandedStoryCard ? "expanded" : ""}`}>
@@ -1234,15 +1177,18 @@ export default function PlannerPage({ user }: PlannerPageProps) {
         } as Node;
       });
   }, [
+    activePortalRefId,
     childrenByParent,
     collapsedNodeIds,
     currentRootId,
     currentRootKind,
     expandedStoryNodeIds,
     filteredTreeIds,
+    nodeRefBadges,
     nodesById,
     rootNodeId,
     searchMatchingIds,
+    setActivePortalRefId,
     storyLaneMode,
     toggleNodeCollapse,
     toggleStoryCardExpand,
@@ -1270,162 +1216,7 @@ export default function PlannerPage({ user }: PlannerPageProps) {
 
   const filteredTreeIdSet = useMemo(() => new Set(filteredTreeIds), [filteredTreeIds]);
 
-  const visiblePortals = useMemo(() => {
-    return refs
-      .map((ref) => {
-        const validNodeIds = ref.nodeIds.filter((id) => nodesById.has(id));
-        // Use filteredTreeIdSet (collapse-aware) so bubbles on collapsed nodes disappear properly
-        const inView = validNodeIds.filter((id) => filteredTreeIdSet.has(id));
-        const resolvedAnchorId = chooseAnchorNodeId(validNodeIds, ref.anchorNodeId);
-        const anchorId = chooseAnchorNodeId(inView, resolvedAnchorId);
-        const anchorPosition = anchorId ? resolveNodePosition(anchorId) : null;
-        const position = resolvePortalFollowPosition(ref, anchorPosition, `${ref.id}:${anchorId || resolvedAnchorId || "none"}`);
-        return { ref: { ...ref, anchorNodeId: resolvedAnchorId }, inView, anchorId, anchorPosition, position };
-      })
-      .filter(
-        (entry): entry is {
-          ref: CrossRef;
-          inView: string[];
-          anchorId: string;
-          anchorPosition: { x: number; y: number };
-          position: { x: number; y: number };
-        } =>
-          entry.inView.length > 0 && !!entry.anchorId
-      )
-      .sort((a, b) => {
-        if (a.anchorId !== b.anchorId) return a.anchorId.localeCompare(b.anchorId);
-        return a.ref.code.localeCompare(b.ref.code) || a.ref.label.localeCompare(b.ref.label);
-      });
-  }, [filteredTreeIdSet, nodesById, refs, resolveNodePosition]);
-
-  useEffect(() => {
-    if (!db) return;
-    const refsMissingPortalPosition = visiblePortals.filter(
-      (entry) =>
-        typeof entry.ref.portalX !== "number" ||
-        typeof entry.ref.portalY !== "number" ||
-        typeof entry.ref.portalAnchorX !== "number" ||
-        typeof entry.ref.portalAnchorY !== "number"
-    );
-    if (refsMissingPortalPosition.length === 0) return;
-
-    let cancelled = false;
-    const persistMissingPositions = async () => {
-      try {
-        let batch = writeBatch(db);
-        let count = 0;
-        for (const entry of refsMissingPortalPosition) {
-          batch.update(doc(db, "users", user.uid, "crossRefs", entry.ref.id), {
-            portalX: entry.position.x,
-            portalY: entry.position.y,
-            portalAnchorX: entry.anchorPosition.x,
-            portalAnchorY: entry.anchorPosition.y,
-            updatedAt: serverTimestamp(),
-          });
-          count += 1;
-          if (count >= 450) {
-            await batch.commit();
-            if (cancelled) return;
-            batch = writeBatch(db);
-            count = 0;
-          }
-        }
-        if (!cancelled && count > 0) {
-          await batch.commit();
-        }
-      } catch {
-        // Silent best-effort migration for old bubbles without independent positions.
-      }
-    };
-
-    void persistMissingPositions();
-    return () => {
-      cancelled = true;
-    };
-  }, [db, user.uid, visiblePortals]);
-
-  const basePortalNodes = useMemo(() => {
-    const minimumGap = 56;
-    const maxOrganicDrift = bubbleMaxDriftPx;
-    const positioned: Array<{ x: number; y: number }> = [];
-    return visiblePortals.map((entry) => {
-      let x = entry.position.x;
-      let y = entry.position.y;
-
-      positioned.forEach((placed, index) => {
-        const dx = x - placed.x;
-        const dy = y - placed.y;
-        const distance = Math.hypot(dx, dy);
-        if (distance >= minimumGap) return;
-        const push = (minimumGap - distance) * bubbleRepulsionStrength;
-        if (distance > 0.001) {
-          x += (dx / distance) * push;
-          y += (dy / distance) * push;
-        } else {
-          const nudge = getNudge(`${entry.ref.id}:push:${index}`, 10, 10);
-          x += nudge.x;
-          y += nudge.y;
-        }
-      });
-
-      const driftX = x - entry.position.x;
-      const driftY = y - entry.position.y;
-      const driftDistance = Math.hypot(driftX, driftY);
-      if (driftDistance > maxOrganicDrift) {
-        const ratio = maxOrganicDrift / driftDistance;
-        x = entry.position.x + driftX * ratio;
-        y = entry.position.y + driftY * ratio;
-      }
-      positioned.push({ x, y });
-
-      return {
-        id: `portal:${entry.ref.id}`,
-        type: "portal",
-        className: "planner-portal-node",
-        position: { x, y },
-        data: {
-          label: `${entry.ref.code}${entry.ref.nodeIds.length > 1 ? `·${entry.ref.nodeIds.length}` : ""}`,
-          title: `${entry.ref.label} (${entry.ref.nodeIds.length} links)`,
-        } satisfies PortalData,
-        style: {
-          width: 46,
-          height: 46,
-          borderRadius: 999,
-          border: "2px solid rgba(251, 146, 60, 0.85)",
-          background: "rgba(82, 36, 8, 0.9)",
-          color: "rgba(255, 235, 220, 0.97)",
-          fontSize: 11,
-          fontWeight: 800,
-          boxShadow: "0 10px 20px rgba(0,0,0,0.35)",
-          display: "grid",
-          placeItems: "center",
-          cursor: "grab",
-        } as React.CSSProperties,
-        draggable: true,
-        selectable: true,
-      } as Node<PortalData>;
-    });
-  }, [bubbleMaxDriftPx, bubbleRepulsionStrength, visiblePortals]);
-
-  const basePortalEdges = useMemo(() => {
-    return visiblePortals.flatMap((entry) =>
-      entry.inView.map((source) => {
-        return {
-          id: `portal-edge:${entry.ref.id}:${source}`,
-          source,
-          target: `portal:${entry.ref.id}`,
-          style: {
-            stroke: "rgba(251, 146, 60, 0.65)",
-            strokeWidth: 1.8,
-            strokeDasharray: "6 6",
-          },
-          animated: false,
-        } as Edge;
-      })
-    );
-  }, [visiblePortals]);
-
-  const baseEdges = useMemo(() => [...baseTreeEdges, ...basePortalEdges], [basePortalEdges, baseTreeEdges]);
+  const baseEdges = baseTreeEdges;
 
   const hoverIndex = useMemo(() => {
     const nodeToEdges = new Map<string, Set<string>>();
@@ -1509,27 +1300,8 @@ export default function PlannerPage({ user }: PlannerPageProps) {
       } as Node;
     });
 
-    const portalNodes = basePortalNodes.map((node) => {
-      const isActive = node.id === `portal:${activePortalRefId}`;
-      const isHoverRelated = hoverNodeIds.has(node.id);
-      return {
-        ...node,
-        style: {
-          ...(node.style || {}),
-          border: isActive ? "2px solid rgba(254, 215, 170, 1)" : (node.style as React.CSSProperties)?.border,
-          boxShadow: isActive
-            ? "0 0 0 3px rgba(251,146,60,0.28), 0 14px 28px rgba(0,0,0,0.42)"
-            : isHoverRelated
-              ? "0 0 0 2px rgba(251,146,60,0.2), 0 14px 28px rgba(0,0,0,0.42)"
-              : (node.style as React.CSSProperties)?.boxShadow,
-          opacity: hoveredNodeId || hoveredEdgeId ? (isHoverRelated ? 1 : 0.5) : 1,
-          transition: "opacity 200ms cubic-bezier(0.4, 0, 0.2, 1), box-shadow 200ms cubic-bezier(0.4, 0, 0.2, 1), border-color 200ms cubic-bezier(0.4, 0, 0.2, 1)",
-        },
-      } as Node;
-    });
-
-    return [...treeNodes, ...portalNodes];
-  }, [activeLinkedNodeIds, activePortalRefId, basePortalNodes, baseTreeNodes, dropTargetNodeId, hoverNodeIds, hoveredEdgeId, hoveredNodeId, selectedNodeId]);
+    return treeNodes;
+  }, [activeLinkedNodeIds, baseTreeNodes, dropTargetNodeId, hoverNodeIds, hoveredEdgeId, hoveredNodeId, selectedNodeId]);
 
   const flowEdges = useMemo(() => {
     return baseEdges.map((edge) => {
@@ -1551,40 +1323,10 @@ export default function PlannerPage({ user }: PlannerPageProps) {
   }, [baseEdges, hoverEdgeIds, hoveredEdgeId, hoveredNodeId]);
 
   const [displayNodes, setDisplayNodes] = useState<Node[]>([]);
-  const draggingNodeIdsRef     = useRef<Set<string>>(new Set());
-  const draggedNodeIdRef       = useRef<string | null>(null);
-  // Spring physics refs — written every rAF frame, never trigger renders
-  const portalSpringStateRef   = useRef<Map<string, SpringParticle>>(new Map());
-  const liveAnchorPositionsRef = useRef<Map<string, { x: number; y: number }>>(new Map());
-  const springRafIdRef         = useRef<number | null>(null);
-  const springActiveRef        = useRef(false);
-  // Keep a ref to visiblePortals so the spring loop can read it without closures
-  const visiblePortalsRef = useRef(visiblePortals);
+  const draggingNodeIdsRef = useRef<Set<string>>(new Set());
+  const draggedNodeIdRef   = useRef<string | null>(null);
 
-  // Keep visiblePortalsRef current AND initialise/prune spring particles whenever portals change.
-  useEffect(() => {
-    visiblePortalsRef.current = visiblePortals;
-    const existing = portalSpringStateRef.current;
-    const next = new Map<string, SpringParticle>();
-    for (const entry of visiblePortals) {
-      const id = `portal:${entry.ref.id}`;
-      const prev = existing.get(id);
-      if (prev) {
-        // Preserve live velocity; just refresh target so the spring pulls to the new rest position.
-        next.set(id, { ...prev, targetX: entry.position.x, targetY: entry.position.y });
-      } else {
-        // Brand-new portal — start at rest at the computed position.
-        next.set(id, {
-          x: entry.position.x, y: entry.position.y,
-          vx: 0, vy: 0,
-          targetX: entry.position.x, targetY: entry.position.y,
-        });
-      }
-    }
-    portalSpringStateRef.current = next;
-  }, [visiblePortals]);
-
-  // flowNodes → displayNodes: freeze positions of dragging nodes so ReactFlow doesn't fight us.
+  // flowNodes → displayNodes: freeze positions of actively-dragged nodes so ReactFlow doesn't fight us.
   useEffect(() => {
     setDisplayNodes((previous) => {
       if (previous.length === 0) return flowNodes;
@@ -1599,103 +1341,18 @@ export default function PlannerPage({ user }: PlannerPageProps) {
     });
   }, [flowNodes]);
 
-  // rAF spring loop — runs only while dragging or while any portal is still settling.
-  const startSpringLoop = useCallback(() => {
-    if (springActiveRef.current) return;
-    springActiveRef.current = true;
-    let lastTime: number | null = null;
-
-    const tick = (now: number) => {
-      const dt = lastTime === null ? 0.016 : Math.min((now - lastTime) / 1000, 0.05);
-      lastTime = now;
-
-      const particles = portalSpringStateRef.current;
-      const anchors   = liveAnchorPositionsRef.current;
-      const portals   = visiblePortalsRef.current;
-
-      // 1. Update each portal's spring target from latest live anchor position.
-      for (const entry of portals) {
-        const id = `portal:${entry.ref.id}`;
-        const particle = particles.get(id);
-        if (!particle) continue;
-        const liveAnchor = anchors.get(entry.anchorId);
-        if (!liveAnchor) continue;
-        // Portal's saved offset from its anchor (persisted to Firestore).
-        const savedAnchorX = entry.ref.portalAnchorX ?? entry.anchorPosition.x;
-        const savedAnchorY = entry.ref.portalAnchorY ?? entry.anchorPosition.y;
-        const offsetX = (entry.ref.portalX ?? entry.position.x) - savedAnchorX;
-        const offsetY = (entry.ref.portalY ?? entry.position.y) - savedAnchorY;
-        particle.targetX = liveAnchor.x + offsetX;
-        particle.targetY = liveAnchor.y + offsetY;
-      }
-
-      // 2. Step physics for every particle.
-      for (const particle of particles.values()) {
-        stepSpring(particle, dt);
-      }
-
-      // 3. Write spring positions into displayNodes (portal nodes only).
-      setDisplayNodes((nds) =>
-        nds.map((node) => {
-          if (!node.id.startsWith("portal:")) return node;
-          const particle = particles.get(node.id);
-          if (!particle) return node;
-          return { ...node, position: { x: particle.x, y: particle.y } };
-        })
-      );
-
-      // 4. Stop when drag is done and all particles have settled.
-      const isDragging = draggingNodeIdsRef.current.size > 0;
-      const allSettled = !isDragging && [...particles.values()].every(isSpringSettled);
-      if (allSettled) {
-        springActiveRef.current = false;
-        springRafIdRef.current  = null;
-        return;
-      }
-      springRafIdRef.current = requestAnimationFrame(tick);
-    };
-
-    springRafIdRef.current = requestAnimationFrame(tick);
-  }, []); // reads only from refs — no closure deps
-
-  // Cancel the rAF loop on unmount.
-  useEffect(() => {
-    return () => {
-      if (springRafIdRef.current !== null) {
-        cancelAnimationFrame(springRafIdRef.current);
-        springRafIdRef.current  = null;
-        springActiveRef.current = false;
-      }
-    };
-  }, []);
-
   const handleNodesChange: OnNodesChange = useCallback((changes) => {
     const draggingIds = new Set(draggingNodeIdsRef.current);
-    const livePositionUpdates: Record<string, { x: number; y: number }> = {};
     changes.forEach((change) => {
       if (change.type !== "position") return;
       if ("dragging" in change) {
         if (change.dragging) draggingIds.add(change.id);
         else draggingIds.delete(change.id);
       }
-      if ("position" in change && change.position && !change.id.startsWith("portal:")) {
-        livePositionUpdates[change.id] = { x: change.position.x, y: change.position.y };
-      }
     });
     draggingNodeIdsRef.current = draggingIds;
-
-    // Portal positions are now driven by the spring loop — just apply tree-node changes.
     setDisplayNodes((nds) => applyNodeChanges(changes, nds));
-
-    if (Object.keys(livePositionUpdates).length > 0) {
-      // Feed live anchor positions into the spring loop's ref (zero cost, no render).
-      for (const [id, pos] of Object.entries(livePositionUpdates)) {
-        liveAnchorPositionsRef.current.set(id, pos);
-      }
-      setLiveNodePositions((previous) => ({ ...previous, ...livePositionUpdates }));
-      startSpringLoop(); // idempotent — checks springActiveRef.current
-    }
-  }, [startSpringLoop]);
+  }, []);
 
   // Save warning helper (successful autosaves are silent).
   const showSaveError = useCallback(() => {
@@ -2886,11 +2543,6 @@ export default function PlannerPage({ user }: PlannerPageProps) {
 
   const onNodeDrag = useCallback(
     (_: React.MouseEvent, node: Node) => {
-      // Portals don't trigger re-parenting.
-      if (node.id.startsWith("portal:")) {
-        setDropTargetNodeId(null);
-        return;
-      }
       // Multi-select drag: suppress re-parenting (ambiguous which is the primary).
       if (draggingNodeIdsRef.current.size > 1) {
         draggedNodeIdRef.current = null;
@@ -2910,7 +2562,6 @@ export default function PlannerPage({ user }: PlannerPageProps) {
       let bestTarget: string | null = null;
       for (const candidate of intersecting) {
         if (forbiddenIds.has(candidate.id)) continue;    // self or descendant
-        if (candidate.id.startsWith("portal:")) continue;// portals not valid
         if (candidate.id === currentParentId) continue;  // already the parent (no-op)
         bestTarget = candidate.id;
         break;
@@ -2928,38 +2579,6 @@ export default function PlannerPage({ user }: PlannerPageProps) {
       draggedNodeIdRef.current = null;
       const capturedDropTarget = dropTargetNodeId;
       setDropTargetNodeId(null);
-
-      if (node.id.startsWith("portal:")) {
-        const refId = node.id.replace("portal:", "");
-        const ref = refs.find((entry) => entry.id === refId);
-        const anchorNodeId = ref ? chooseAnchorNodeId(ref.nodeIds, ref.anchorNodeId) : null;
-        const anchorPosition = anchorNodeId ? resolveNodePosition(anchorNodeId) : null;
-        setRefs((previous) =>
-          previous.map((entry) =>
-            entry.id !== refId
-              ? entry
-              : {
-                  ...entry,
-                  portalX: node.position.x,
-                  portalY: node.position.y,
-                  portalAnchorX: anchorPosition?.x ?? entry.portalAnchorX,
-                  portalAnchorY: anchorPosition?.y ?? entry.portalAnchorY,
-                }
-          )
-        );
-        try {
-          await updateDoc(doc(db, "users", user.uid, "crossRefs", refId), {
-            portalX: node.position.x,
-            portalY: node.position.y,
-            ...(anchorPosition ? { portalAnchorX: anchorPosition.x, portalAnchorY: anchorPosition.y } : {}),
-            updatedAt: serverTimestamp(),
-          });
-        } catch (actionError: unknown) {
-          showSaveError();
-          setError(actionError instanceof Error ? actionError.message : "Could not save bubble position.");
-        }
-        return;
-      }
 
       // ── Re-parent branch ─────────────────────────────────────────────────
       if (capturedDropTarget) {
@@ -3025,7 +2644,7 @@ export default function PlannerPage({ user }: PlannerPageProps) {
         setError(actionError instanceof Error ? actionError.message : "Could not save node position.");
       }
     },
-    [applyLocalNodePatch, dropTargetNodeId, nodesById, pushHistory, refs, resolveNodePosition, rootNodeId, showSaveError, user.uid]
+    [applyLocalNodePatch, dropTargetNodeId, nodesById, pushHistory, rootNodeId, showSaveError, user.uid]
   );
 
   const onSelectionDragStop = useCallback(
@@ -3035,9 +2654,8 @@ export default function PlannerPage({ user }: PlannerPageProps) {
       draggedNodeIdRef.current = null;
       setDropTargetNodeId(null);
 
-      const movedTreeNodes = draggedNodes.filter((entry) => !entry.id.startsWith("portal:"));
-      const movedPortals = draggedNodes.filter((entry) => entry.id.startsWith("portal:"));
-      if (movedTreeNodes.length === 0 && movedPortals.length === 0) return;
+      const movedTreeNodes = draggedNodes;
+      if (movedTreeNodes.length === 0) return;
       const movedTreePositions = new Map(movedTreeNodes.map((entry) => [entry.id, entry.position] as const));
 
       // Build a single undo entry covering all moved tree nodes (skip nodes that haven't actually moved).
@@ -3078,29 +2696,6 @@ export default function PlannerPage({ user }: PlannerPageProps) {
           })
         );
       }
-      const portalRefUpdates = movedPortals.map((entry) => {
-        const refId = entry.id.replace("portal:", "");
-        const ref = refs.find((candidate) => candidate.id === refId);
-        const anchorNodeId = ref ? chooseAnchorNodeId(ref.nodeIds, ref.anchorNodeId) : null;
-        const anchorPosition = anchorNodeId ? resolveNodePosition(anchorNodeId) : null;
-        return { refId, position: entry.position, anchorPosition };
-      });
-      if (portalRefUpdates.length > 0) {
-        const byId = new Map(portalRefUpdates.map((entry) => [entry.refId, entry] as const));
-        setRefs((previous) =>
-          previous.map((entry) => {
-            const next = byId.get(entry.id);
-            if (!next) return entry;
-            return {
-              ...entry,
-              portalX: next.position.x,
-              portalY: next.position.y,
-              portalAnchorX: next.anchorPosition?.x ?? entry.portalAnchorX,
-              portalAnchorY: next.anchorPosition?.y ?? entry.portalAnchorY,
-            };
-          })
-        );
-      }
       try {
         let batch = writeBatch(db);
         let count = 0;
@@ -3108,20 +2703,6 @@ export default function PlannerPage({ user }: PlannerPageProps) {
           batch.update(doc(db, "users", user.uid, "nodes", entry.id), {
             x: entry.position.x,
             y: entry.position.y,
-            updatedAt: serverTimestamp(),
-          });
-          count += 1;
-          if (count >= 450) {
-            await batch.commit();
-            batch = writeBatch(db);
-            count = 0;
-          }
-        }
-        for (const entry of portalRefUpdates) {
-          batch.update(doc(db, "users", user.uid, "crossRefs", entry.refId), {
-            portalX: entry.position.x,
-            portalY: entry.position.y,
-            ...(entry.anchorPosition ? { portalAnchorX: entry.anchorPosition.x, portalAnchorY: entry.anchorPosition.y } : {}),
             updatedAt: serverTimestamp(),
           });
           count += 1;
@@ -3139,7 +2720,7 @@ export default function PlannerPage({ user }: PlannerPageProps) {
         setError(actionError instanceof Error ? actionError.message : "Could not save node positions.");
       }
     },
-    [nodesById, pushHistory, refs, resolveNodePosition, showSaveError, user.uid]
+    [nodesById, pushHistory, showSaveError, user.uid]
   );
 
   // Context menu handlers
@@ -3666,7 +3247,7 @@ export default function PlannerPage({ user }: PlannerPageProps) {
 
       // Ignore if typing in input/textarea or if context menu is open
       const target = e.target as HTMLElement;
-      if (target.tagName === 'INPUT' || target.tagName === 'TEXTAREA' || target.isContentEditable || contextMenu || portalContextMenu) {
+      if (target.tagName === 'INPUT' || target.tagName === 'TEXTAREA' || target.isContentEditable || contextMenu) {
         return;
       }
 
@@ -3706,10 +3287,6 @@ export default function PlannerPage({ user }: PlannerPageProps) {
 
       // Escape - Deselect or clear search
       if (e.key === 'Escape') {
-        if (portalContextMenu) {
-          setPortalContextMenu(null);
-          return;
-        }
         if (mobileQuickEditorOpen) {
           setMobileQuickEditorOpen(false);
           return;
@@ -3738,7 +3315,6 @@ export default function PlannerPage({ user }: PlannerPageProps) {
     paletteIndex,
     paletteItems,
     paletteOpen,
-    portalContextMenu,
     mobileQuickEditorOpen,
     mobileSidebarOpen,
     runPaletteAction,
@@ -4525,49 +4101,6 @@ export default function PlannerPage({ user }: PlannerPageProps) {
             </div>
           </details>
 
-          {/* ── MOTION TUNING (rarely needed) ── */}
-          <details className="planner-advanced-tools">
-            <summary>Bubble motion settings</summary>
-            <div className="planner-advanced-tools-content">
-              <label className="planner-subtle" htmlFor="bubble-repulsion-strength">
-                Repulsion: {bubbleRepulsionStrength.toFixed(2)}
-              </label>
-              <input
-                id="bubble-repulsion-strength"
-                type="range" min={0.2} max={1.3} step={0.05}
-                value={bubbleRepulsionStrength}
-                onChange={(event) => {
-                  const next = Number(event.target.value);
-                  if (!Number.isFinite(next)) return;
-                  setBubbleRepulsionStrength(clampNumber(next, 0.2, 1.3));
-                }}
-              />
-              <label className="planner-subtle" htmlFor="bubble-max-drift">
-                Max drift: {bubbleMaxDriftPx}px
-              </label>
-              <input
-                id="bubble-max-drift"
-                type="range" min={8} max={96} step={2}
-                value={bubbleMaxDriftPx}
-                onChange={(event) => {
-                  const next = Number(event.target.value);
-                  if (!Number.isFinite(next)) return;
-                  setBubbleMaxDriftPx(clampNumber(Math.round(next), 8, 96));
-                }}
-              />
-              <div className="planner-inline-buttons">
-                <button
-                  onClick={() => { setBubbleRepulsionStrength(0.55); setBubbleMaxDriftPx(34); }}
-                  disabled={busyAction || (Math.abs(bubbleRepulsionStrength - 0.55) < 0.001 && bubbleMaxDriftPx === 34)}
-                >
-                  Reset
-                </button>
-                <button onClick={() => setBubbleRepulsionStrength((v) => clampNumber(v - 0.1, 0.2, 1.3))} disabled={busyAction}>
-                  Softer
-                </button>
-              </div>
-            </div>
-          </details>
         </div>
         ) : null}
 
@@ -4758,21 +4291,11 @@ export default function PlannerPage({ user }: PlannerPageProps) {
           onNodesChange={handleNodesChange}
           onNodeClick={(_, node) => {
             setContextMenu(null);
-            setPortalContextMenu(null);
-            if (node.id.startsWith("portal:")) {
-              selectRefForEditing(node.id.replace("portal:", ""));
-              if (isMobileLayout) {
-                setMobileSidebarSection("bubbles");
-                setMobileSidebarOpen(true);
-              }
-              return;
-            }
             setSelectedNodeId(node.id);
             setActivePortalRefId(null);
             if (isMobileLayout) setMobileSidebarOpen(false);
           }}
           onNodeDoubleClick={(_, node) => {
-            if (node.id.startsWith("portal:")) return;
             if (isMobileLayout) return;
             // Zoom only; changing view root is an explicit action.
             onNodeDoubleClick(_, node);
@@ -4786,27 +4309,15 @@ export default function PlannerPage({ user }: PlannerPageProps) {
           onSelectionDragStop={onSelectionDragStop}
           onNodeContextMenu={(event, node) => {
             event.preventDefault();
-            if (node.id.startsWith("portal:")) {
-              const refId = node.id.replace("portal:", "");
-              setPortalContextMenu({
-                x: event.clientX,
-                y: event.clientY,
-                refId,
-              });
-              setContextMenu(null);
-              return;
-            }
             if (isMobileLayout) {
               setSelectedNodeId(node.id);
               setActivePortalRefId(null);
-              setPortalContextMenu(null);
               setMobileSidebarOpen(false);
               setMobileQuickEditorOpen(true);
               return;
             }
             setSelectedNodeId(node.id);
             setActivePortalRefId(null);
-            setPortalContextMenu(null);
             setContextMenu({
               x: event.clientX,
               y: event.clientY,
@@ -4815,7 +4326,6 @@ export default function PlannerPage({ user }: PlannerPageProps) {
           }}
           onPaneClick={() => {
             setContextMenu(null);
-            setPortalContextMenu(null);
           }}
           minZoom={0.3}
         >
@@ -4843,68 +4353,6 @@ export default function PlannerPage({ user }: PlannerPageProps) {
             onToggleTaskStatus={handleContextToggleTaskStatus}
           />
         )}
-
-        {portalContextMenu ? (
-          (() => {
-            const ref = refs.find((entry) => entry.id === portalContextMenu.refId);
-            if (!ref) return null;
-            const linkedOnSelected = selectedNodeId ? ref.nodeIds.includes(selectedNodeId) : false;
-            return (
-              <div
-                style={{
-                  position: "fixed",
-                  left: portalContextMenu.x,
-                  top: portalContextMenu.y,
-                  zIndex: 10001,
-                  background: "rgba(20, 26, 38, 0.98)",
-                  border: "1px solid rgba(255, 255, 255, 0.16)",
-                  borderRadius: "8px",
-                  minWidth: "190px",
-                  boxShadow: "0 10px 24px rgba(0, 0, 0, 0.42)",
-                  color: "rgba(245, 248, 255, 0.95)",
-                  padding: "4px",
-                }}
-              >
-                <button
-                  style={{ width: "100%", textAlign: "left", padding: "8px 10px", border: "none", background: "transparent", color: "inherit" }}
-                  onClick={() => {
-                    selectRefForEditing(ref.id);
-                    setMobileSidebarSection("bubbles");
-                    setMobileSidebarOpen(true);
-                    setPortalContextMenu(null);
-                  }}
-                >
-                  Edit bubble
-                </button>
-                <button
-                  style={{ width: "100%", textAlign: "left", padding: "8px 10px", border: "none", background: "transparent", color: "inherit" }}
-                  onClick={() => {
-                    void duplicateCrossRef(ref.id);
-                    setPortalContextMenu(null);
-                  }}
-                >
-                  Duplicate bubble
-                </button>
-                {selectedNodeId ? (
-                  <button
-                    style={{ width: "100%", textAlign: "left", padding: "8px 10px", border: "none", background: "transparent", color: "inherit" }}
-                    onClick={() => {
-                      if (!selectedNodeId) return;
-                      if (linkedOnSelected) {
-                        void detachCrossRef(ref.id, selectedNodeId);
-                      } else {
-                        void linkCrossRefToNode(ref.id, selectedNodeId);
-                      }
-                      setPortalContextMenu(null);
-                    }}
-                  >
-                    {linkedOnSelected ? "Unlink from selected node" : "Link to selected node"}
-                  </button>
-                ) : null}
-              </div>
-            );
-          })()
-        ) : null}
 
         {paletteOpen && (
           <div
