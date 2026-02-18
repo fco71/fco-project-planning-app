@@ -48,6 +48,7 @@ type StoryStep = {
 
 type EntityType = "entity" | "investor" | "partner" | "vendor" | "contact" | "client" | "organization" | "person";
 type RefCategoryFilter = "all" | "people" | "other";
+type RefScopeFilter = "view" | "all";
 
 type TreeNodeDoc = {
   title: string;
@@ -320,6 +321,7 @@ export default function PlannerPage({ user }: PlannerPageProps) {
   const [searchQuery, setSearchQuery] = useState("");
   const searchInputRef = useRef<HTMLInputElement>(null);
   const renameInputRef = useRef<HTMLInputElement>(null);
+  const newRefLabelInputRef = useRef<HTMLInputElement>(null);
   const [newChildTitle, setNewChildTitle] = useState("");
   const [newStoryStepText, setNewStoryStepText] = useState("");
   const [renameTitle, setRenameTitle] = useState("");
@@ -332,6 +334,7 @@ export default function PlannerPage({ user }: PlannerPageProps) {
   const [newRefType, setNewRefType] = useState<EntityType>("entity");
   const [refSearchQuery, setRefSearchQuery] = useState("");
   const [refCategoryFilter, setRefCategoryFilter] = useState<RefCategoryFilter>("all");
+  const [refScopeFilter, setRefScopeFilter] = useState<RefScopeFilter>("view");
   const [editRefId, setEditRefId] = useState("");
   const [editRefLabel, setEditRefLabel] = useState("");
   const [editRefCode, setEditRefCode] = useState("");
@@ -352,6 +355,7 @@ export default function PlannerPage({ user }: PlannerPageProps) {
   const [hoveredNodeId, setHoveredNodeId] = useState<string | null>(null);
   const [hoveredEdgeId, setHoveredEdgeId] = useState<string | null>(null);
   const [contextMenu, setContextMenu] = useState<{ x: number; y: number; nodeId: string } | null>(null);
+  const [portalContextMenu, setPortalContextMenu] = useState<{ x: number; y: number; refId: string } | null>(null);
   const [saveStatus, setSaveStatus] = useState<"idle" | "error">("idle");
   const saveTimeoutRef = useRef<NodeJS.Timeout | null>(null);
   const [busyAction, setBusyAction] = useState(false);
@@ -1043,17 +1047,6 @@ export default function PlannerPage({ user }: PlannerPageProps) {
       });
   }, [filteredTreeIds, nodesById]);
 
-  const treeBounds = useMemo(() => {
-    if (baseTreeNodes.length === 0) return { minY: 0, maxX: 0 };
-    let minY = Number.POSITIVE_INFINITY;
-    let maxX = Number.NEGATIVE_INFINITY;
-    baseTreeNodes.forEach((node) => {
-      minY = Math.min(minY, node.position.y);
-      maxX = Math.max(maxX, node.position.x);
-    });
-    return { minY: Number.isFinite(minY) ? minY : 0, maxX: Number.isFinite(maxX) ? maxX : 0 };
-  }, [baseTreeNodes]);
-
   const visiblePortals = useMemo(() => {
     return refs
       .map((ref) => ({ ref, inView: ref.nodeIds.filter((id) => visibleTreeIdSet.has(id)) }))
@@ -1062,24 +1055,41 @@ export default function PlannerPage({ user }: PlannerPageProps) {
   }, [refs, visibleTreeIdSet]);
 
   const basePortalNodes = useMemo(() => {
-    return visiblePortals.map((entry, index) => {
-      // Compute initial position (will be preserved by displayNodes logic if dragged)
-      const position = {
-        x: treeBounds.maxX + 220,
-        y: treeBounds.minY + index * 84,
-      };
+    const occupied: Array<{ x: number; y: number }> = [];
+    const minGap = 64;
+    const nudgeY = 58;
+    return visiblePortals.map((entry) => {
+      const linkedPositions = entry.inView.map((nodeId) => resolveNodePosition(nodeId));
+      const anchor = linkedPositions[0] || { x: 0, y: 0 };
+      const centroid = linkedPositions.reduce(
+        (acc, position) => ({ x: acc.x + position.x, y: acc.y + position.y }),
+        { x: 0, y: 0 }
+      );
+      const normalizedCentroid =
+        linkedPositions.length > 0
+          ? { x: centroid.x / linkedPositions.length, y: centroid.y / linkedPositions.length }
+          : anchor;
+      let x = linkedPositions.length === 1 ? anchor.x + 172 : normalizedCentroid.x + 148;
+      let y = linkedPositions.length === 1 ? anchor.y - 38 : normalizedCentroid.y - 28;
+
+      let guard = 0;
+      while (occupied.some((position) => Math.hypot(position.x - x, position.y - y) < minGap) && guard < 40) {
+        y += nudgeY;
+        guard += 1;
+      }
+      occupied.push({ x, y });
 
       return {
         id: `portal:${entry.ref.id}`,
         type: "portal",
-        position,
+        position: { x, y },
         data: {
-          label: entry.ref.code,
+          label: `${entry.ref.code}${entry.ref.nodeIds.length > 1 ? `·${entry.ref.nodeIds.length}` : ""}`,
           title: `${entry.ref.label} (${entry.ref.nodeIds.length} links)`,
         } satisfies PortalData,
         style: {
-          width: 48,
-          height: 48,
+          width: 56,
+          height: 56,
           borderRadius: 999,
           border: "2px solid rgba(251, 146, 60, 0.85)",
           background: "rgba(82, 36, 8, 0.9)",
@@ -1089,13 +1099,13 @@ export default function PlannerPage({ user }: PlannerPageProps) {
           boxShadow: "0 10px 20px rgba(0,0,0,0.35)",
           display: "grid",
           placeItems: "center",
-          cursor: "grab",
+          cursor: "pointer",
         } as React.CSSProperties,
-        draggable: true,
+        draggable: false,
         selectable: true,
       } as Node<PortalData>;
     });
-  }, [treeBounds.maxX, treeBounds.minY, visiblePortals]);
+  }, [resolveNodePosition, visiblePortals]);
 
   const basePortalEdges = useMemo(() => {
     return visiblePortals.flatMap((entry) =>
@@ -1237,23 +1247,7 @@ export default function PlannerPage({ user }: PlannerPageProps) {
   const [displayNodes, setDisplayNodes] = useState<Node[]>([]);
 
   useEffect(() => {
-    setDisplayNodes((prevDisplayNodes) => {
-      // Preserve portal positions that may have been manually dragged
-      const portalPositions = new Map<string, { x: number; y: number }>();
-      prevDisplayNodes.forEach((node) => {
-        if (node.id.startsWith("portal:")) {
-          portalPositions.set(node.id, node.position);
-        }
-      });
-
-      // Apply flowNodes but preserve portal positions
-      return flowNodes.map((node) => {
-        if (node.id.startsWith("portal:") && portalPositions.has(node.id)) {
-          return { ...node, position: portalPositions.get(node.id)! };
-        }
-        return node;
-      });
-    });
+    setDisplayNodes(flowNodes);
   }, [flowNodes]);
 
   const handleNodesChange: OnNodesChange = useCallback((changes) => {
@@ -1337,13 +1331,14 @@ export default function PlannerPage({ user }: PlannerPageProps) {
   const describeRefLibraryPreview = useCallback((ref: CrossRef) => {
     const tagPreview = ref.tags.length > 0 ? ` · ${ref.tags.slice(0, 2).join(", ")}` : "";
     const linkPreview = ref.nodeIds.length === 0 ? "unlinked" : `${ref.nodeIds.length} link${ref.nodeIds.length === 1 ? "" : "s"}`;
-    const category = isPeopleEntityType(ref.entityType) ? "people" : "other";
-    return `${ref.entityType}${tagPreview} · ${category} · ${linkPreview}`;
+    return `${ref.entityType}${tagPreview} · ${linkPreview}`;
   }, []);
 
   const filteredRefs = useMemo(() => {
     const queryText = refSearchQuery.trim().toLowerCase();
-    return refs.filter((ref) => {
+    const scopedRefs =
+      refScopeFilter === "view" ? refs.filter((ref) => ref.nodeIds.some((nodeId) => visibleTreeIdSet.has(nodeId))) : refs;
+    return scopedRefs.filter((ref) => {
       const categoryMatch =
         refCategoryFilter === "all"
           ? true
@@ -1356,7 +1351,7 @@ export default function PlannerPage({ user }: PlannerPageProps) {
         .toLowerCase()
         .includes(queryText);
     });
-  }, [refCategoryFilter, refSearchQuery, refs]);
+  }, [refCategoryFilter, refScopeFilter, refSearchQuery, refs, visibleTreeIdSet]);
 
   const newRefSuggestions = useMemo(() => {
     if (!selectedNodeId) return [] as CrossRef[];
@@ -1377,6 +1372,11 @@ export default function PlannerPage({ user }: PlannerPageProps) {
     if (!editRefId) return null;
     return refs.find((ref) => ref.id === editRefId) || null;
   }, [editRefId, refs]);
+
+  const editedRefLinkedOnSelected = useMemo(() => {
+    if (!editableRef || !selectedNodeId) return false;
+    return editableRef.nodeIds.includes(selectedNodeId);
+  }, [editableRef, selectedNodeId]);
 
   const editableRefTargets = useMemo(() => {
     if (!editableRef) return [] as Array<{ id: string; path: string }>;
@@ -1912,6 +1912,53 @@ export default function PlannerPage({ user }: PlannerPageProps) {
     }
   }, [hydrateRefEditor, newRefCode, newRefLabel, newRefType, refs, selectedNodeId, user.uid]);
 
+  const duplicateCrossRef = useCallback(
+    async (refId: string) => {
+      if (!db) return;
+      const source = refs.find((ref) => ref.id === refId);
+      if (!source) return;
+      const duplicateLabelBase = `${source.label} Copy`;
+      let duplicateLabel = duplicateLabelBase;
+      let index = 2;
+      while (refs.some((ref) => ref.label.trim().toLowerCase() === duplicateLabel.trim().toLowerCase())) {
+        duplicateLabel = `${duplicateLabelBase} ${index}`;
+        index += 1;
+      }
+      const duplicateNodeIds = Array.from(new Set(source.nodeIds));
+      setBusyAction(true);
+      setError(null);
+      try {
+        const newDoc = doc(collection(db, "users", user.uid, "crossRefs"));
+        await setDoc(doc(db, "users", user.uid, "crossRefs", newDoc.id), {
+          label: duplicateLabel,
+          code: source.code,
+          nodeIds: duplicateNodeIds,
+          entityType: source.entityType,
+          tags: source.tags,
+          notes: source.notes,
+          contact: source.contact,
+          links: source.links,
+          createdAt: serverTimestamp(),
+          updatedAt: serverTimestamp(),
+        } satisfies CrossRefDoc & { createdAt: unknown; updatedAt: unknown });
+        setActivePortalRefId(newDoc.id);
+        hydrateRefEditor({
+          ...source,
+          id: newDoc.id,
+          label: duplicateLabel,
+          nodeIds: duplicateNodeIds,
+          createdAtMs: 0,
+          updatedAtMs: 0,
+        });
+      } catch (actionError: unknown) {
+        setError(actionError instanceof Error ? actionError.message : "Could not duplicate bubble.");
+      } finally {
+        setBusyAction(false);
+      }
+    },
+    [hydrateRefEditor, refs, user.uid]
+  );
+
   const saveCrossRefEdits = useCallback(async () => {
     if (!db || !editRefId) return;
     const label = editRefLabel.trim();
@@ -2237,15 +2284,22 @@ export default function PlannerPage({ user }: PlannerPageProps) {
 
   const handleContextAddCrossRef = useCallback(
     async (nodeId: string) => {
-      // Select the node and scroll to cross-ref section in sidebar
+      const anchor = nodesById.get(nodeId);
       setSelectedNodeId(nodeId);
       setActivePortalRefId(null);
+      if (anchor) {
+        setNewRefLabel((previous) => (previous.trim().length > 0 ? previous : `${anchor.title} Ref`));
+      }
       setSidebarCollapsed(false);
       setMobileSidebarSection("bubbles");
       setMobileSidebarOpen(true);
-      // User can then add cross-ref through sidebar
+      window.setTimeout(() => {
+        const section = document.getElementById("cross-ref-bubbles-panel");
+        section?.scrollIntoView({ block: "start", behavior: "smooth" });
+        newRefLabelInputRef.current?.focus();
+      }, 40);
     },
-    []
+    [nodesById]
   );
 
   const handleContextRename = useCallback((nodeId: string) => {
@@ -2516,7 +2570,7 @@ export default function PlannerPage({ user }: PlannerPageProps) {
 
       // Ignore if typing in input/textarea or if context menu is open
       const target = e.target as HTMLElement;
-      if (target.tagName === 'INPUT' || target.tagName === 'TEXTAREA' || target.isContentEditable || contextMenu) {
+      if (target.tagName === 'INPUT' || target.tagName === 'TEXTAREA' || target.isContentEditable || contextMenu || portalContextMenu) {
         return;
       }
 
@@ -2556,6 +2610,10 @@ export default function PlannerPage({ user }: PlannerPageProps) {
 
       // Escape - Deselect or clear search
       if (e.key === 'Escape') {
+        if (portalContextMenu) {
+          setPortalContextMenu(null);
+          return;
+        }
         if (mobileQuickEditorOpen) {
           setMobileQuickEditorOpen(false);
           return;
@@ -2584,6 +2642,7 @@ export default function PlannerPage({ user }: PlannerPageProps) {
     paletteIndex,
     paletteItems,
     paletteOpen,
+    portalContextMenu,
     mobileQuickEditorOpen,
     mobileSidebarOpen,
     runPaletteAction,
@@ -2740,7 +2799,7 @@ export default function PlannerPage({ user }: PlannerPageProps) {
 
         {showProjectSection ? (
           <>
-        <div className="planner-panel-block">
+        <div id="cross-ref-bubbles-panel" className="planner-panel-block">
           <h2>{profileName || "Main Node"}</h2>
           <p className="planner-subtle">{user.email}</p>
           <p className="planner-subtle">
@@ -3032,6 +3091,7 @@ export default function PlannerPage({ user }: PlannerPageProps) {
             Anchor node: <strong>{selectedNode ? buildNodePath(selectedNode.id, nodesById) : "Select a node first"}</strong>
           </p>
           <input
+            ref={newRefLabelInputRef}
             value={newRefLabel}
             onChange={(event) => setNewRefLabel(event.target.value)}
             placeholder="Reference name (e.g., Vendor, Partner, Person)"
@@ -3087,7 +3147,7 @@ export default function PlannerPage({ user }: PlannerPageProps) {
                   <button
                     onClick={() => selectRefForEditing(ref.id)}
                     title={describeRefTargets(ref, 4)}
-                  >{`${ref.code} - ${ref.label} (${ref.entityType}, ${ref.nodeIds.length})`}</button>
+                  >{`${ref.code} - ${ref.label} (${ref.nodeIds.length})`}</button>
                   <button
                     className="chip-action"
                     onClick={() => detachCrossRef(ref.id, selectedNodeId)}
@@ -3100,77 +3160,7 @@ export default function PlannerPage({ user }: PlannerPageProps) {
             )}
           </div>
 
-          <div className="planner-row-label">All bubbles</div>
-          <input
-            value={refSearchQuery}
-            onChange={(event) => setRefSearchQuery(event.target.value)}
-            placeholder="Search bubbles by code or name..."
-          />
-          <div className="planner-filter-toggle">
-            <button
-              type="button"
-              className={refCategoryFilter === "all" ? "active" : ""}
-              onClick={() => setRefCategoryFilter("all")}
-            >
-              All
-            </button>
-            <button
-              type="button"
-              className={refCategoryFilter === "people" ? "active" : ""}
-              onClick={() => setRefCategoryFilter("people")}
-            >
-              People
-            </button>
-            <button
-              type="button"
-              className={refCategoryFilter === "other" ? "active" : ""}
-              onClick={() => setRefCategoryFilter("other")}
-            >
-              Other
-            </button>
-          </div>
-          <div className="planner-reference-list">
-            {filteredRefs.length === 0 ? (
-              <span className="planner-subtle">
-                {refs.length === 0
-                  ? "No bubbles created yet."
-                  : refCategoryFilter === "all"
-                    ? "No bubbles match this search."
-                    : "No bubbles match this filter yet."}
-              </span>
-            ) : (
-              filteredRefs.map((ref) => {
-                const linkedOnSelected = selectedNodeId ? selectedNodeRefIds.has(ref.id) : false;
-                return (
-                  <div key={ref.id} className="planner-reference-item">
-                    <button onClick={() => selectRefForEditing(ref.id)}>{`${ref.code} - ${ref.label}`}</button>
-                    <div className="planner-reference-preview">{describeRefLibraryPreview(ref)}</div>
-                    <div className="planner-reference-actions">
-                      <button
-                        onClick={() => {
-                          if (!selectedNodeId) return;
-                          if (linkedOnSelected) {
-                            detachCrossRef(ref.id, selectedNodeId);
-                          } else {
-                            linkCrossRefToNode(ref.id, selectedNodeId);
-                          }
-                        }}
-                        disabled={busyAction || !selectedNodeId}
-                      >
-                        {!selectedNodeId
-                          ? "Select node first"
-                          : linkedOnSelected
-                            ? "Unlink selected"
-                            : "Link to selected"}
-                      </button>
-                    </div>
-                  </div>
-                );
-              })
-            )}
-          </div>
-
-          <div className="planner-row-label">Selected bubble</div>
+          <div className="planner-row-label">Active bubble</div>
           <select
             value={editRefId}
             onChange={(event) => {
@@ -3185,65 +3175,170 @@ export default function PlannerPage({ user }: PlannerPageProps) {
               selectRefForEditing(refId);
             }}
           >
-            <option value="">Select bubble to edit...</option>
+            <option value="">Select active bubble...</option>
             {refs.map((ref) => (
               <option key={ref.id} value={ref.id}>
-                {`${ref.code} - ${ref.label} (${ref.entityType})`}
+                {`${ref.code} - ${ref.label} (${ref.nodeIds.length})`}
               </option>
             ))}
           </select>
-          <input
-            value={editRefLabel}
-            onChange={(event) => setEditRefLabel(event.target.value)}
-            placeholder="Bubble name"
-            disabled={!editRefId}
-          />
-          <input
-            value={editRefCode}
-            onChange={(event) => setEditRefCode(event.target.value)}
-            placeholder="Bubble code"
-            disabled={!editRefId}
-          />
-          <select value={editRefType} onChange={(event) => setEditRefType(event.target.value as EntityType)} disabled={!editRefId}>
-            {ENTITY_TYPE_GROUPS.map((group) => (
-              <optgroup key={group.label} label={group.label}>
-                {group.options.map((entityType) => (
-                  <option key={entityType} value={entityType}>
-                    {entityType}
-                  </option>
+          <div className="planner-inline-buttons">
+            <button
+              onClick={() => {
+                if (!editRefId) return;
+                void duplicateCrossRef(editRefId);
+              }}
+              disabled={busyAction || !editRefId}
+            >
+              Duplicate active
+            </button>
+            <button
+              onClick={() => {
+                if (!editRefId || !selectedNodeId) return;
+                if (editedRefLinkedOnSelected) {
+                  void detachCrossRef(editRefId, selectedNodeId);
+                } else {
+                  void linkCrossRefToNode(editRefId, selectedNodeId);
+                }
+              }}
+              disabled={busyAction || !editRefId || !selectedNodeId}
+            >
+              {!selectedNodeId
+                ? "Select node first"
+                : editedRefLinkedOnSelected
+                  ? "Unlink active"
+                  : "Link active"}
+            </button>
+          </div>
+
+          <details className="planner-advanced-tools">
+            <summary>Open bubble manager</summary>
+            <div className="planner-advanced-tools-content">
+              <div className="planner-row-label">Bubble scope</div>
+              <div className="planner-filter-toggle">
+                <button
+                  type="button"
+                  className={refScopeFilter === "view" ? "active" : ""}
+                  onClick={() => setRefScopeFilter("view")}
+                >
+                  Current view
+                </button>
+                <button
+                  type="button"
+                  className={refScopeFilter === "all" ? "active" : ""}
+                  onClick={() => setRefScopeFilter("all")}
+                >
+                  All
+                </button>
+                <button
+                  type="button"
+                  className={refCategoryFilter === "people" ? "active" : ""}
+                  onClick={() => setRefCategoryFilter(refCategoryFilter === "people" ? "all" : "people")}
+                >
+                  People only
+                </button>
+              </div>
+
+              <div className="planner-row-label">All bubbles</div>
+              <input
+                value={refSearchQuery}
+                onChange={(event) => setRefSearchQuery(event.target.value)}
+                placeholder="Search bubbles by code or name..."
+              />
+              <div className="planner-reference-list">
+                {filteredRefs.length === 0 ? (
+                  <span className="planner-subtle">
+                    {refs.length === 0 ? "No bubbles created yet." : "No bubbles match this view/filter."}
+                  </span>
+                ) : (
+                  filteredRefs.map((ref) => {
+                    const linkedOnSelected = selectedNodeId ? selectedNodeRefIds.has(ref.id) : false;
+                    return (
+                      <div key={ref.id} className="planner-reference-item">
+                        <button onClick={() => selectRefForEditing(ref.id)}>{`${ref.code} - ${ref.label}`}</button>
+                        <div className="planner-reference-preview">{describeRefLibraryPreview(ref)}</div>
+                        <div className="planner-reference-actions">
+                          <button
+                            onClick={() => {
+                              if (!selectedNodeId) return;
+                              if (linkedOnSelected) {
+                                detachCrossRef(ref.id, selectedNodeId);
+                              } else {
+                                linkCrossRefToNode(ref.id, selectedNodeId);
+                              }
+                            }}
+                            disabled={busyAction || !selectedNodeId}
+                          >
+                            {!selectedNodeId
+                              ? "Select node first"
+                              : linkedOnSelected
+                                ? "Unlink selected"
+                                : "Link to selected"}
+                          </button>
+                        </div>
+                      </div>
+                    );
+                  })
+                )}
+              </div>
+
+              <div className="planner-row-label">Edit active bubble</div>
+              <input
+                value={editRefLabel}
+                onChange={(event) => setEditRefLabel(event.target.value)}
+                placeholder="Bubble name"
+                disabled={!editRefId}
+              />
+              <input
+                value={editRefCode}
+                onChange={(event) => setEditRefCode(event.target.value)}
+                placeholder="Bubble code"
+                disabled={!editRefId}
+              />
+              <select
+                value={editRefType}
+                onChange={(event) => setEditRefType(event.target.value as EntityType)}
+                disabled={!editRefId}
+              >
+                {ENTITY_TYPE_GROUPS.map((group) => (
+                  <optgroup key={group.label} label={group.label}>
+                    {group.options.map((entityType) => (
+                      <option key={entityType} value={entityType}>
+                        {entityType}
+                      </option>
+                    ))}
+                  </optgroup>
                 ))}
-              </optgroup>
-            ))}
-          </select>
-          <input
-            value={editRefTags}
-            onChange={(event) => setEditRefTags(event.target.value)}
-            placeholder="Tags (comma-separated)"
-            disabled={!editRefId}
-          />
-          <input
-            value={editRefContact}
-            onChange={(event) => setEditRefContact(event.target.value)}
-            placeholder="Contact info (email / phone / person)"
-            disabled={!editRefId}
-          />
-          <textarea
-            value={editRefLinks}
-            onChange={(event) => setEditRefLinks(event.target.value)}
-            placeholder="One URL per line"
-            rows={3}
-            disabled={!editRefId}
-          />
-          <textarea
-            value={editRefNotes}
-            onChange={(event) => setEditRefNotes(event.target.value)}
-            placeholder="Entity notes"
-            rows={4}
-            disabled={!editRefId}
-          />
-          <button onClick={saveCrossRefEdits} disabled={busyAction || !editRefId || editRefLabel.trim().length === 0}>
-            Save changes
-          </button>
+              </select>
+              <input
+                value={editRefTags}
+                onChange={(event) => setEditRefTags(event.target.value)}
+                placeholder="Tags (comma-separated)"
+                disabled={!editRefId}
+              />
+              <input
+                value={editRefContact}
+                onChange={(event) => setEditRefContact(event.target.value)}
+                placeholder="Contact info (email / phone / person)"
+                disabled={!editRefId}
+              />
+              <textarea
+                value={editRefLinks}
+                onChange={(event) => setEditRefLinks(event.target.value)}
+                placeholder="One URL per line"
+                rows={3}
+                disabled={!editRefId}
+              />
+              <textarea
+                value={editRefNotes}
+                onChange={(event) => setEditRefNotes(event.target.value)}
+                placeholder="Entity notes"
+                rows={4}
+                disabled={!editRefId}
+              />
+              <button onClick={saveCrossRefEdits} disabled={busyAction || !editRefId || editRefLabel.trim().length === 0}>
+                Save changes
+              </button>
 
           <details className="planner-advanced-tools">
             <summary>Advanced bubble tools</summary>
@@ -3334,6 +3429,8 @@ export default function PlannerPage({ user }: PlannerPageProps) {
               <button className="danger" onClick={deleteCrossRefBubble} disabled={busyAction || !editRefId}>
                 Delete bubble
               </button>
+            </div>
+          </details>
             </div>
           </details>
         </div>
@@ -3552,6 +3649,8 @@ export default function PlannerPage({ user }: PlannerPageProps) {
           onInit={setRfInstance}
           onNodesChange={handleNodesChange}
           onNodeClick={(_, node) => {
+            setContextMenu(null);
+            setPortalContextMenu(null);
             if (node.id.startsWith("portal:")) {
               selectRefForEditing(node.id.replace("portal:", ""));
               if (isMobileLayout) {
@@ -3578,23 +3677,37 @@ export default function PlannerPage({ user }: PlannerPageProps) {
           onSelectionDragStop={onSelectionDragStop}
           onNodeContextMenu={(event, node) => {
             event.preventDefault();
-            if (node.id.startsWith("portal:")) return;
+            if (node.id.startsWith("portal:")) {
+              const refId = node.id.replace("portal:", "");
+              setPortalContextMenu({
+                x: event.clientX,
+                y: event.clientY,
+                refId,
+              });
+              setContextMenu(null);
+              return;
+            }
             if (isMobileLayout) {
               setSelectedNodeId(node.id);
               setActivePortalRefId(null);
+              setPortalContextMenu(null);
               setMobileSidebarOpen(false);
               setMobileQuickEditorOpen(true);
               return;
             }
             setSelectedNodeId(node.id);
             setActivePortalRefId(null);
+            setPortalContextMenu(null);
             setContextMenu({
               x: event.clientX,
               y: event.clientY,
               nodeId: node.id,
             });
           }}
-          onPaneClick={() => setContextMenu(null)}
+          onPaneClick={() => {
+            setContextMenu(null);
+            setPortalContextMenu(null);
+          }}
           minZoom={0.3}
         >
           <Background gap={22} size={1} />
@@ -3620,6 +3733,68 @@ export default function PlannerPage({ user }: PlannerPageProps) {
             onToggleTaskStatus={handleContextToggleTaskStatus}
           />
         )}
+
+        {portalContextMenu ? (
+          (() => {
+            const ref = refs.find((entry) => entry.id === portalContextMenu.refId);
+            if (!ref) return null;
+            const linkedOnSelected = selectedNodeId ? ref.nodeIds.includes(selectedNodeId) : false;
+            return (
+              <div
+                style={{
+                  position: "fixed",
+                  left: portalContextMenu.x,
+                  top: portalContextMenu.y,
+                  zIndex: 10001,
+                  background: "rgba(20, 26, 38, 0.98)",
+                  border: "1px solid rgba(255, 255, 255, 0.16)",
+                  borderRadius: "8px",
+                  minWidth: "190px",
+                  boxShadow: "0 10px 24px rgba(0, 0, 0, 0.42)",
+                  color: "rgba(245, 248, 255, 0.95)",
+                  padding: "4px",
+                }}
+              >
+                <button
+                  style={{ width: "100%", textAlign: "left", padding: "8px 10px", border: "none", background: "transparent", color: "inherit" }}
+                  onClick={() => {
+                    selectRefForEditing(ref.id);
+                    setMobileSidebarSection("bubbles");
+                    setMobileSidebarOpen(true);
+                    setPortalContextMenu(null);
+                  }}
+                >
+                  Edit bubble
+                </button>
+                <button
+                  style={{ width: "100%", textAlign: "left", padding: "8px 10px", border: "none", background: "transparent", color: "inherit" }}
+                  onClick={() => {
+                    void duplicateCrossRef(ref.id);
+                    setPortalContextMenu(null);
+                  }}
+                >
+                  Duplicate bubble
+                </button>
+                {selectedNodeId ? (
+                  <button
+                    style={{ width: "100%", textAlign: "left", padding: "8px 10px", border: "none", background: "transparent", color: "inherit" }}
+                    onClick={() => {
+                      if (!selectedNodeId) return;
+                      if (linkedOnSelected) {
+                        void detachCrossRef(ref.id, selectedNodeId);
+                      } else {
+                        void linkCrossRefToNode(ref.id, selectedNodeId);
+                      }
+                      setPortalContextMenu(null);
+                    }}
+                  >
+                    {linkedOnSelected ? "Unlink from selected node" : "Link to selected node"}
+                  </button>
+                ) : null}
+              </div>
+            );
+          })()
+        ) : null}
 
         {paletteOpen && (
           <div
