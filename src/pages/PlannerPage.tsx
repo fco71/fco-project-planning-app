@@ -132,6 +132,12 @@ function storyContainerColor(): string {
   return "#5B2A86";
 }
 
+const BUBBLE_MOTION_SETTINGS_KEY = "planner:bubbleMotionSettings:v1";
+
+function clampNumber(value: number, min: number, max: number): number {
+  return Math.min(max, Math.max(min, value));
+}
+
 function normalizeNodeKind(value: unknown): NodeKind {
   if (value === "root" || value === "project" || value === "item" || value === "story") return value;
   return "item";
@@ -424,6 +430,8 @@ export default function PlannerPage({ user }: PlannerPageProps) {
   const paletteInputRef = useRef<HTMLInputElement>(null);
   const [collapsedNodeIds, setCollapsedNodeIds] = useState<Set<string>>(new Set());
   const [liveNodePositions, setLiveNodePositions] = useState<Record<string, { x: number; y: number }>>({});
+  const [bubbleRepulsionStrength, setBubbleRepulsionStrength] = useState(0.55);
+  const [bubbleMaxDriftPx, setBubbleMaxDriftPx] = useState(34);
   const [hoveredNodeId, setHoveredNodeId] = useState<string | null>(null);
   const [hoveredEdgeId, setHoveredEdgeId] = useState<string | null>(null);
   const [contextMenu, setContextMenu] = useState<{ x: number; y: number; nodeId: string } | null>(null);
@@ -454,6 +462,38 @@ export default function PlannerPage({ user }: PlannerPageProps) {
       return changed ? next : previous;
     });
   }, [nodesById]);
+
+  useEffect(() => {
+    if (typeof window === "undefined") return;
+    try {
+      const raw = window.localStorage.getItem(BUBBLE_MOTION_SETTINGS_KEY);
+      if (!raw) return;
+      const parsed = JSON.parse(raw) as { repulsionStrength?: unknown; maxDriftPx?: unknown };
+      if (typeof parsed.repulsionStrength === "number") {
+        setBubbleRepulsionStrength(clampNumber(parsed.repulsionStrength, 0.2, 1.3));
+      }
+      if (typeof parsed.maxDriftPx === "number") {
+        setBubbleMaxDriftPx(clampNumber(Math.round(parsed.maxDriftPx), 8, 96));
+      }
+    } catch {
+      // Ignore invalid local settings.
+    }
+  }, []);
+
+  useEffect(() => {
+    if (typeof window === "undefined") return;
+    try {
+      window.localStorage.setItem(
+        BUBBLE_MOTION_SETTINGS_KEY,
+        JSON.stringify({
+          repulsionStrength: bubbleRepulsionStrength,
+          maxDriftPx: bubbleMaxDriftPx,
+        })
+      );
+    } catch {
+      // Ignore storage write failures.
+    }
+  }, [bubbleMaxDriftPx, bubbleRepulsionStrength]);
 
   const childrenByParent = useMemo(() => {
     const map = new Map<string, string[]>();
@@ -1222,7 +1262,7 @@ export default function PlannerPage({ user }: PlannerPageProps) {
 
   const basePortalNodes = useMemo(() => {
     const minimumGap = 56;
-    const maxOrganicDrift = 34;
+    const maxOrganicDrift = bubbleMaxDriftPx;
     const positioned: Array<{ x: number; y: number }> = [];
     return visiblePortals.map((entry) => {
       let x = entry.position.x;
@@ -1233,7 +1273,7 @@ export default function PlannerPage({ user }: PlannerPageProps) {
         const dy = y - placed.y;
         const distance = Math.hypot(dx, dy);
         if (distance >= minimumGap) return;
-        const push = (minimumGap - distance) * 0.55;
+        const push = (minimumGap - distance) * bubbleRepulsionStrength;
         if (distance > 0.001) {
           x += (dx / distance) * push;
           y += (dy / distance) * push;
@@ -1281,7 +1321,7 @@ export default function PlannerPage({ user }: PlannerPageProps) {
         selectable: true,
       } as Node<PortalData>;
     });
-  }, [visiblePortals]);
+  }, [bubbleMaxDriftPx, bubbleRepulsionStrength, visiblePortals]);
 
   const basePortalEdges = useMemo(() => {
     return visiblePortals.flatMap((entry) =>
@@ -3595,6 +3635,60 @@ export default function PlannerPage({ user }: PlannerPageProps) {
           <p className="planner-subtle">
             Anchor node: <strong>{selectedNode ? buildNodePath(selectedNode.id, nodesById) : "Select a node first"}</strong>
           </p>
+          <div className="planner-row-label">Bubble motion tuning</div>
+          <div className="planner-reference-item">
+            <label className="planner-subtle" htmlFor="bubble-repulsion-strength">
+              Repulsion strength: {bubbleRepulsionStrength.toFixed(2)}
+            </label>
+            <input
+              id="bubble-repulsion-strength"
+              type="range"
+              min={0.2}
+              max={1.3}
+              step={0.05}
+              value={bubbleRepulsionStrength}
+              onChange={(event) => {
+                const next = Number(event.target.value);
+                if (!Number.isFinite(next)) return;
+                setBubbleRepulsionStrength(clampNumber(next, 0.2, 1.3));
+              }}
+            />
+            <label className="planner-subtle" htmlFor="bubble-max-drift">
+              Max drift: {bubbleMaxDriftPx}px
+            </label>
+            <input
+              id="bubble-max-drift"
+              type="range"
+              min={8}
+              max={96}
+              step={2}
+              value={bubbleMaxDriftPx}
+              onChange={(event) => {
+                const next = Number(event.target.value);
+                if (!Number.isFinite(next)) return;
+                setBubbleMaxDriftPx(clampNumber(Math.round(next), 8, 96));
+              }}
+            />
+            <div className="planner-inline-buttons">
+              <button
+                onClick={() => {
+                  setBubbleRepulsionStrength(0.55);
+                  setBubbleMaxDriftPx(34);
+                }}
+                disabled={busyAction || (Math.abs(bubbleRepulsionStrength - 0.55) < 0.001 && bubbleMaxDriftPx === 34)}
+              >
+                Reset motion
+              </button>
+              <button
+                onClick={() => {
+                  setBubbleRepulsionStrength((value) => clampNumber(value - 0.1, 0.2, 1.3));
+                }}
+                disabled={busyAction}
+              >
+                Softer
+              </button>
+            </div>
+          </div>
           <input
             ref={newRefLabelInputRef}
             value={newRefLabel}
