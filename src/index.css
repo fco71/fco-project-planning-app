@@ -717,9 +717,6 @@ textarea {
   display: flex;
   flex-direction: column;
   gap: 8px;
-  /* Allow orbital orbs to float outside the card boundary */
-  position: relative;
-  overflow: visible;
 }
 
 .planner-node-card.story {
@@ -792,11 +789,6 @@ textarea {
   border: 1px solid rgba(45, 212, 191, 0.52);
   background: rgba(13, 148, 136, 0.25);
   color: rgba(204, 251, 241, 0.95);
-}
-
-/* Allow orbital orbs to overflow ReactFlow node wrapper */
-.react-flow__node {
-  overflow: visible !important;
 }
 
 /* ── Drag re-parenting drop-target highlight ───────────────────────── */
@@ -876,72 +868,145 @@ textarea {
   align-items: center;
 }
 
-/* ── Cross-reference orbital orbs ─────────────────────────────────── */
+/* ── Cross-reference floating portal bubbles ────────────────────────── */
 
-/* The orb itself — circular, floats outside the node card */
-.planner-ref-orb {
-  position: absolute;
+/* ReactFlow node wrapper for portal type — transparent shell */
+.react-flow__node[data-type="portal"] {
+  background: transparent !important;
+  border: none !important;
+  box-shadow: none !important;
+  padding: 0 !important;
   border-radius: 999px;
-  border: 2px solid rgba(64, 182, 255, 0.90);
-  background: rgba(16, 48, 88, 0.85);
+}
+
+/* The circular orb button inside the portal node */
+.planner-portal-inner {
+  width: 100%;
+  height: 100%;
+  border-radius: 999px;
+  border: 2px solid rgba(64, 182, 255, 0.88);
+  background: rgba(12, 36, 72, 0.82);
   color: rgba(200, 235, 255, 0.95);
   display: flex;
   align-items: center;
   justify-content: center;
   cursor: pointer;
-  pointer-events: all;
-  z-index: 10;
-  box-shadow: 0 6px 18px rgba(0, 0, 0, 0.55), 0 0 0 0px rgba(64, 182, 255, 0);
+  padding: 0;
+  box-shadow: 0 10px 24px rgba(0, 0, 0, 0.50);
   transition: box-shadow 150ms ease, transform 150ms ease, border-color 150ms ease;
-  /* Prevent ReactFlow drag from activating on orb clicks */
-  user-select: none;
+  position: relative;
 }
 
-.planner-ref-orb:hover {
+.planner-portal-inner:hover {
   transform: translateY(-2px);
   border-color: rgba(120, 210, 255, 0.98);
   box-shadow:
-    0 0 0 4px rgba(64, 182, 255, 0.28),
-    0 10px 24px rgba(0, 0, 0, 0.65);
+    0 0 0 4px rgba(64, 182, 255, 0.30),
+    0 14px 28px rgba(0, 0, 0, 0.60);
 }
 
-.planner-ref-orb.active {
+.planner-portal-inner.active {
   border-color: rgba(251, 191, 36, 0.95);
-  background: rgba(60, 40, 8, 0.88);
-  color: rgba(255, 230, 140, 0.98);
+  background: rgba(48, 30, 4, 0.88);
+  color: rgba(255, 230, 130, 0.98);
   box-shadow:
-    0 0 0 4px rgba(251, 191, 36, 0.25),
-    0 8px 20px rgba(0, 0, 0, 0.55);
+    0 0 0 4px rgba(251, 191, 36, 0.22),
+    0 10px 22px rgba(0, 0, 0, 0.55);
 }
 
-/* The ref code label inside the orb */
-.planner-ref-orb-code {
-  font-size: 9px;
+/* Code label inside the orb */
+.planner-portal-label {
+  font-size: 10px;
   font-weight: 900;
-  letter-spacing: 0.3px;
+  letter-spacing: 0.4px;
   line-height: 1;
   text-transform: uppercase;
   pointer-events: none;
+  position: relative;
+  font-family: "SF Mono", "Fira Code", "Fira Mono", "Roboto Mono", monospace;
 }
 
-/* iOS-style red notification count badge in the top-right of the orb */
-.planner-ref-orb-count {
+/* Tooltip: slides up on hover — shows full label + linked nodes */
+.planner-portal-label::after {
+  content: attr(data-tooltip);
   position: absolute;
-  top: -5px;
-  right: -5px;
-  min-width: 16px;
-  height: 16px;
+  left: 50%;
+  bottom: calc(100% + 12px);
+  transform: translateX(-50%) translateY(4px);
+  background: rgba(10, 14, 22, 0.95);
+  color: rgba(255, 255, 255, 0.92);
+  border: 1px solid rgba(255, 255, 255, 0.15);
+  border-radius: 10px;
+  padding: 6px 10px;
+  font-size: 11px;
+  font-weight: 600;
+  font-family: inherit;
+  white-space: pre;       /* preserves \n linebreaks in the tooltip */
+  text-align: center;
+  text-transform: none;
+  letter-spacing: 0;
+  box-shadow: 0 10px 28px rgba(0, 0, 0, 0.55);
+  opacity: 0;
+  pointer-events: none;
+  transition: opacity 140ms ease, transform 140ms ease;
+  z-index: 9999;
+  min-width: 80px;
+  max-width: 220px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+/* Tooltip caret arrow */
+.planner-portal-label::before {
+  content: "";
+  position: absolute;
+  left: 50%;
+  bottom: calc(100% + 6px);
+  transform: translateX(-50%);
+  border: 5px solid transparent;
+  border-top-color: rgba(10, 14, 22, 0.95);
+  opacity: 0;
+  pointer-events: none;
+  transition: opacity 140ms ease;
+  z-index: 9999;
+}
+
+/* Show tooltip on hover of the whole portal node */
+.react-flow__node:hover .planner-portal-label::after,
+.react-flow__node:hover .planner-portal-label::before {
+  opacity: 1;
+  transform: translateX(-50%) translateY(0);
+}
+
+/* iOS-style red count badge — top-right of the orb */
+.planner-portal-count {
+  position: absolute;
+  top: -6px;
+  right: -6px;
+  min-width: 17px;
+  height: 17px;
   padding: 0 4px;
   border-radius: 999px;
   background: rgba(239, 68, 68, 0.95);
   color: #fff;
-  font-size: 9px;
+  font-size: 9.5px;
   font-weight: 800;
-  line-height: 16px;
+  line-height: 17px;
   text-align: center;
   pointer-events: none;
-  box-shadow: 0 1px 4px rgba(0,0,0,0.5);
-  border: 1.5px solid rgba(20, 10, 10, 0.5);
+  box-shadow: 0 1px 5px rgba(0, 0, 0, 0.55);
+  border: 1.5px solid rgba(10, 8, 8, 0.45);
+}
+
+.planner-code-collision-warn {
+  font-size: 10.5px;
+  color: rgba(253, 186, 116, 0.95);
+  background: rgba(120, 53, 15, 0.35);
+  border: 1px solid rgba(251, 146, 60, 0.35);
+  border-radius: 6px;
+  padding: 6px 8px;
+  margin: 0;
+  line-height: 1.5;
 }
 
 .planner-empty-state {

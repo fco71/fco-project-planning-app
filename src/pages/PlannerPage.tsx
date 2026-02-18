@@ -345,7 +345,35 @@ function getMasterNodeFor(nodeId: string, rootNodeId: string | null, nodesById: 
   return cursor.id || rootNodeId;
 }
 
-const nodeTypes: NodeTypes = Object.freeze({});
+// ── Portal bubble node ─────────────────────────────────────────────────────
+const PortalNode = memo(function PortalNode({
+  data,
+}: NodeProps<{ code: string; label: string; tooltip: string; count: number; isActive: boolean; onToggle: () => void }>) {
+  return (
+    <div
+      style={{ width: "100%", height: "100%", display: "flex", alignItems: "center", justifyContent: "center", position: "relative" }}
+    >
+      <Handle type="target" position={Position.Top} id="portal-target" isConnectable={false}
+        style={{ width: 6, height: 6, opacity: 0, border: "none", background: "transparent", pointerEvents: "none" }} />
+      <Handle type="source" position={Position.Bottom} id="portal-source" isConnectable={false}
+        style={{ width: 6, height: 6, opacity: 0, border: "none", background: "transparent", pointerEvents: "none" }} />
+      <button
+        type="button"
+        className={`planner-portal-inner${data.isActive ? " active" : ""}`}
+        onClick={(e) => { e.stopPropagation(); data.onToggle(); }}
+      >
+        <div className="planner-portal-label" data-tooltip={data.tooltip}>
+          {data.code}
+        </div>
+        {data.count > 1 && (
+          <span className="planner-portal-count">{data.count}</span>
+        )}
+      </button>
+    </div>
+  );
+});
+
+const nodeTypes: NodeTypes = { portal: PortalNode };
 const edgeTypes: EdgeTypes = Object.freeze({});
 const ENTITY_TYPES: EntityType[] = ["entity", "organization", "partner", "vendor", "investor", "person", "contact", "client"];
 const PEOPLE_ENTITY_TYPES = new Set<EntityType>(["person", "contact", "client"]);
@@ -1026,6 +1054,115 @@ export default function PlannerPage({ user }: PlannerPageProps) {
     return map;
   }, [refs, filteredTreeIdSet]);
 
+  // ── Floating portal bubble nodes (ventovault-style) ──────────────────────
+  // One portal orb per (ref × anchorNode) pair visible in the current view.
+  // Positioned using a smart stack above/below the anchor with side fallback.
+  // Collapse-safe: only emitted when anchorNodeId is in filteredTreeIdSet.
+  const visiblePortals = useMemo((): Node[] => {
+    const PORTAL_SIZE = 44;
+    const STACK_GAP   = 54;
+    const NODE_WIDTH  = 260; // default tree node width
+    const NODE_HEIGHT = 52;  // approximate tree node height (no story body)
+
+    // Group refs by their anchor node so we can stack per-anchor.
+    const byAnchor = new Map<string, CrossRef[]>();
+    for (const ref of refs) {
+      const visibleIds = ref.nodeIds.filter((id) => filteredTreeIdSet.has(id));
+      if (visibleIds.length === 0) continue;
+      // Use the first visible nodeId as anchor (matches resolveNodePosition logic)
+      const anchorId = ref.anchorNodeId && filteredTreeIdSet.has(ref.anchorNodeId)
+        ? ref.anchorNodeId
+        : visibleIds[0];
+      if (!byAnchor.has(anchorId)) byAnchor.set(anchorId, []);
+      byAnchor.get(anchorId)!.push(ref);
+    }
+
+    // Build bounds of all visible tree nodes for above/below decision
+    let minY = Infinity, maxY = -Infinity;
+    for (const id of filteredTreeIdSet) {
+      const pos = resolveNodePosition(id);
+      minY = Math.min(minY, pos.y);
+      maxY = Math.max(maxY, pos.y);
+    }
+    const midY = (minY + maxY) / 2;
+
+    const result: Node[] = [];
+    byAnchor.forEach((anchorRefs, anchorId) => {
+      anchorRefs.sort((a, b) => a.code.localeCompare(b.code));
+      const anchor = resolveNodePosition(anchorId);
+      const stackHeight = (anchorRefs.length - 1) * STACK_GAP;
+      const nudge = getNudge(anchorId, 10, 6);
+
+      // Primary stack: above or below anchor
+      const placeBelow = anchor.y <= midY;
+      const stackX = anchor.x + NODE_WIDTH / 2 - PORTAL_SIZE / 2 + nudge.x;
+      let stackStartY = placeBelow
+        ? anchor.y + NODE_HEIGHT + 72 + nudge.y
+        : anchor.y - 72 - stackHeight - PORTAL_SIZE + nudge.y;
+
+      // Side fallback: check if primary overlaps anchor rect
+      const anchorRect = { x: anchor.x, y: anchor.y, w: NODE_WIDTH, h: NODE_HEIGHT };
+      const overlapsPrimary = (x: number, y: number) => !(
+        x + PORTAL_SIZE < anchorRect.x || x > anchorRect.x + anchorRect.w ||
+        y + PORTAL_SIZE < anchorRect.y || y > anchorRect.y + anchorRect.h
+      );
+
+      anchorRefs.forEach((ref, idx) => {
+        let x = stackX;
+        let y = stackStartY + idx * STACK_GAP;
+        if (overlapsPrimary(x, y)) {
+          // Side fallback: place to the right (or left if near right edge)
+          x = anchor.x + NODE_WIDTH + 64 + nudge.x;
+          y = anchor.y + NODE_HEIGHT / 2 - stackHeight / 2 + idx * STACK_GAP + nudge.y;
+        }
+
+        // Build tooltip: full label + all linked node titles
+        const linkedTitles = ref.nodeIds
+          .map((nid) => nodesById.get(nid)?.title)
+          .filter(Boolean)
+          .join(" · ");
+        const tooltip = linkedTitles ? `${ref.label}\n${linkedTitles}` : ref.label;
+
+        // If user has manually dragged this portal, use the saved position
+        // (delta-shifted by any anchor movement since it was saved)
+        const savedX = typeof ref.portalX === "number" ? ref.portalX : null;
+        const savedY = typeof ref.portalY === "number" ? ref.portalY : null;
+        if (savedX !== null && savedY !== null) {
+          const savedAnchorX = typeof ref.portalAnchorX === "number" ? ref.portalAnchorX : x;
+          const savedAnchorY = typeof ref.portalAnchorY === "number" ? ref.portalAnchorY : y;
+          x = savedX + (anchor.x - savedAnchorX);
+          y = savedY + (anchor.y - savedAnchorY);
+        }
+
+        result.push({
+          id: `portal:${ref.id}`,
+          position: { x, y },
+          type: "portal",
+          data: {
+            code: ref.code,
+            label: ref.label,
+            tooltip,
+            count: ref.nodeIds.length,
+            isActive: false, // overridden in flowNodes
+            onToggle: () => {}, // overridden in flowNodes
+          },
+          draggable: true,
+          selectable: false,
+          zIndex: 10,
+          style: {
+            width: PORTAL_SIZE,
+            height: PORTAL_SIZE,
+            borderRadius: 999,
+            background: "transparent",
+            border: "none",
+            padding: 0,
+          },
+        } as Node);
+      });
+    });
+    return result;
+  }, [refs, filteredTreeIdSet, resolveNodePosition, nodesById]);
+
   const baseTreeNodes = useMemo(() => {
     return filteredTreeIds
       .map((id) => nodesById.get(id))
@@ -1065,7 +1202,7 @@ export default function PlannerPage({ user }: PlannerPageProps) {
           position,
           data: {
             label: (
-              <div className={`planner-node-card${showStoryBody ? " story" : ""}${nodeRefBadges.has(node.id) ? " has-orbs" : ""}`}>
+              <div className={`planner-node-card${showStoryBody ? " story" : ""}`}>
                 <div className="planner-node-label">
                   {childCount > 0 && (
                     <button
@@ -1104,46 +1241,6 @@ export default function PlannerPage({ user }: PlannerPageProps) {
                   ) : null}
                   {childCount > 0 ? <span className="planner-node-count">{childCount}</span> : null}
                 </div>
-                {(() => {
-                  const orbs = nodeRefBadges.get(node.id);
-                  if (!orbs || orbs.length === 0) return null;
-                  // Stack orbs upward from the top-right corner of the card.
-                  // Each orb is 34px diameter, spaced 40px apart vertically.
-                  const ORB_SIZE = 34;
-                  const ORB_GAP = 40;
-                  return orbs.map((ref, idx) => {
-                    const count = ref.nodeIds.length;
-                    const isActive = activePortalRefId === ref.id;
-                    // Linked node titles for tooltip
-                    const linkedTitles = ref.nodeIds
-                      .map((nid) => nodesById.get(nid)?.title)
-                      .filter(Boolean)
-                      .join(", ");
-                    return (
-                      <button
-                        key={ref.id}
-                        type="button"
-                        className={`planner-ref-orb${isActive ? " active" : ""}`}
-                        style={{
-                          top: -(ORB_SIZE / 2) - idx * ORB_GAP,
-                          right: -(ORB_SIZE / 2) - 2,
-                          width: ORB_SIZE,
-                          height: ORB_SIZE,
-                        }}
-                        title={`${ref.label}\n${linkedTitles}`}
-                        onClick={(e) => {
-                          e.stopPropagation();
-                          setActivePortalRefId((prev) => prev === ref.id ? null : ref.id);
-                        }}
-                      >
-                        <span className="planner-ref-orb-code">{ref.code}</span>
-                        {count > 1 && (
-                          <span className="planner-ref-orb-count">{count}</span>
-                        )}
-                      </button>
-                    );
-                  });
-                })()}
                 {showStoryBody ? (
                   <>
                     <div className={`planner-node-body-preview ${isExpandedStoryCard ? "expanded" : ""}`}>
@@ -1193,18 +1290,15 @@ export default function PlannerPage({ user }: PlannerPageProps) {
         } as Node;
       });
   }, [
-    activePortalRefId,
     childrenByParent,
     collapsedNodeIds,
     currentRootId,
     currentRootKind,
     expandedStoryNodeIds,
     filteredTreeIds,
-    nodeRefBadges,
     nodesById,
     rootNodeId,
     searchMatchingIds,
-    setActivePortalRefId,
     storyLaneMode,
     toggleNodeCollapse,
     toggleStoryCardExpand,
@@ -1230,7 +1324,32 @@ export default function PlannerPage({ user }: PlannerPageProps) {
       });
   }, [filteredTreeIds, nodesById]);
 
-  const baseEdges = baseTreeEdges;
+  // Dashed orange edges: each portal → its anchor tree node
+  const basePortalEdges = useMemo((): Edge[] => {
+    const edges: Edge[] = [];
+    for (const ref of refs) {
+      const visibleIds = ref.nodeIds.filter((id) => filteredTreeIdSet.has(id));
+      if (visibleIds.length === 0) continue;
+      const anchorId = ref.anchorNodeId && filteredTreeIdSet.has(ref.anchorNodeId)
+        ? ref.anchorNodeId
+        : visibleIds[0];
+      edges.push({
+        id: `portal-edge:${ref.id}`,
+        source: anchorId,
+        target: `portal:${ref.id}`,
+        animated: false,
+        zIndex: 5,
+        style: {
+          stroke: "rgba(255,160,71,0.55)",
+          strokeWidth: 1.5,
+          strokeDasharray: "5 5",
+        },
+      } as Edge);
+    }
+    return edges;
+  }, [refs, filteredTreeIdSet]);
+
+  const baseEdges = [...baseTreeEdges, ...basePortalEdges];
 
   const hoverIndex = useMemo(() => {
     const nodeToEdges = new Map<string, Set<string>>();
@@ -1314,8 +1433,22 @@ export default function PlannerPage({ user }: PlannerPageProps) {
       } as Node;
     });
 
-    return treeNodes;
-  }, [activeLinkedNodeIds, baseTreeNodes, dropTargetNodeId, hoverNodeIds, hoveredEdgeId, hoveredNodeId, selectedNodeId]);
+    // Inject active state + toggle callback into portal nodes
+    const portalNodes = visiblePortals.map((pNode) => {
+      const refId = pNode.id.replace("portal:", "");
+      const isActive = activePortalRefId === refId;
+      return {
+        ...pNode,
+        data: {
+          ...pNode.data,
+          isActive,
+          onToggle: () => setActivePortalRefId((prev) => prev === refId ? null : refId),
+        },
+      } as Node;
+    });
+
+    return [...treeNodes, ...portalNodes];
+  }, [activeLinkedNodeIds, activePortalRefId, baseTreeNodes, dropTargetNodeId, hoverNodeIds, hoveredEdgeId, hoveredNodeId, selectedNodeId, setActivePortalRefId, visiblePortals]);
 
   const flowEdges = useMemo(() => {
     return baseEdges.map((edge) => {
@@ -2557,6 +2690,8 @@ export default function PlannerPage({ user }: PlannerPageProps) {
 
   const onNodeDrag = useCallback(
     (_: React.MouseEvent, node: Node) => {
+      // Portal orbs don't trigger re-parenting.
+      if (node.id.startsWith("portal:")) { setDropTargetNodeId(null); return; }
       // Multi-select drag: suppress re-parenting (ambiguous which is the primary).
       if (draggingNodeIdsRef.current.size > 1) {
         draggedNodeIdRef.current = null;
@@ -2571,8 +2706,8 @@ export default function PlannerPage({ user }: PlannerPageProps) {
       // All descendants + the node itself are forbidden drop targets (cycle prevention).
       const forbiddenIds = new Set(collectDescendants(node.id, childrenByParent));
       const currentParentId = nodesById.get(node.id)?.parentId ?? null;
-      // Find the best valid intersecting node.
-      const intersecting = rfInstance.getIntersectingNodes(node);
+      // Portals are not valid re-parent targets.
+      const intersecting = rfInstance.getIntersectingNodes(node).filter((c) => !c.id.startsWith("portal:"));
       let bestTarget: string | null = null;
       for (const candidate of intersecting) {
         if (forbiddenIds.has(candidate.id)) continue;    // self or descendant
@@ -2588,6 +2723,30 @@ export default function PlannerPage({ user }: PlannerPageProps) {
   const onNodeDragStop = useCallback(
     async (_: React.MouseEvent, node: Node) => {
       if (!db) return;
+
+      // ── Portal drag: save new position to crossRef ────────────────────────
+      if (node.id.startsWith("portal:")) {
+        const refId = node.id.replace("portal:", "");
+        const ref = refs.find((r) => r.id === refId);
+        const anchorId = ref?.anchorNodeId && filteredTreeIdSet.has(ref.anchorNodeId)
+          ? ref.anchorNodeId
+          : ref?.nodeIds.find((id) => filteredTreeIdSet.has(id));
+        const anchorPos = anchorId ? resolveNodePosition(anchorId) : null;
+        setRefs((prev) => prev.map((r) => r.id !== refId ? r : {
+          ...r,
+          portalX: node.position.x, portalY: node.position.y,
+          portalAnchorX: anchorPos?.x ?? r.portalAnchorX,
+          portalAnchorY: anchorPos?.y ?? r.portalAnchorY,
+        }));
+        try {
+          await updateDoc(doc(db, "users", user.uid, "crossRefs", refId), {
+            portalX: node.position.x, portalY: node.position.y,
+            ...(anchorPos ? { portalAnchorX: anchorPos.x, portalAnchorY: anchorPos.y } : {}),
+            updatedAt: serverTimestamp(),
+          });
+        } catch { showSaveError(); }
+        return;
+      }
 
       // Snapshot and clear drop-target state before any async work.
       draggedNodeIdRef.current = null;
@@ -2658,7 +2817,7 @@ export default function PlannerPage({ user }: PlannerPageProps) {
         setError(actionError instanceof Error ? actionError.message : "Could not save node position.");
       }
     },
-    [applyLocalNodePatch, dropTargetNodeId, nodesById, pushHistory, rootNodeId, showSaveError, user.uid]
+    [applyLocalNodePatch, dropTargetNodeId, filteredTreeIdSet, nodesById, pushHistory, refs, resolveNodePosition, rootNodeId, showSaveError, user.uid]
   );
 
   const onSelectionDragStop = useCallback(
@@ -2668,7 +2827,7 @@ export default function PlannerPage({ user }: PlannerPageProps) {
       draggedNodeIdRef.current = null;
       setDropTargetNodeId(null);
 
-      const movedTreeNodes = draggedNodes;
+      const movedTreeNodes = draggedNodes.filter((n) => !n.id.startsWith("portal:"));
       if (movedTreeNodes.length === 0) return;
       const movedTreePositions = new Map(movedTreeNodes.map((entry) => [entry.id, entry.position] as const));
 
@@ -3831,6 +3990,18 @@ export default function PlannerPage({ user }: PlannerPageProps) {
               ))}
             </select>
           </div>
+          {(() => {
+            const typedCode = newRefCode.trim() ? normalizeCode(newRefCode) : (newRefLabel.trim() ? initialsFromLabel(newRefLabel) : "");
+            if (!typedCode) return null;
+            const collisions = refs.filter((r) => r.code === typedCode);
+            if (collisions.length === 0) return null;
+            return (
+              <p className="planner-code-collision-warn">
+                ⚠ Code <strong>{typedCode}</strong> already used by:{" "}
+                {collisions.map((r) => r.label).join(", ")}. Consider a longer code (e.g. <em>MPinto</em> vs <em>MPérez</em>).
+              </p>
+            );
+          })()}
           <button onClick={createCrossRef} disabled={busyAction || !selectedNodeId || newRefLabel.trim().length === 0}>
             Create and attach to selected
           </button>
