@@ -717,6 +717,9 @@ textarea {
   display: flex;
   flex-direction: column;
   gap: 8px;
+  /* Allow orbital orbs to float outside the card boundary */
+  position: relative;
+  overflow: visible;
 }
 
 .planner-node-card.story {
@@ -789,6 +792,11 @@ textarea {
   border: 1px solid rgba(45, 212, 191, 0.52);
   background: rgba(13, 148, 136, 0.25);
   color: rgba(204, 251, 241, 0.95);
+}
+
+/* Allow orbital orbs to overflow ReactFlow node wrapper */
+.react-flow__node {
+  overflow: visible !important;
 }
 
 /* ── Drag re-parenting drop-target highlight ───────────────────────── */
@@ -868,46 +876,72 @@ textarea {
   align-items: center;
 }
 
-/* ── Cross-reference badge chips on node cards ─────────────────────── */
-.planner-ref-badge-row {
-  display: flex;
-  flex-wrap: wrap;
-  gap: 4px;
-  padding-top: 5px;
-}
+/* ── Cross-reference orbital orbs ─────────────────────────────────── */
 
-.planner-ref-badge {
-  display: inline-flex;
-  align-items: center;
-  gap: 3px;
-  padding: 2px 7px;
+/* The orb itself — circular, floats outside the node card */
+.planner-ref-orb {
+  position: absolute;
   border-radius: 999px;
-  border: 1px solid rgba(251, 146, 60, 0.5);
-  background: rgba(82, 36, 8, 0.55);
-  color: rgba(255, 221, 187, 0.95);
-  font-size: 9.5px;
-  font-weight: 850;
-  letter-spacing: 0.25px;
+  border: 2px solid rgba(64, 182, 255, 0.90);
+  background: rgba(16, 48, 88, 0.85);
+  color: rgba(200, 235, 255, 0.95);
+  display: flex;
+  align-items: center;
+  justify-content: center;
   cursor: pointer;
-  transition: border-color 140ms ease, background 140ms ease, box-shadow 140ms ease;
   pointer-events: all;
+  z-index: 10;
+  box-shadow: 0 6px 18px rgba(0, 0, 0, 0.55), 0 0 0 0px rgba(64, 182, 255, 0);
+  transition: box-shadow 150ms ease, transform 150ms ease, border-color 150ms ease;
+  /* Prevent ReactFlow drag from activating on orb clicks */
+  user-select: none;
 }
 
-.planner-ref-badge:hover {
-  border-color: rgba(251, 146, 60, 0.82);
-  background: rgba(120, 52, 10, 0.7);
+.planner-ref-orb:hover {
+  transform: translateY(-2px);
+  border-color: rgba(120, 210, 255, 0.98);
+  box-shadow:
+    0 0 0 4px rgba(64, 182, 255, 0.28),
+    0 10px 24px rgba(0, 0, 0, 0.65);
 }
 
-.planner-ref-badge.active {
-  border-color: rgba(254, 215, 170, 0.95);
-  background: rgba(161, 64, 6, 0.75);
-  box-shadow: 0 0 0 2px rgba(251, 146, 60, 0.28);
+.planner-ref-orb.active {
+  border-color: rgba(251, 191, 36, 0.95);
+  background: rgba(60, 40, 8, 0.88);
+  color: rgba(255, 230, 140, 0.98);
+  box-shadow:
+    0 0 0 4px rgba(251, 191, 36, 0.25),
+    0 8px 20px rgba(0, 0, 0, 0.55);
 }
 
-.planner-ref-badge-count {
-  font-size: 8.5px;
-  font-weight: 750;
-  opacity: 0.85;
+/* The ref code label inside the orb */
+.planner-ref-orb-code {
+  font-size: 9px;
+  font-weight: 900;
+  letter-spacing: 0.3px;
+  line-height: 1;
+  text-transform: uppercase;
+  pointer-events: none;
+}
+
+/* iOS-style red notification count badge in the top-right of the orb */
+.planner-ref-orb-count {
+  position: absolute;
+  top: -5px;
+  right: -5px;
+  min-width: 16px;
+  height: 16px;
+  padding: 0 4px;
+  border-radius: 999px;
+  background: rgba(239, 68, 68, 0.95);
+  color: #fff;
+  font-size: 9px;
+  font-weight: 800;
+  line-height: 16px;
+  text-align: center;
+  pointer-events: none;
+  box-shadow: 0 1px 4px rgba(0,0,0,0.5);
+  border: 1.5px solid rgba(20, 10, 10, 0.5);
 }
 
 .planner-empty-state {

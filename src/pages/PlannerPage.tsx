@@ -1065,7 +1065,7 @@ export default function PlannerPage({ user }: PlannerPageProps) {
           position,
           data: {
             label: (
-              <div className={`planner-node-card${showStoryBody ? " story" : ""}`}>
+              <div className={`planner-node-card${showStoryBody ? " story" : ""}${nodeRefBadges.has(node.id) ? " has-orbs" : ""}`}>
                 <div className="planner-node-label">
                   {childCount > 0 && (
                     <button
@@ -1105,30 +1105,44 @@ export default function PlannerPage({ user }: PlannerPageProps) {
                   {childCount > 0 ? <span className="planner-node-count">{childCount}</span> : null}
                 </div>
                 {(() => {
-                  const badges = nodeRefBadges.get(node.id);
-                  if (!badges || badges.length === 0) return null;
-                  return (
-                    <div className="planner-ref-badge-row">
-                      {badges.map((ref) => {
-                        const count = ref.nodeIds.length;
-                        return (
-                          <button
-                            key={ref.id}
-                            type="button"
-                            className={`planner-ref-badge${activePortalRefId === ref.id ? " active" : ""}`}
-                            title={`${ref.label} · ${count} linked node${count !== 1 ? "s" : ""}`}
-                            onClick={(e) => {
-                              e.stopPropagation();
-                              setActivePortalRefId((prev) => prev === ref.id ? null : ref.id);
-                            }}
-                          >
-                            {ref.code}
-                            {count > 1 ? <span className="planner-ref-badge-count">×{count}</span> : null}
-                          </button>
-                        );
-                      })}
-                    </div>
-                  );
+                  const orbs = nodeRefBadges.get(node.id);
+                  if (!orbs || orbs.length === 0) return null;
+                  // Stack orbs upward from the top-right corner of the card.
+                  // Each orb is 34px diameter, spaced 40px apart vertically.
+                  const ORB_SIZE = 34;
+                  const ORB_GAP = 40;
+                  return orbs.map((ref, idx) => {
+                    const count = ref.nodeIds.length;
+                    const isActive = activePortalRefId === ref.id;
+                    // Linked node titles for tooltip
+                    const linkedTitles = ref.nodeIds
+                      .map((nid) => nodesById.get(nid)?.title)
+                      .filter(Boolean)
+                      .join(", ");
+                    return (
+                      <button
+                        key={ref.id}
+                        type="button"
+                        className={`planner-ref-orb${isActive ? " active" : ""}`}
+                        style={{
+                          top: -(ORB_SIZE / 2) - idx * ORB_GAP,
+                          right: -(ORB_SIZE / 2) - 2,
+                          width: ORB_SIZE,
+                          height: ORB_SIZE,
+                        }}
+                        title={`${ref.label}\n${linkedTitles}`}
+                        onClick={(e) => {
+                          e.stopPropagation();
+                          setActivePortalRefId((prev) => prev === ref.id ? null : ref.id);
+                        }}
+                      >
+                        <span className="planner-ref-orb-code">{ref.code}</span>
+                        {count > 1 && (
+                          <span className="planner-ref-orb-count">{count}</span>
+                        )}
+                      </button>
+                    );
+                  });
                 })()}
                 {showStoryBody ? (
                   <>
