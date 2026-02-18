@@ -791,6 +791,16 @@ textarea {
   color: rgba(204, 251, 241, 0.95);
 }
 
+/* ── Drag re-parenting drop-target highlight ───────────────────────── */
+.react-flow__node.drop-target-hover {
+  animation: drop-target-pulse 800ms ease-in-out infinite alternate;
+}
+
+@keyframes drop-target-pulse {
+  from { filter: brightness(1.0); }
+  to   { filter: brightness(1.3); }
+}
+
 .planner-node-body-preview {
   font-size: 11px;
   line-height: 1.35;

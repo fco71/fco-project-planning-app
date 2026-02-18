@@ -435,6 +435,7 @@ export default function PlannerPage({ user }: PlannerPageProps) {
   const [bubbleMaxDriftPx, setBubbleMaxDriftPx] = useState(34);
   const [hoveredNodeId, setHoveredNodeId] = useState<string | null>(null);
   const [hoveredEdgeId, setHoveredEdgeId] = useState<string | null>(null);
+  const [dropTargetNodeId, setDropTargetNodeId] = useState<string | null>(null);
   const [contextMenu, setContextMenu] = useState<{ x: number; y: number; nodeId: string } | null>(null);
   const [portalContextMenu, setPortalContextMenu] = useState<{ x: number; y: number; refId: string } | null>(null);
   const [saveStatus, setSaveStatus] = useState<"idle" | "error">("idle");
@@ -1450,17 +1451,23 @@ export default function PlannerPage({ user }: PlannerPageProps) {
       const isSelected = selectedNodeId === node.id;
       const isActivePortalTarget = activeLinkedNodeIds.has(node.id);
       const isHoverRelated = hoverNodeIds.has(node.id);
+      const isDropTarget = node.id === dropTargetNodeId;
       return {
         ...node,
+        className: isDropTarget ? "drop-target-hover" : undefined,
         style: {
           ...(node.style || {}),
           border: isSelected
             ? "2px solid rgba(253, 224, 71, 0.95)"
+            : isDropTarget
+              ? "2px solid rgba(52, 211, 153, 0.95)"
             : isActivePortalTarget
               ? "2px solid rgba(251, 146, 60, 0.85)"
             : (node.style as React.CSSProperties)?.border,
           boxShadow: isSelected
             ? "0 0 0 3px rgba(253, 224, 71, 0.18), 0 14px 32px rgba(0,0,0,0.45)"
+            : isDropTarget
+              ? "0 0 0 4px rgba(52, 211, 153, 0.28), 0 14px 32px rgba(0,0,0,0.5)"
             : isActivePortalTarget
               ? "0 0 0 2px rgba(251,146,60,0.2), 0 14px 30px rgba(0,0,0,0.42)"
             : isHoverRelated
@@ -1492,7 +1499,7 @@ export default function PlannerPage({ user }: PlannerPageProps) {
     });
 
     return [...treeNodes, ...portalNodes];
-  }, [activeLinkedNodeIds, activePortalRefId, basePortalNodes, baseTreeNodes, hoverNodeIds, hoveredEdgeId, hoveredNodeId, selectedNodeId]);
+  }, [activeLinkedNodeIds, activePortalRefId, basePortalNodes, baseTreeNodes, dropTargetNodeId, hoverNodeIds, hoveredEdgeId, hoveredNodeId, selectedNodeId]);
 
   const flowEdges = useMemo(() => {
     return baseEdges.map((edge) => {
@@ -1515,6 +1522,7 @@ export default function PlannerPage({ user }: PlannerPageProps) {
 
   const [displayNodes, setDisplayNodes] = useState<Node[]>([]);
   const draggingNodeIdsRef = useRef<Set<string>>(new Set());
+  const draggedNodeIdRef = useRef<string | null>(null);
   // Keep a ref to visiblePortals so handleNodesChange can compute portal follow without state cascade
   const visiblePortalsRef = useRef(visiblePortals);
   useEffect(() => { visiblePortalsRef.current = visiblePortals; }, [visiblePortals]);
@@ -2760,9 +2768,50 @@ export default function PlannerPage({ user }: PlannerPageProps) {
     [nodesById, rootNodeId]
   );
 
+  const onNodeDrag = useCallback(
+    (_: React.MouseEvent, node: Node) => {
+      // Portals don't trigger re-parenting.
+      if (node.id.startsWith("portal:")) {
+        setDropTargetNodeId(null);
+        return;
+      }
+      // Multi-select drag: suppress re-parenting (ambiguous which is the primary).
+      if (draggingNodeIdsRef.current.size > 1) {
+        draggedNodeIdRef.current = null;
+        setDropTargetNodeId(null);
+        return;
+      }
+      draggedNodeIdRef.current = node.id;
+      if (!rfInstance) {
+        setDropTargetNodeId(null);
+        return;
+      }
+      // All descendants + the node itself are forbidden drop targets (cycle prevention).
+      const forbiddenIds = new Set(collectDescendants(node.id, childrenByParent));
+      const currentParentId = nodesById.get(node.id)?.parentId ?? null;
+      // Find the best valid intersecting node.
+      const intersecting = rfInstance.getIntersectingNodes(node);
+      let bestTarget: string | null = null;
+      for (const candidate of intersecting) {
+        if (forbiddenIds.has(candidate.id)) continue;    // self or descendant
+        if (candidate.id.startsWith("portal:")) continue;// portals not valid
+        if (candidate.id === currentParentId) continue;  // already the parent (no-op)
+        bestTarget = candidate.id;
+        break;
+      }
+      setDropTargetNodeId(bestTarget);
+    },
+    [childrenByParent, nodesById, rfInstance]
+  );
+
   const onNodeDragStop = useCallback(
     async (_: React.MouseEvent, node: Node) => {
       if (!db) return;
+
+      // Snapshot and clear drop-target state before any async work.
+      draggedNodeIdRef.current = null;
+      const capturedDropTarget = dropTargetNodeId;
+      setDropTargetNodeId(null);
 
       if (node.id.startsWith("portal:")) {
         const refId = node.id.replace("portal:", "");
@@ -2796,7 +2845,43 @@ export default function PlannerPage({ user }: PlannerPageProps) {
         return;
       }
 
-      // Save regular node positions silently unless there is an error.
+      // ── Re-parent branch ─────────────────────────────────────────────────
+      if (capturedDropTarget) {
+        const prevNode = nodesById.get(node.id);
+        // Guard: don't re-parent the root node.
+        if (prevNode && prevNode.id !== rootNodeId) {
+          const oldParentId = prevNode.parentId;
+          const newParentId = capturedDropTarget;
+          const oldX = prevNode.x ?? node.position.x;
+          const oldY = prevNode.y ?? node.position.y;
+          const newX = node.position.x;
+          const newY = node.position.y;
+          const newParentTitle = nodesById.get(newParentId)?.title ?? newParentId;
+          pushHistory({
+            id: crypto.randomUUID(),
+            label: `Re-parent "${prevNode.title}" → "${newParentTitle}"`,
+            forwardLocal:    [{ target: "nodes", op: "patch", nodeId: node.id, patch: { parentId: newParentId, x: newX, y: newY } }],
+            forwardFirestore:[{ kind: "updateNode", nodeId: node.id, data: { parentId: newParentId, x: newX, y: newY } }],
+            inverseLocal:    [{ target: "nodes", op: "patch", nodeId: node.id, patch: { parentId: oldParentId, x: oldX, y: oldY } }],
+            inverseFirestore:[{ kind: "updateNode", nodeId: node.id, data: { parentId: oldParentId, x: oldX, y: oldY } }],
+          });
+          applyLocalNodePatch(node.id, { parentId: newParentId, x: newX, y: newY });
+          try {
+            await updateDoc(doc(db, "users", user.uid, "nodes", node.id), {
+              parentId: newParentId,
+              x: newX,
+              y: newY,
+              updatedAt: serverTimestamp(),
+            });
+          } catch (actionError: unknown) {
+            showSaveError();
+            setError(actionError instanceof Error ? actionError.message : "Could not re-parent node.");
+          }
+          return; // Don't fall through to the position-only save.
+        }
+      }
+
+      // ── Position-only save ───────────────────────────────────────────────
       const prevNode = nodesById.get(node.id);
       const prevX = prevNode?.x ?? node.position.x;
       const prevY = prevNode?.y ?? node.position.y;
@@ -2824,12 +2909,16 @@ export default function PlannerPage({ user }: PlannerPageProps) {
         setError(actionError instanceof Error ? actionError.message : "Could not save node position.");
       }
     },
-    [nodesById, pushHistory, refs, resolveNodePosition, showSaveError, user.uid]
+    [applyLocalNodePatch, dropTargetNodeId, nodesById, pushHistory, refs, resolveNodePosition, rootNodeId, showSaveError, user.uid]
   );
 
   const onSelectionDragStop = useCallback(
     async (_: React.MouseEvent, draggedNodes: Node[]) => {
       if (!db) return;
+      // No re-parenting on multi-select drag — clear drop-target state.
+      draggedNodeIdRef.current = null;
+      setDropTargetNodeId(null);
+
       const movedTreeNodes = draggedNodes.filter((entry) => !entry.id.startsWith("portal:"));
       const movedPortals = draggedNodes.filter((entry) => entry.id.startsWith("portal:"));
       if (movedTreeNodes.length === 0 && movedPortals.length === 0) return;
@@ -4576,6 +4665,7 @@ export default function PlannerPage({ user }: PlannerPageProps) {
           onNodeMouseLeave={() => setHoveredNodeId(null)}
           onEdgeMouseEnter={(_, edge) => setHoveredEdgeId(edge.id)}
           onEdgeMouseLeave={() => setHoveredEdgeId(null)}
+          onNodeDrag={onNodeDrag}
           onNodeDragStop={onNodeDragStop}
           onSelectionDragStop={onSelectionDragStop}
           onNodeContextMenu={(event, node) => {
