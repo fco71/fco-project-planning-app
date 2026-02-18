@@ -13,6 +13,7 @@ type ContextMenuProps = {
   hasChildren: boolean;
   onClose: () => void;
   onAddChild: (nodeId: string) => void;
+  onAddStorySibling: (nodeId: string) => void;
   onDelete: (nodeId: string) => void;
   onDuplicate: (nodeId: string) => void;
   onRename: (nodeId: string) => void;
@@ -31,6 +32,7 @@ export function NodeContextMenu({
   hasChildren,
   onClose,
   onAddChild,
+  onAddStorySibling,
   onDelete,
   onDuplicate,
   onRename,
@@ -93,6 +95,9 @@ export function NodeContextMenu({
 
   const nextKind = nodeKind === "project" ? "item" : nodeKind === "item" ? "story" : "project";
   const taskAction = taskStatus === "done" ? "Mark Task Todo" : "Mark Task Done";
+  const addLabel = nodeKind === "story" ? "Add Story Sibling" : "Add Child Node";
+  const addAction = nodeKind === "story" ? onAddStorySibling : onAddChild;
+  const addIcon = nodeKind === "story" ? "↳" : "+";
 
   return (
     <div
@@ -130,9 +135,9 @@ export function NodeContextMenu({
       {/* Menu Items */}
       <div style={{ padding: "4px 0" }}>
         <MenuItem
-          icon="+"
-          label="Add Child Node"
-          onClick={() => handleAction(() => onAddChild(nodeId))}
+          icon={addIcon}
+          label={addLabel}
+          onClick={() => handleAction(() => addAction(nodeId))}
         />
         <MenuItem
           icon="⎘"

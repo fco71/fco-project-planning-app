@@ -124,6 +124,10 @@ function defaultNodeColor(kind: NodeKind): string {
   return "#10141C";
 }
 
+function storyContainerColor(): string {
+  return "#5B2A86";
+}
+
 function normalizeNodeKind(value: unknown): NodeKind {
   if (value === "root" || value === "project" || value === "item" || value === "story") return value;
   return "item";
@@ -941,7 +945,8 @@ export default function PlannerPage({ user }: PlannerPageProps) {
       .map((id) => nodesById.get(id))
       .filter((node): node is TreeNode => !!node)
       .map((node) => {
-        const childCount = (childrenByParent.get(node.id) || []).length;
+        const childIds = childrenByParent.get(node.id) || [];
+        const childCount = childIds.length;
         const isCollapsed = collapsedNodeIds.has(node.id);
         const autoPosition = treeLayout.get(node.id) || { x: 0, y: 0 };
         const position = {
@@ -952,6 +957,7 @@ export default function PlannerPage({ user }: PlannerPageProps) {
         const isSearchMatch = searchMatchingIds.has(node.id);
         const isProject = node.kind === "project";
         const isStory = node.kind === "story";
+        const hasStoryChildren = !isStory && childIds.some((childId) => nodesById.get(childId)?.kind === "story");
         const isTaskTodo = node.taskStatus === "todo";
         const isTaskDone = node.taskStatus === "done";
         const isStoryLaneBeat = storyLaneMode && currentRootKind === "story" && node.id !== currentRootId;
@@ -960,6 +966,8 @@ export default function PlannerPage({ user }: PlannerPageProps) {
         const bodyText = (node.body || "").trim();
         const baseBackground = isRoot
           ? "rgba(58, 44, 14, 0.92)"
+          : hasStoryChildren
+            ? "rgba(91, 42, 134, 0.94)"
           : isProject
             ? "rgba(16, 31, 62, 0.95)"
           : isStory
@@ -1035,6 +1043,8 @@ export default function PlannerPage({ user }: PlannerPageProps) {
               ? "2px solid rgba(34, 197, 94, 0.9)"
               : isRoot
                 ? "2px solid rgba(253, 228, 129, 0.9)"
+                : hasStoryChildren
+                  ? "1px solid rgba(216, 180, 254, 0.75)"
                 : isProject
                   ? "1px solid rgba(96, 165, 250, 0.6)"
                 : isStory
@@ -1375,6 +1385,11 @@ export default function PlannerPage({ user }: PlannerPageProps) {
     return (childrenByParent.get(selectedNodeId) || [])
       .map((id) => nodesById.get(id))
       .filter((node): node is TreeNode => !!node);
+  }, [childrenByParent, nodesById, selectedNodeId]);
+
+  const selectedNodeHasStoryChildren = useMemo(() => {
+    if (!selectedNodeId) return false;
+    return (childrenByParent.get(selectedNodeId) || []).some((childId) => nodesById.get(childId)?.kind === "story");
   }, [childrenByParent, nodesById, selectedNodeId]);
 
   const selectedNodeRefs = useMemo(() => {
@@ -2403,6 +2418,41 @@ export default function PlannerPage({ user }: PlannerPageProps) {
     [childrenByParent, resolveNodePosition, user.uid]
   );
 
+  const handleContextAddStorySibling = useCallback(
+    async (nodeId: string) => {
+      if (!db) return;
+      const baseNode = nodesById.get(nodeId);
+      if (!baseNode || baseNode.kind !== "story") return;
+      const parentId = baseNode.parentId;
+      if (!parentId) return;
+      const basePosition = resolveNodePosition(nodeId);
+      const siblingIds = (childrenByParent.get(parentId) || []).filter((id) => id !== nodeId);
+      const maxSiblingY = siblingIds.reduce((maxY, siblingId) => Math.max(maxY, resolveNodePosition(siblingId).y), basePosition.y);
+
+      const newDoc = doc(collection(db, "users", user.uid, "nodes"));
+      setBusyAction(true);
+      setError(null);
+      try {
+        await setDoc(doc(db, "users", user.uid, "nodes", newDoc.id), {
+          title: "New Story Beat",
+          parentId,
+          kind: "story",
+          x: basePosition.x,
+          y: maxSiblingY + 110,
+          createdAt: serverTimestamp(),
+          updatedAt: serverTimestamp(),
+        } satisfies TreeNodeDoc & { createdAt: unknown; updatedAt: unknown });
+        setPendingSelectedNodeId(newDoc.id);
+        setPendingRenameNodeId(newDoc.id);
+      } catch (actionError: unknown) {
+        setError(actionError instanceof Error ? actionError.message : "Could not create story sibling.");
+      } finally {
+        setBusyAction(false);
+      }
+    },
+    [childrenByParent, nodesById, resolveNodePosition, user.uid]
+  );
+
   const handleContextDelete = useCallback(
     async (nodeId: string) => {
       if (!db || nodeId === rootNodeId) return;
@@ -2598,11 +2648,17 @@ export default function PlannerPage({ user }: PlannerPageProps) {
         );
       }
       addItem(
-        "cmd-add-child",
-        "Add child to selected node",
+        selected?.kind === "story" ? "cmd-add-story-sibling" : "cmd-add-child",
+        selected?.kind === "story" ? "Add story sibling to selected node" : "Add child to selected node",
         "Create",
-        () => handleContextAddChild(selectedNodeId),
-        "add child create node"
+        () => {
+          if (selected?.kind === "story") {
+            handleContextAddStorySibling(selectedNodeId);
+          } else {
+            handleContextAddChild(selectedNodeId);
+          }
+        },
+        selected?.kind === "story" ? "add story sibling beat sequence" : "add child create node"
       );
       if (selected && selected.kind !== "root") {
         const nextKind = nextNodeKind(selected.kind);
@@ -2690,6 +2746,7 @@ export default function PlannerPage({ user }: PlannerPageProps) {
     goGrandmotherView,
     goUpOneView,
     handleContextAddChild,
+    handleContextAddStorySibling,
     handleContextChangeType,
     handleContextToggleTaskStatus,
     jumpToReferencedNode,
@@ -3106,7 +3163,7 @@ export default function PlannerPage({ user }: PlannerPageProps) {
               <div className="planner-inline-buttons">
                 <input
                   type="color"
-                  value={selectedNode.color || defaultNodeColor(selectedNode.kind)}
+                  value={selectedNode.color || (selectedNodeHasStoryChildren ? storyContainerColor() : defaultNodeColor(selectedNode.kind))}
                   onChange={(event) => {
                     void setNodeColor(selectedNode.id, event.target.value);
                   }}
@@ -3926,6 +3983,7 @@ export default function PlannerPage({ user }: PlannerPageProps) {
             hasChildren={(childrenByParent.get(contextMenu.nodeId) || []).length > 0}
             onClose={() => setContextMenu(null)}
             onAddChild={handleContextAddChild}
+            onAddStorySibling={handleContextAddStorySibling}
             onDelete={handleContextDelete}
             onDuplicate={handleContextDuplicate}
             onRename={handleContextRename}
