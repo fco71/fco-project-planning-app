@@ -1005,6 +1005,8 @@ export default function PlannerPage({ user }: PlannerPageProps) {
     });
   }, []);
 
+  const filteredTreeIdSet = useMemo(() => new Set(filteredTreeIds), [filteredTreeIds]);
+
   // Maps each visible nodeId → the CrossRefs it belongs to, for inline badge display.
   const nodeRefBadges = useMemo((): Map<string, CrossRef[]> => {
     const map = new Map<string, CrossRef[]>();
@@ -1213,8 +1215,6 @@ export default function PlannerPage({ user }: PlannerPageProps) {
         } as Edge;
       });
   }, [filteredTreeIds, nodesById]);
-
-  const filteredTreeIdSet = useMemo(() => new Set(filteredTreeIds), [filteredTreeIds]);
 
   const baseEdges = baseTreeEdges;
 
