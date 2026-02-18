@@ -71,6 +71,8 @@ type CrossRefDoc = {
   anchorNodeId?: string;
   portalX?: number;
   portalY?: number;
+  portalAnchorX?: number;
+  portalAnchorY?: number;
   entityType?: EntityType;
   tags?: string[];
   notes?: string;
@@ -86,6 +88,8 @@ type CrossRef = {
   anchorNodeId: string | null;
   portalX: number | null;
   portalY: number | null;
+  portalAnchorX: number | null;
+  portalAnchorY: number | null;
   entityType: EntityType;
   tags: string[];
   notes: string;
@@ -238,9 +242,9 @@ function chooseAnchorNodeId(nodeIds: string[], ...preferredIds: Array<string | n
   return nodeIds[0] || null;
 }
 
-function defaultPortalPositionForAnchor(anchor: TreeNode | undefined, seed: string): { x: number; y: number } {
-  const baseX = typeof anchor?.x === "number" ? anchor.x : 0;
-  const baseY = typeof anchor?.y === "number" ? anchor.y : 0;
+function defaultPortalPositionForAnchor(anchor: { x: number; y: number } | null, seed: string): { x: number; y: number } {
+  const baseX = anchor?.x ?? 0;
+  const baseY = anchor?.y ?? 0;
   let hash = 0;
   for (let i = 0; i < seed.length; i += 1) {
     hash = (hash << 5) - hash + seed.charCodeAt(i);
@@ -253,6 +257,28 @@ function defaultPortalPositionForAnchor(anchor: TreeNode | undefined, seed: stri
     x: baseX + 140 - 23 + Math.cos(angle) * radius + wobble.x,
     y: baseY + 60 - 23 + Math.sin(angle) * radius + wobble.y,
   };
+}
+
+function resolvePortalFollowPosition(
+  ref: Pick<CrossRef, "portalX" | "portalY" | "portalAnchorX" | "portalAnchorY">,
+  anchor: { x: number; y: number } | null,
+  seed: string
+): { x: number; y: number } {
+  if (!anchor) {
+    return {
+      x: typeof ref.portalX === "number" ? ref.portalX : 0,
+      y: typeof ref.portalY === "number" ? ref.portalY : 0,
+    };
+  }
+  if (typeof ref.portalX === "number" && typeof ref.portalY === "number") {
+    const savedAnchorX = typeof ref.portalAnchorX === "number" ? ref.portalAnchorX : anchor.x;
+    const savedAnchorY = typeof ref.portalAnchorY === "number" ? ref.portalAnchorY : anchor.y;
+    return {
+      x: ref.portalX + (anchor.x - savedAnchorX),
+      y: ref.portalY + (anchor.y - savedAnchorY),
+    };
+  }
+  return defaultPortalPositionForAnchor(anchor, seed);
 }
 
 function timestampToMs(value: unknown): number {
@@ -397,6 +423,7 @@ export default function PlannerPage({ user }: PlannerPageProps) {
   const [paletteIndex, setPaletteIndex] = useState(0);
   const paletteInputRef = useRef<HTMLInputElement>(null);
   const [collapsedNodeIds, setCollapsedNodeIds] = useState<Set<string>>(new Set());
+  const [liveNodePositions, setLiveNodePositions] = useState<Record<string, { x: number; y: number }>>({});
   const [hoveredNodeId, setHoveredNodeId] = useState<string | null>(null);
   const [hoveredEdgeId, setHoveredEdgeId] = useState<string | null>(null);
   const [contextMenu, setContextMenu] = useState<{ x: number; y: number; nodeId: string } | null>(null);
@@ -412,6 +439,21 @@ export default function PlannerPage({ user }: PlannerPageProps) {
   const lastFocusKeyRef = useRef("");
 
   const nodesById = useMemo(() => new Map(nodes.map((node) => [node.id, node] as const)), [nodes]);
+
+  useEffect(() => {
+    setLiveNodePositions((previous) => {
+      const next: Record<string, { x: number; y: number }> = {};
+      let changed = false;
+      Object.entries(previous).forEach(([id, position]) => {
+        if (!nodesById.has(id)) {
+          changed = true;
+          return;
+        }
+        next[id] = position;
+      });
+      return changed ? next : previous;
+    });
+  }, [nodesById]);
 
   const childrenByParent = useMemo(() => {
     const map = new Map<string, string[]>();
@@ -646,6 +688,8 @@ export default function PlannerPage({ user }: PlannerPageProps) {
                 anchorNodeId: typeof value.anchorNodeId === "string" ? value.anchorNodeId : null,
                 portalX: typeof value.portalX === "number" ? value.portalX : null,
                 portalY: typeof value.portalY === "number" ? value.portalY : null,
+                portalAnchorX: typeof value.portalAnchorX === "number" ? value.portalAnchorX : null,
+                portalAnchorY: typeof value.portalAnchorY === "number" ? value.portalAnchorY : null,
                 entityType,
                 tags: asStringArray(value.tags),
                 notes: typeof value.notes === "string" ? value.notes : "",
@@ -918,6 +962,8 @@ export default function PlannerPage({ user }: PlannerPageProps) {
 
   const resolveNodePosition = useCallback(
     (nodeId: string) => {
+      const livePosition = liveNodePositions[nodeId];
+      if (livePosition) return livePosition;
       const node = nodesById.get(nodeId);
       const autoPosition = treeLayout.get(nodeId) || { x: 0, y: 0 };
       return {
@@ -925,7 +971,7 @@ export default function PlannerPage({ user }: PlannerPageProps) {
         y: typeof node?.y === "number" ? node.y : autoPosition.y,
       };
     },
-    [nodesById, treeLayout]
+    [liveNodePositions, nodesById, treeLayout]
   );
 
   const toggleStoryCardExpand = useCallback((nodeId: string) => {
@@ -1108,27 +1154,34 @@ export default function PlannerPage({ user }: PlannerPageProps) {
         const inView = validNodeIds.filter((id) => visibleTreeIdSet.has(id));
         const resolvedAnchorId = chooseAnchorNodeId(validNodeIds, ref.anchorNodeId);
         const anchorId = chooseAnchorNodeId(inView, resolvedAnchorId);
-        const anchorNode = anchorId ? nodesById.get(anchorId) : undefined;
-        const position =
-          typeof ref.portalX === "number" && typeof ref.portalY === "number"
-            ? { x: ref.portalX, y: ref.portalY }
-            : defaultPortalPositionForAnchor(anchorNode, `${ref.id}:${anchorId || resolvedAnchorId || "none"}`);
-        return { ref: { ...ref, anchorNodeId: resolvedAnchorId }, inView, anchorId, position };
+        const anchorPosition = anchorId ? resolveNodePosition(anchorId) : null;
+        const position = resolvePortalFollowPosition(ref, anchorPosition, `${ref.id}:${anchorId || resolvedAnchorId || "none"}`);
+        return { ref: { ...ref, anchorNodeId: resolvedAnchorId }, inView, anchorId, anchorPosition, position };
       })
       .filter(
-        (entry): entry is { ref: CrossRef; inView: string[]; anchorId: string; position: { x: number; y: number } } =>
+        (entry): entry is {
+          ref: CrossRef;
+          inView: string[];
+          anchorId: string;
+          anchorPosition: { x: number; y: number };
+          position: { x: number; y: number };
+        } =>
           entry.inView.length > 0 && !!entry.anchorId
       )
       .sort((a, b) => {
         if (a.anchorId !== b.anchorId) return a.anchorId.localeCompare(b.anchorId);
         return a.ref.code.localeCompare(b.ref.code) || a.ref.label.localeCompare(b.ref.label);
       });
-  }, [nodesById, refs, visibleTreeIdSet]);
+  }, [nodesById, refs, resolveNodePosition, visibleTreeIdSet]);
 
   useEffect(() => {
     if (!db) return;
     const refsMissingPortalPosition = visiblePortals.filter(
-      (entry) => typeof entry.ref.portalX !== "number" || typeof entry.ref.portalY !== "number"
+      (entry) =>
+        typeof entry.ref.portalX !== "number" ||
+        typeof entry.ref.portalY !== "number" ||
+        typeof entry.ref.portalAnchorX !== "number" ||
+        typeof entry.ref.portalAnchorY !== "number"
     );
     if (refsMissingPortalPosition.length === 0) return;
 
@@ -1141,6 +1194,8 @@ export default function PlannerPage({ user }: PlannerPageProps) {
           batch.update(doc(db, "users", user.uid, "crossRefs", entry.ref.id), {
             portalX: entry.position.x,
             portalY: entry.position.y,
+            portalAnchorX: entry.anchorPosition.x,
+            portalAnchorY: entry.anchorPosition.y,
             updatedAt: serverTimestamp(),
           });
           count += 1;
@@ -1166,12 +1221,44 @@ export default function PlannerPage({ user }: PlannerPageProps) {
   }, [db, user.uid, visiblePortals]);
 
   const basePortalNodes = useMemo(() => {
+    const minimumGap = 56;
+    const maxOrganicDrift = 34;
+    const positioned: Array<{ x: number; y: number }> = [];
     return visiblePortals.map((entry) => {
+      let x = entry.position.x;
+      let y = entry.position.y;
+
+      positioned.forEach((placed, index) => {
+        const dx = x - placed.x;
+        const dy = y - placed.y;
+        const distance = Math.hypot(dx, dy);
+        if (distance >= minimumGap) return;
+        const push = (minimumGap - distance) * 0.55;
+        if (distance > 0.001) {
+          x += (dx / distance) * push;
+          y += (dy / distance) * push;
+        } else {
+          const nudge = getNudge(`${entry.ref.id}:push:${index}`, 10, 10);
+          x += nudge.x;
+          y += nudge.y;
+        }
+      });
+
+      const driftX = x - entry.position.x;
+      const driftY = y - entry.position.y;
+      const driftDistance = Math.hypot(driftX, driftY);
+      if (driftDistance > maxOrganicDrift) {
+        const ratio = maxOrganicDrift / driftDistance;
+        x = entry.position.x + driftX * ratio;
+        y = entry.position.y + driftY * ratio;
+      }
+      positioned.push({ x, y });
+
       return {
         id: `portal:${entry.ref.id}`,
         type: "portal",
         className: "planner-portal-node",
-        position: entry.position,
+        position: { x, y },
         data: {
           label: `${entry.ref.code}${entry.ref.nodeIds.length > 1 ? `·${entry.ref.nodeIds.length}` : ""}`,
           title: `${entry.ref.label} (${entry.ref.nodeIds.length} links)`,
@@ -1334,13 +1421,42 @@ export default function PlannerPage({ user }: PlannerPageProps) {
   }, [baseEdges, hoverEdgeIds, hoveredEdgeId, hoveredNodeId]);
 
   const [displayNodes, setDisplayNodes] = useState<Node[]>([]);
+  const draggingNodeIdsRef = useRef<Set<string>>(new Set());
 
   useEffect(() => {
-    setDisplayNodes(flowNodes);
+    setDisplayNodes((previous) => {
+      if (previous.length === 0) return flowNodes;
+      const draggingIds = draggingNodeIdsRef.current;
+      if (draggingIds.size === 0) return flowNodes;
+      const previousPositions = new Map(previous.map((node) => [node.id, node.position] as const));
+      return flowNodes.map((node) => {
+        if (!draggingIds.has(node.id)) return node;
+        const position = previousPositions.get(node.id);
+        return position ? ({ ...node, position } as Node) : node;
+      });
+    });
   }, [flowNodes]);
 
   const handleNodesChange: OnNodesChange = useCallback((changes) => {
+    const draggingIds = new Set(draggingNodeIdsRef.current);
+    const livePositionUpdates: Record<string, { x: number; y: number }> = {};
+    changes.forEach((change) => {
+      if (change.type !== "position") return;
+      if ("dragging" in change) {
+        if (change.dragging) draggingIds.add(change.id);
+        else draggingIds.delete(change.id);
+      }
+      if ("position" in change && change.position && !change.id.startsWith("portal:")) {
+        livePositionUpdates[change.id] = { x: change.position.x, y: change.position.y };
+      }
+    });
+    draggingNodeIdsRef.current = draggingIds;
     setDisplayNodes((nds) => applyNodeChanges(changes, nds));
+    if (Object.keys(livePositionUpdates).length > 0) {
+      setLiveNodePositions((previous) => {
+        return { ...previous, ...livePositionUpdates };
+      });
+    }
   }, []);
 
   // Save warning helper (successful autosaves are silent).
@@ -1562,9 +1678,9 @@ export default function PlannerPage({ user }: PlannerPageProps) {
   const buildDefaultPortalPosition = useCallback(
     (anchorNodeId: string | null, seed: string) => {
       if (!anchorNodeId) return null;
-      return defaultPortalPositionForAnchor(nodesById.get(anchorNodeId), `${seed}:${anchorNodeId}`);
+      return defaultPortalPositionForAnchor(resolveNodePosition(anchorNodeId), `${seed}:${anchorNodeId}`);
     },
-    [nodesById]
+    [resolveNodePosition]
   );
 
   const goGrandmotherView = useCallback(() => {
@@ -1847,15 +1963,39 @@ export default function PlannerPage({ user }: PlannerPageProps) {
           return { type: "delete" as const, refId: ref.id };
         }
         const cleanedAnchorNodeId = chooseAnchorNodeId(cleanedNodeIds, ref.anchorNodeId);
+        const cleanedAnchorPosition = cleanedAnchorNodeId ? resolveNodePosition(cleanedAnchorNodeId) : null;
+        const cleanedPortalPosition = resolvePortalFollowPosition(ref, cleanedAnchorPosition, `${ref.id}:cleanup`);
         const unchanged =
           cleanedNodeIds.length === ref.nodeIds.length &&
           cleanedNodeIds.every((id, index) => id === ref.nodeIds[index]) &&
           cleanedAnchorNodeId === (ref.anchorNodeId || null);
         if (unchanged) return null;
-        return { type: "update" as const, refId: ref.id, nodeIds: cleanedNodeIds, anchorNodeId: cleanedAnchorNodeId };
+        return {
+          type: "update" as const,
+          refId: ref.id,
+          nodeIds: cleanedNodeIds,
+          anchorNodeId: cleanedAnchorNodeId,
+          portalX: cleanedPortalPosition.x,
+          portalY: cleanedPortalPosition.y,
+          portalAnchorX: cleanedAnchorPosition?.x ?? null,
+          portalAnchorY: cleanedAnchorPosition?.y ?? null,
+        };
       })
       .filter(
-        (entry): entry is { type: "update"; refId: string; nodeIds: string[]; anchorNodeId: string | null } | { type: "delete"; refId: string } =>
+        (
+          entry
+        ): entry is
+          | {
+              type: "update";
+              refId: string;
+              nodeIds: string[];
+              anchorNodeId: string | null;
+              portalX: number;
+              portalY: number;
+              portalAnchorX: number | null;
+              portalAnchorY: number | null;
+            }
+          | { type: "delete"; refId: string } =>
           !!entry
       );
 
@@ -1874,6 +2014,10 @@ export default function PlannerPage({ user }: PlannerPageProps) {
           batch.update(refDoc, {
             nodeIds: entry.nodeIds,
             anchorNodeId: entry.anchorNodeId ?? deleteField(),
+            portalX: entry.portalX,
+            portalY: entry.portalY,
+            portalAnchorX: entry.portalAnchorX ?? deleteField(),
+            portalAnchorY: entry.portalAnchorY ?? deleteField(),
             updatedAt: serverTimestamp(),
           });
         }
@@ -1898,7 +2042,7 @@ export default function PlannerPage({ user }: PlannerPageProps) {
     } finally {
       setBusyAction(false);
     }
-  }, [activePortalRefId, editRefId, hydrateRefEditor, nodesById, refs, user.uid]);
+  }, [activePortalRefId, editRefId, hydrateRefEditor, nodesById, refs, resolveNodePosition, user.uid]);
 
   const deleteSelected = useCallback(async () => {
     if (!db || !selectedNodeId || selectedNodeId === rootNodeId) return;
@@ -1920,9 +2064,15 @@ export default function PlannerPage({ user }: PlannerPageProps) {
           batch.delete(refDoc);
         } else {
           const nextAnchorNodeId = chooseAnchorNodeId(remaining, ref.anchorNodeId);
+          const nextAnchorPosition = nextAnchorNodeId ? resolveNodePosition(nextAnchorNodeId) : null;
+          const nextPortalPosition = resolvePortalFollowPosition(ref, nextAnchorPosition, `${ref.id}:delete-selected`);
           batch.update(refDoc, {
             nodeIds: remaining,
             anchorNodeId: nextAnchorNodeId ?? deleteField(),
+            portalX: nextPortalPosition.x,
+            portalY: nextPortalPosition.y,
+            portalAnchorX: nextAnchorPosition?.x ?? deleteField(),
+            portalAnchorY: nextAnchorPosition?.y ?? deleteField(),
             updatedAt: serverTimestamp(),
           });
         }
@@ -1938,7 +2088,7 @@ export default function PlannerPage({ user }: PlannerPageProps) {
     } finally {
       setBusyAction(false);
     }
-  }, [childrenByParent, currentRootId, nodesById, refs, rootNodeId, selectedNodeId, user.uid]);
+  }, [childrenByParent, currentRootId, nodesById, refs, resolveNodePosition, rootNodeId, selectedNodeId, user.uid]);
 
   const linkCrossRefToNode = useCallback(
     async (refId: string, nodeId: string) => {
@@ -1946,10 +2096,10 @@ export default function PlannerPage({ user }: PlannerPageProps) {
       const linked = refs.find((entry) => entry.id === refId);
       const nextNodeIds = linked ? (linked.nodeIds.includes(nodeId) ? linked.nodeIds : [...linked.nodeIds, nodeId]) : [nodeId];
       const nextAnchorNodeId = chooseAnchorNodeId(nextNodeIds, linked?.anchorNodeId, nodeId);
-      const nextPortalPosition =
-        linked && typeof linked.portalX === "number" && typeof linked.portalY === "number"
-          ? { x: linked.portalX, y: linked.portalY }
-          : buildDefaultPortalPosition(nextAnchorNodeId, refId);
+      const nextAnchorPosition = nextAnchorNodeId ? resolveNodePosition(nextAnchorNodeId) : null;
+      const nextPortalPosition = linked
+        ? resolvePortalFollowPosition(linked, nextAnchorPosition, refId)
+        : buildDefaultPortalPosition(nextAnchorNodeId, refId);
       setBusyAction(true);
       setError(null);
       try {
@@ -1957,6 +2107,7 @@ export default function PlannerPage({ user }: PlannerPageProps) {
           nodeIds: arrayUnion(nodeId),
           anchorNodeId: nextAnchorNodeId ?? deleteField(),
           ...(nextPortalPosition ? { portalX: nextPortalPosition.x, portalY: nextPortalPosition.y } : {}),
+          ...(nextAnchorPosition ? { portalAnchorX: nextAnchorPosition.x, portalAnchorY: nextAnchorPosition.y } : {}),
           updatedAt: serverTimestamp(),
         });
         if (linked) {
@@ -1966,6 +2117,8 @@ export default function PlannerPage({ user }: PlannerPageProps) {
             anchorNodeId: nextAnchorNodeId,
             portalX: nextPortalPosition?.x ?? linked.portalX,
             portalY: nextPortalPosition?.y ?? linked.portalY,
+            portalAnchorX: nextAnchorPosition?.x ?? linked.portalAnchorX,
+            portalAnchorY: nextAnchorPosition?.y ?? linked.portalAnchorY,
           });
         }
         setActivePortalRefId(refId);
@@ -1977,7 +2130,7 @@ export default function PlannerPage({ user }: PlannerPageProps) {
         setBusyAction(false);
       }
     },
-    [buildDefaultPortalPosition, hydrateRefEditor, refs, user.uid]
+    [buildDefaultPortalPosition, hydrateRefEditor, refs, resolveNodePosition, user.uid]
   );
 
   const createCrossRef = useCallback(async () => {
@@ -1996,14 +2149,14 @@ export default function PlannerPage({ user }: PlannerPageProps) {
           ? existingExact.nodeIds
           : [...existingExact.nodeIds, selectedNodeId];
         const nextAnchorNodeId = chooseAnchorNodeId(nextNodeIds, existingExact.anchorNodeId, selectedNodeId);
+        const nextAnchorPosition = nextAnchorNodeId ? resolveNodePosition(nextAnchorNodeId) : null;
         const nextPortalPosition =
-          typeof existingExact.portalX === "number" && typeof existingExact.portalY === "number"
-            ? { x: existingExact.portalX, y: existingExact.portalY }
-            : buildDefaultPortalPosition(nextAnchorNodeId, existingExact.id);
+          resolvePortalFollowPosition(existingExact, nextAnchorPosition, existingExact.id);
         await updateDoc(doc(db, "users", user.uid, "crossRefs", existingExact.id), {
           nodeIds: arrayUnion(selectedNodeId),
           anchorNodeId: nextAnchorNodeId ?? deleteField(),
           ...(nextPortalPosition ? { portalX: nextPortalPosition.x, portalY: nextPortalPosition.y } : {}),
+          ...(nextAnchorPosition ? { portalAnchorX: nextAnchorPosition.x, portalAnchorY: nextAnchorPosition.y } : {}),
           entityType: existingExact.entityType === "entity" ? newRefType : existingExact.entityType,
           updatedAt: serverTimestamp(),
         });
@@ -2013,11 +2166,14 @@ export default function PlannerPage({ user }: PlannerPageProps) {
           anchorNodeId: nextAnchorNodeId,
           portalX: nextPortalPosition?.x ?? existingExact.portalX,
           portalY: nextPortalPosition?.y ?? existingExact.portalY,
+          portalAnchorX: nextAnchorPosition?.x ?? existingExact.portalAnchorX,
+          portalAnchorY: nextAnchorPosition?.y ?? existingExact.portalAnchorY,
           entityType: existingExact.entityType === "entity" ? newRefType : existingExact.entityType,
         });
         setActivePortalRefId(existingExact.id);
       } else {
         const newDoc = doc(collection(db, "users", user.uid, "crossRefs"));
+        const anchorPosition = resolveNodePosition(selectedNodeId);
         const portalPosition = buildDefaultPortalPosition(selectedNodeId, newDoc.id);
         await setDoc(doc(db, "users", user.uid, "crossRefs", newDoc.id), {
           label,
@@ -2025,6 +2181,8 @@ export default function PlannerPage({ user }: PlannerPageProps) {
           nodeIds: [selectedNodeId],
           anchorNodeId: selectedNodeId,
           ...(portalPosition ? { portalX: portalPosition.x, portalY: portalPosition.y } : {}),
+          portalAnchorX: anchorPosition.x,
+          portalAnchorY: anchorPosition.y,
           entityType: newRefType,
           tags: [],
           notes: "",
@@ -2041,6 +2199,8 @@ export default function PlannerPage({ user }: PlannerPageProps) {
           anchorNodeId: selectedNodeId,
           portalX: portalPosition?.x ?? null,
           portalY: portalPosition?.y ?? null,
+          portalAnchorX: anchorPosition.x,
+          portalAnchorY: anchorPosition.y,
           entityType: newRefType,
           tags: [],
           notes: "",
@@ -2059,7 +2219,7 @@ export default function PlannerPage({ user }: PlannerPageProps) {
     } finally {
       setBusyAction(false);
     }
-  }, [buildDefaultPortalPosition, hydrateRefEditor, newRefCode, newRefLabel, newRefType, refs, selectedNodeId, user.uid]);
+  }, [buildDefaultPortalPosition, hydrateRefEditor, newRefCode, newRefLabel, newRefType, refs, resolveNodePosition, selectedNodeId, user.uid]);
 
   const duplicateCrossRef = useCallback(
     async (refId: string) => {
@@ -2075,9 +2235,15 @@ export default function PlannerPage({ user }: PlannerPageProps) {
       }
       const duplicateNodeIds = Array.from(new Set(source.nodeIds));
       const duplicateAnchorNodeId = chooseAnchorNodeId(duplicateNodeIds, source.anchorNodeId);
+      const duplicateAnchorPosition = duplicateAnchorNodeId ? resolveNodePosition(duplicateAnchorNodeId) : null;
       const duplicatePortalPosition =
         typeof source.portalX === "number" && typeof source.portalY === "number"
-          ? { x: source.portalX + 34, y: source.portalY + 34 }
+          ? (() => {
+              const sourceAnchorNodeId = chooseAnchorNodeId(source.nodeIds, source.anchorNodeId);
+              const sourceAnchorPosition = sourceAnchorNodeId ? resolveNodePosition(sourceAnchorNodeId) : null;
+              const sourcePosition = resolvePortalFollowPosition(source, sourceAnchorPosition, source.id);
+              return { x: sourcePosition.x + 34, y: sourcePosition.y + 34 };
+            })()
           : buildDefaultPortalPosition(duplicateAnchorNodeId, `${source.id}:copy:${duplicateLabel}`);
       setBusyAction(true);
       setError(null);
@@ -2089,6 +2255,7 @@ export default function PlannerPage({ user }: PlannerPageProps) {
           nodeIds: duplicateNodeIds,
           ...(duplicateAnchorNodeId ? { anchorNodeId: duplicateAnchorNodeId } : {}),
           ...(duplicatePortalPosition ? { portalX: duplicatePortalPosition.x, portalY: duplicatePortalPosition.y } : {}),
+          ...(duplicateAnchorPosition ? { portalAnchorX: duplicateAnchorPosition.x, portalAnchorY: duplicateAnchorPosition.y } : {}),
           entityType: source.entityType,
           tags: source.tags,
           notes: source.notes,
@@ -2106,6 +2273,8 @@ export default function PlannerPage({ user }: PlannerPageProps) {
           anchorNodeId: duplicateAnchorNodeId,
           portalX: duplicatePortalPosition?.x ?? null,
           portalY: duplicatePortalPosition?.y ?? null,
+          portalAnchorX: duplicateAnchorPosition?.x ?? source.portalAnchorX,
+          portalAnchorY: duplicateAnchorPosition?.y ?? source.portalAnchorY,
           createdAtMs: 0,
           updatedAtMs: 0,
         });
@@ -2115,7 +2284,7 @@ export default function PlannerPage({ user }: PlannerPageProps) {
         setBusyAction(false);
       }
     },
-    [buildDefaultPortalPosition, hydrateRefEditor, refs, user.uid]
+    [buildDefaultPortalPosition, hydrateRefEditor, refs, resolveNodePosition, user.uid]
   );
 
   const saveCrossRefEdits = useCallback(async () => {
@@ -2167,11 +2336,20 @@ export default function PlannerPage({ user }: PlannerPageProps) {
     const mergedContact = primary.contact.trim() || duplicate.contact.trim();
     const mergedType = primary.entityType !== "entity" ? primary.entityType : duplicate.entityType;
     const mergedAnchorNodeId = chooseAnchorNodeId(mergedNodeIds, primary.anchorNodeId, duplicate.anchorNodeId);
+    const mergedAnchorPosition = mergedAnchorNodeId ? resolveNodePosition(mergedAnchorNodeId) : null;
     const mergedPortalPosition =
       typeof primary.portalX === "number" && typeof primary.portalY === "number"
-        ? { x: primary.portalX, y: primary.portalY }
+        ? resolvePortalFollowPosition(
+            primary,
+            primary.anchorNodeId ? resolveNodePosition(primary.anchorNodeId) : null,
+            `${primary.id}:merged`
+          )
         : typeof duplicate.portalX === "number" && typeof duplicate.portalY === "number"
-          ? { x: duplicate.portalX, y: duplicate.portalY }
+          ? resolvePortalFollowPosition(
+              duplicate,
+              duplicate.anchorNodeId ? resolveNodePosition(duplicate.anchorNodeId) : null,
+              `${duplicate.id}:merged`
+            )
           : buildDefaultPortalPosition(mergedAnchorNodeId, primary.id);
 
     setBusyAction(true);
@@ -2182,6 +2360,7 @@ export default function PlannerPage({ user }: PlannerPageProps) {
         nodeIds: mergedNodeIds,
         anchorNodeId: mergedAnchorNodeId ?? deleteField(),
         ...(mergedPortalPosition ? { portalX: mergedPortalPosition.x, portalY: mergedPortalPosition.y } : {}),
+        ...(mergedAnchorPosition ? { portalAnchorX: mergedAnchorPosition.x, portalAnchorY: mergedAnchorPosition.y } : {}),
         tags: mergedTags,
         links: mergedLinks,
         notes: mergedNotes,
@@ -2202,6 +2381,8 @@ export default function PlannerPage({ user }: PlannerPageProps) {
         anchorNodeId: mergedAnchorNodeId,
         portalX: mergedPortalPosition?.x ?? primary.portalX,
         portalY: mergedPortalPosition?.y ?? primary.portalY,
+        portalAnchorX: mergedAnchorPosition?.x ?? primary.portalAnchorX,
+        portalAnchorY: mergedAnchorPosition?.y ?? primary.portalAnchorY,
         tags: mergedTags,
         links: mergedLinks,
         notes: mergedNotes,
@@ -2213,7 +2394,7 @@ export default function PlannerPage({ user }: PlannerPageProps) {
     } finally {
       setBusyAction(false);
     }
-  }, [activePortalRefId, buildDefaultPortalPosition, editRefId, hydrateRefEditor, mergeFromRefId, refs, user.uid]);
+  }, [activePortalRefId, buildDefaultPortalPosition, editRefId, hydrateRefEditor, mergeFromRefId, refs, resolveNodePosition, user.uid]);
 
   const deleteCrossRefBubble = useCallback(async () => {
     if (!db || !editRefId) return;
@@ -2269,9 +2450,13 @@ export default function PlannerPage({ user }: PlannerPageProps) {
         if (target) {
           const remainingNodeIds = target.nodeIds.filter((id) => id !== nodeId);
           const nextAnchorNodeId = chooseAnchorNodeId(remainingNodeIds, target.anchorNodeId);
+          const nextAnchorPosition = nextAnchorNodeId ? resolveNodePosition(nextAnchorNodeId) : null;
+          const nextPortalPosition = resolvePortalFollowPosition(target, nextAnchorPosition, target.id);
           await updateDoc(doc(db, "users", user.uid, "crossRefs", refId), {
             nodeIds: remainingNodeIds,
             anchorNodeId: nextAnchorNodeId ?? deleteField(),
+            ...(nextPortalPosition ? { portalX: nextPortalPosition.x, portalY: nextPortalPosition.y } : {}),
+            ...(nextAnchorPosition ? { portalAnchorX: nextAnchorPosition.x, portalAnchorY: nextAnchorPosition.y } : {}),
             updatedAt: serverTimestamp(),
           });
           if (editRefId === refId) {
@@ -2279,6 +2464,10 @@ export default function PlannerPage({ user }: PlannerPageProps) {
               ...target,
               nodeIds: remainingNodeIds,
               anchorNodeId: nextAnchorNodeId,
+              portalX: nextPortalPosition.x,
+              portalY: nextPortalPosition.y,
+              portalAnchorX: nextAnchorPosition?.x ?? target.portalAnchorX,
+              portalAnchorY: nextAnchorPosition?.y ?? target.portalAnchorY,
             });
           }
         } else {
@@ -2293,7 +2482,7 @@ export default function PlannerPage({ user }: PlannerPageProps) {
         setBusyAction(false);
       }
     },
-    [editRefId, hydrateRefEditor, refs, user.uid]
+    [editRefId, hydrateRefEditor, refs, resolveNodePosition, user.uid]
   );
 
   const jumpToReferencedNode = useCallback(
@@ -2312,10 +2501,27 @@ export default function PlannerPage({ user }: PlannerPageProps) {
 
       if (node.id.startsWith("portal:")) {
         const refId = node.id.replace("portal:", "");
+        const ref = refs.find((entry) => entry.id === refId);
+        const anchorNodeId = ref ? chooseAnchorNodeId(ref.nodeIds, ref.anchorNodeId) : null;
+        const anchorPosition = anchorNodeId ? resolveNodePosition(anchorNodeId) : null;
+        setRefs((previous) =>
+          previous.map((entry) =>
+            entry.id !== refId
+              ? entry
+              : {
+                  ...entry,
+                  portalX: node.position.x,
+                  portalY: node.position.y,
+                  portalAnchorX: anchorPosition?.x ?? entry.portalAnchorX,
+                  portalAnchorY: anchorPosition?.y ?? entry.portalAnchorY,
+                }
+          )
+        );
         try {
           await updateDoc(doc(db, "users", user.uid, "crossRefs", refId), {
             portalX: node.position.x,
             portalY: node.position.y,
+            ...(anchorPosition ? { portalAnchorX: anchorPosition.x, portalAnchorY: anchorPosition.y } : {}),
             updatedAt: serverTimestamp(),
           });
         } catch (actionError: unknown) {
@@ -2326,6 +2532,9 @@ export default function PlannerPage({ user }: PlannerPageProps) {
       }
 
       // Save regular node positions silently unless there is an error.
+      setNodes((previous) =>
+        previous.map((entry) => (entry.id === node.id ? { ...entry, x: node.position.x, y: node.position.y } : entry))
+      );
       try {
         await updateDoc(doc(db, "users", user.uid, "nodes", node.id), {
           x: node.position.x,
@@ -2337,7 +2546,7 @@ export default function PlannerPage({ user }: PlannerPageProps) {
         setError(actionError instanceof Error ? actionError.message : "Could not save node position.");
       }
     },
-    [showSaveError, user.uid]
+    [refs, resolveNodePosition, showSaveError, user.uid]
   );
 
   const onSelectionDragStop = useCallback(
@@ -2346,6 +2555,38 @@ export default function PlannerPage({ user }: PlannerPageProps) {
       const movedTreeNodes = draggedNodes.filter((entry) => !entry.id.startsWith("portal:"));
       const movedPortals = draggedNodes.filter((entry) => entry.id.startsWith("portal:"));
       if (movedTreeNodes.length === 0 && movedPortals.length === 0) return;
+      const movedTreePositions = new Map(movedTreeNodes.map((entry) => [entry.id, entry.position] as const));
+      if (movedTreePositions.size > 0) {
+        setNodes((previous) =>
+          previous.map((entry) => {
+            const next = movedTreePositions.get(entry.id);
+            return next ? { ...entry, x: next.x, y: next.y } : entry;
+          })
+        );
+      }
+      const portalRefUpdates = movedPortals.map((entry) => {
+        const refId = entry.id.replace("portal:", "");
+        const ref = refs.find((candidate) => candidate.id === refId);
+        const anchorNodeId = ref ? chooseAnchorNodeId(ref.nodeIds, ref.anchorNodeId) : null;
+        const anchorPosition = anchorNodeId ? resolveNodePosition(anchorNodeId) : null;
+        return { refId, position: entry.position, anchorPosition };
+      });
+      if (portalRefUpdates.length > 0) {
+        const byId = new Map(portalRefUpdates.map((entry) => [entry.refId, entry] as const));
+        setRefs((previous) =>
+          previous.map((entry) => {
+            const next = byId.get(entry.id);
+            if (!next) return entry;
+            return {
+              ...entry,
+              portalX: next.position.x,
+              portalY: next.position.y,
+              portalAnchorX: next.anchorPosition?.x ?? entry.portalAnchorX,
+              portalAnchorY: next.anchorPosition?.y ?? entry.portalAnchorY,
+            };
+          })
+        );
+      }
       try {
         let batch = writeBatch(db);
         let count = 0;
@@ -2362,11 +2603,11 @@ export default function PlannerPage({ user }: PlannerPageProps) {
             count = 0;
           }
         }
-        for (const entry of movedPortals) {
-          const refId = entry.id.replace("portal:", "");
-          batch.update(doc(db, "users", user.uid, "crossRefs", refId), {
+        for (const entry of portalRefUpdates) {
+          batch.update(doc(db, "users", user.uid, "crossRefs", entry.refId), {
             portalX: entry.position.x,
             portalY: entry.position.y,
+            ...(entry.anchorPosition ? { portalAnchorX: entry.anchorPosition.x, portalAnchorY: entry.anchorPosition.y } : {}),
             updatedAt: serverTimestamp(),
           });
           count += 1;
@@ -2384,7 +2625,7 @@ export default function PlannerPage({ user }: PlannerPageProps) {
         setError(actionError instanceof Error ? actionError.message : "Could not save node positions.");
       }
     },
-    [showSaveError, user.uid]
+    [refs, resolveNodePosition, showSaveError, user.uid]
   );
 
   // Context menu handlers
@@ -2474,9 +2715,15 @@ export default function PlannerPage({ user }: PlannerPageProps) {
               batch.delete(doc(db, "users", user.uid, "crossRefs", ref.id));
             } else {
               const nextAnchorNodeId = chooseAnchorNodeId(keep, ref.anchorNodeId);
+              const nextAnchorPosition = nextAnchorNodeId ? resolveNodePosition(nextAnchorNodeId) : null;
+              const nextPortalPosition = resolvePortalFollowPosition(ref, nextAnchorPosition, `${ref.id}:context-delete`);
               batch.update(doc(db, "users", user.uid, "crossRefs", ref.id), {
                 nodeIds: keep,
                 anchorNodeId: nextAnchorNodeId ?? deleteField(),
+                portalX: nextPortalPosition.x,
+                portalY: nextPortalPosition.y,
+                portalAnchorX: nextAnchorPosition?.x ?? deleteField(),
+                portalAnchorY: nextAnchorPosition?.y ?? deleteField(),
                 updatedAt: serverTimestamp(),
               });
             }
@@ -2496,7 +2743,7 @@ export default function PlannerPage({ user }: PlannerPageProps) {
         setBusyAction(false);
       }
     },
-    [childrenByParent, currentRootId, nodesById, refs, rootNodeId, selectedNodeId, user.uid]
+    [childrenByParent, currentRootId, nodesById, refs, resolveNodePosition, rootNodeId, selectedNodeId, user.uid]
   );
 
   const handleContextDuplicate = useCallback(
