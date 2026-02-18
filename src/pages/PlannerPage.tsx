@@ -69,6 +69,8 @@ type CrossRefDoc = {
   code: string;
   nodeIds: string[];
   anchorNodeId?: string;
+  portalX?: number;
+  portalY?: number;
   entityType?: EntityType;
   tags?: string[];
   notes?: string;
@@ -82,6 +84,8 @@ type CrossRef = {
   code: string;
   nodeIds: string[];
   anchorNodeId: string | null;
+  portalX: number | null;
+  portalY: number | null;
   entityType: EntityType;
   tags: string[];
   notes: string;
@@ -228,6 +232,23 @@ function chooseAnchorNodeId(nodeIds: string[], ...preferredIds: Array<string | n
     if (preferred && nodeIds.includes(preferred)) return preferred;
   }
   return nodeIds[0] || null;
+}
+
+function defaultPortalPositionForAnchor(anchor: TreeNode | undefined, seed: string): { x: number; y: number } {
+  const baseX = typeof anchor?.x === "number" ? anchor.x : 0;
+  const baseY = typeof anchor?.y === "number" ? anchor.y : 0;
+  let hash = 0;
+  for (let i = 0; i < seed.length; i += 1) {
+    hash = (hash << 5) - hash + seed.charCodeAt(i);
+    hash |= 0;
+  }
+  const angle = (((hash >>> 0) % 360) * Math.PI) / 180;
+  const radius = 96 + ((((hash >>> 8) & 0xff) / 255) * 96);
+  const wobble = getNudge(`${seed}:portal`, 16, 16);
+  return {
+    x: baseX + 140 - 23 + Math.cos(angle) * radius + wobble.x,
+    y: baseY + 60 - 23 + Math.sin(angle) * radius + wobble.y,
+  };
 }
 
 function timestampToMs(value: unknown): number {
@@ -619,6 +640,8 @@ export default function PlannerPage({ user }: PlannerPageProps) {
                 code: typeof value.code === "string" ? normalizeCode(value.code) : "REF",
                 nodeIds: asStringArray(value.nodeIds),
                 anchorNodeId: typeof value.anchorNodeId === "string" ? value.anchorNodeId : null,
+                portalX: typeof value.portalX === "number" ? value.portalX : null,
+                portalY: typeof value.portalY === "number" ? value.portalY : null,
                 entityType,
                 tags: asStringArray(value.tags),
                 notes: typeof value.notes === "string" ? value.notes : "",
@@ -1075,142 +1098,93 @@ export default function PlannerPage({ user }: PlannerPageProps) {
         const inView = validNodeIds.filter((id) => visibleTreeIdSet.has(id));
         const resolvedAnchorId = chooseAnchorNodeId(validNodeIds, ref.anchorNodeId);
         const anchorId = chooseAnchorNodeId(inView, resolvedAnchorId);
-        return { ref: { ...ref, anchorNodeId: resolvedAnchorId }, inView, anchorId };
+        const anchorNode = anchorId ? nodesById.get(anchorId) : undefined;
+        const position =
+          typeof ref.portalX === "number" && typeof ref.portalY === "number"
+            ? { x: ref.portalX, y: ref.portalY }
+            : defaultPortalPositionForAnchor(anchorNode, `${ref.id}:${anchorId || resolvedAnchorId || "none"}`);
+        return { ref: { ...ref, anchorNodeId: resolvedAnchorId }, inView, anchorId, position };
       })
-      .filter((entry): entry is { ref: CrossRef; inView: string[]; anchorId: string } => entry.inView.length > 0 && !!entry.anchorId)
+      .filter(
+        (entry): entry is { ref: CrossRef; inView: string[]; anchorId: string; position: { x: number; y: number } } =>
+          entry.inView.length > 0 && !!entry.anchorId
+      )
       .sort((a, b) => {
         if (a.anchorId !== b.anchorId) return a.anchorId.localeCompare(b.anchorId);
         return a.ref.code.localeCompare(b.ref.code) || a.ref.label.localeCompare(b.ref.label);
       });
   }, [nodesById, refs, visibleTreeIdSet]);
 
-  const nodeRectById = useMemo(() => {
-    const map = new Map<string, { x: number; y: number; width: number; height: number }>();
-    baseTreeNodes.forEach((node) => {
-      const style = (node.style || {}) as React.CSSProperties;
-      const width = typeof style.width === "number" ? style.width : 280;
-      const minHeight = typeof style.minHeight === "number" ? style.minHeight : undefined;
-      const height = minHeight || (typeof style.height === "number" ? style.height : 120);
-      map.set(node.id, {
-        x: node.position.x,
-        y: node.position.y,
-        width,
-        height,
-      });
-    });
-    return map;
-  }, [baseTreeNodes]);
+  useEffect(() => {
+    if (!db) return;
+    const refsMissingPortalPosition = visiblePortals.filter(
+      (entry) => typeof entry.ref.portalX !== "number" || typeof entry.ref.portalY !== "number"
+    );
+    if (refsMissingPortalPosition.length === 0) return;
+
+    let cancelled = false;
+    const persistMissingPositions = async () => {
+      try {
+        let batch = writeBatch(db);
+        let count = 0;
+        for (const entry of refsMissingPortalPosition) {
+          batch.update(doc(db, "users", user.uid, "crossRefs", entry.ref.id), {
+            portalX: entry.position.x,
+            portalY: entry.position.y,
+            updatedAt: serverTimestamp(),
+          });
+          count += 1;
+          if (count >= 450) {
+            await batch.commit();
+            if (cancelled) return;
+            batch = writeBatch(db);
+            count = 0;
+          }
+        }
+        if (!cancelled && count > 0) {
+          await batch.commit();
+        }
+      } catch {
+        // Silent best-effort migration for old bubbles without independent positions.
+      }
+    };
+
+    void persistMissingPositions();
+    return () => {
+      cancelled = true;
+    };
+  }, [db, user.uid, visiblePortals]);
 
   const basePortalNodes = useMemo(() => {
-    if (visiblePortals.length === 0) return [] as Node<PortalData>[];
-
-    const portalWidth = 46;
-    const portalHeight = 46;
-    const stackGap = 56;
-    const sideGap = 78;
-    const topBottomGap = 72;
-
-    const bounds = baseTreeNodes.reduce(
-      (acc, node) => {
-        acc.minX = Math.min(acc.minX, node.position.x);
-        acc.maxX = Math.max(acc.maxX, node.position.x);
-        acc.minY = Math.min(acc.minY, node.position.y);
-        acc.maxY = Math.max(acc.maxY, node.position.y);
-        return acc;
-      },
-      { minX: 0, maxX: 0, minY: 0, maxY: 0 }
-    );
-    const midX = (bounds.minX + bounds.maxX) / 2;
-    const midY = (bounds.minY + bounds.maxY) / 2;
-    const minY = bounds.minY - 70;
-    const maxY = bounds.maxY + 70;
-
-    const groupedByAnchor = new Map<string, typeof visiblePortals>();
-    visiblePortals.forEach((entry) => {
-      if (!groupedByAnchor.has(entry.anchorId)) groupedByAnchor.set(entry.anchorId, []);
-      groupedByAnchor.get(entry.anchorId)?.push(entry);
+    return visiblePortals.map((entry) => {
+      return {
+        id: `portal:${entry.ref.id}`,
+        type: "portal",
+        className: "planner-portal-node",
+        position: entry.position,
+        data: {
+          label: `${entry.ref.code}${entry.ref.nodeIds.length > 1 ? `·${entry.ref.nodeIds.length}` : ""}`,
+          title: `${entry.ref.label} (${entry.ref.nodeIds.length} links)`,
+        } satisfies PortalData,
+        style: {
+          width: 46,
+          height: 46,
+          borderRadius: 999,
+          border: "2px solid rgba(251, 146, 60, 0.85)",
+          background: "rgba(82, 36, 8, 0.9)",
+          color: "rgba(255, 235, 220, 0.97)",
+          fontSize: 11,
+          fontWeight: 800,
+          boxShadow: "0 10px 20px rgba(0,0,0,0.35)",
+          display: "grid",
+          placeItems: "center",
+          cursor: "grab",
+        } as React.CSSProperties,
+        draggable: true,
+        selectable: true,
+      } as Node<PortalData>;
     });
-
-    const occupied: Array<{ x: number; y: number; width: number; height: number }> = [];
-    const nodes: Node<PortalData>[] = [];
-    Array.from(groupedByAnchor.entries()).forEach(([anchorId, entries]) => {
-      const anchorRect = nodeRectById.get(anchorId) || {
-        x: resolveNodePosition(anchorId).x,
-        y: resolveNodePosition(anchorId).y,
-        width: 280,
-        height: 120,
-      };
-      const stackHeight = (entries.length - 1) * stackGap;
-      const nudge = getNudge(anchorId, 10, 6);
-      const stackX = anchorRect.x + anchorRect.width / 2 - portalWidth / 2 + nudge.x;
-      const placeBelow = anchorRect.y <= midY;
-      let stackStartY = placeBelow
-        ? anchorRect.y + anchorRect.height + topBottomGap
-        : anchorRect.y - topBottomGap - stackHeight - portalHeight;
-      stackStartY += nudge.y;
-      if (stackStartY < minY) stackStartY = minY;
-      if (stackStartY + stackHeight + portalHeight > maxY) stackStartY = maxY - stackHeight - portalHeight;
-
-      const sideX = anchorRect.x + (anchorRect.x >= midX ? -(sideGap + portalWidth) : anchorRect.width + sideGap);
-      let sideStartY = anchorRect.y + anchorRect.height / 2 - stackHeight / 2 + nudge.y;
-      if (sideStartY < minY) sideStartY = minY;
-      if (sideStartY + stackHeight + portalHeight > maxY) sideStartY = maxY - stackHeight - portalHeight;
-
-      entries.forEach((entry, index) => {
-        const offsetNudge = getNudge(entry.ref.id, 6, 4);
-        let x = stackX + offsetNudge.x;
-        let y = stackStartY + index * stackGap + offsetNudge.y;
-        const overlapsAnchor = !(
-          x + portalWidth < anchorRect.x ||
-          x > anchorRect.x + anchorRect.width ||
-          y + portalHeight < anchorRect.y ||
-          y > anchorRect.y + anchorRect.height
-        );
-        if (overlapsAnchor) {
-          x = sideX + offsetNudge.x;
-          y = sideStartY + index * stackGap + offsetNudge.y;
-        }
-
-        let guard = 0;
-        while (
-          occupied.some((box) => !(x + portalWidth < box.x || x > box.x + box.width || y + portalHeight < box.y || y > box.y + box.height)) &&
-          guard < 10
-        ) {
-          y += stackGap * 0.7;
-          guard += 1;
-        }
-        occupied.push({ x, y, width: portalWidth, height: portalHeight });
-
-        nodes.push({
-          id: `portal:${entry.ref.id}`,
-          type: "portal",
-          className: "planner-portal-node",
-          position: { x, y },
-          data: {
-            label: `${entry.ref.code}${entry.ref.nodeIds.length > 1 ? `·${entry.ref.nodeIds.length}` : ""}`,
-            title: `${entry.ref.label} (${entry.ref.nodeIds.length} links)`,
-          } satisfies PortalData,
-          style: {
-            width: portalWidth,
-            height: portalHeight,
-            borderRadius: 999,
-            border: "2px solid rgba(251, 146, 60, 0.85)",
-            background: "rgba(82, 36, 8, 0.9)",
-            color: "rgba(255, 235, 220, 0.97)",
-            fontSize: 11,
-            fontWeight: 800,
-            boxShadow: "0 10px 20px rgba(0,0,0,0.35)",
-            display: "grid",
-            placeItems: "center",
-            cursor: "pointer",
-          } as React.CSSProperties,
-          draggable: false,
-          selectable: true,
-        } as Node<PortalData>);
-      });
-    });
-    return nodes;
-  }, [baseTreeNodes, nodeRectById, resolveNodePosition, visiblePortals]);
+  }, [visiblePortals]);
 
   const basePortalEdges = useMemo(() => {
     return visiblePortals.flatMap((entry) =>
@@ -1569,6 +1543,14 @@ export default function PlannerPage({ user }: PlannerPageProps) {
     setEditRefLinks(ref.links.join("\n"));
     setMergeFromRefId("");
   }, []);
+
+  const buildDefaultPortalPosition = useCallback(
+    (anchorNodeId: string | null, seed: string) => {
+      if (!anchorNodeId) return null;
+      return defaultPortalPositionForAnchor(nodesById.get(anchorNodeId), `${seed}:${anchorNodeId}`);
+    },
+    [nodesById]
+  );
 
   const goGrandmotherView = useCallback(() => {
     if (!rootNodeId) return;
@@ -1949,12 +1931,17 @@ export default function PlannerPage({ user }: PlannerPageProps) {
       const linked = refs.find((entry) => entry.id === refId);
       const nextNodeIds = linked ? (linked.nodeIds.includes(nodeId) ? linked.nodeIds : [...linked.nodeIds, nodeId]) : [nodeId];
       const nextAnchorNodeId = chooseAnchorNodeId(nextNodeIds, linked?.anchorNodeId, nodeId);
+      const nextPortalPosition =
+        linked && typeof linked.portalX === "number" && typeof linked.portalY === "number"
+          ? { x: linked.portalX, y: linked.portalY }
+          : buildDefaultPortalPosition(nextAnchorNodeId, refId);
       setBusyAction(true);
       setError(null);
       try {
         await updateDoc(doc(db, "users", user.uid, "crossRefs", refId), {
           nodeIds: arrayUnion(nodeId),
           anchorNodeId: nextAnchorNodeId ?? deleteField(),
+          ...(nextPortalPosition ? { portalX: nextPortalPosition.x, portalY: nextPortalPosition.y } : {}),
           updatedAt: serverTimestamp(),
         });
         if (linked) {
@@ -1962,6 +1949,8 @@ export default function PlannerPage({ user }: PlannerPageProps) {
             ...linked,
             nodeIds: nextNodeIds,
             anchorNodeId: nextAnchorNodeId,
+            portalX: nextPortalPosition?.x ?? linked.portalX,
+            portalY: nextPortalPosition?.y ?? linked.portalY,
           });
         }
         setActivePortalRefId(refId);
@@ -1973,7 +1962,7 @@ export default function PlannerPage({ user }: PlannerPageProps) {
         setBusyAction(false);
       }
     },
-    [hydrateRefEditor, refs, user.uid]
+    [buildDefaultPortalPosition, hydrateRefEditor, refs, user.uid]
   );
 
   const createCrossRef = useCallback(async () => {
@@ -1992,9 +1981,14 @@ export default function PlannerPage({ user }: PlannerPageProps) {
           ? existingExact.nodeIds
           : [...existingExact.nodeIds, selectedNodeId];
         const nextAnchorNodeId = chooseAnchorNodeId(nextNodeIds, existingExact.anchorNodeId, selectedNodeId);
+        const nextPortalPosition =
+          typeof existingExact.portalX === "number" && typeof existingExact.portalY === "number"
+            ? { x: existingExact.portalX, y: existingExact.portalY }
+            : buildDefaultPortalPosition(nextAnchorNodeId, existingExact.id);
         await updateDoc(doc(db, "users", user.uid, "crossRefs", existingExact.id), {
           nodeIds: arrayUnion(selectedNodeId),
           anchorNodeId: nextAnchorNodeId ?? deleteField(),
+          ...(nextPortalPosition ? { portalX: nextPortalPosition.x, portalY: nextPortalPosition.y } : {}),
           entityType: existingExact.entityType === "entity" ? newRefType : existingExact.entityType,
           updatedAt: serverTimestamp(),
         });
@@ -2002,16 +1996,20 @@ export default function PlannerPage({ user }: PlannerPageProps) {
           ...existingExact,
           nodeIds: nextNodeIds,
           anchorNodeId: nextAnchorNodeId,
+          portalX: nextPortalPosition?.x ?? existingExact.portalX,
+          portalY: nextPortalPosition?.y ?? existingExact.portalY,
           entityType: existingExact.entityType === "entity" ? newRefType : existingExact.entityType,
         });
         setActivePortalRefId(existingExact.id);
       } else {
         const newDoc = doc(collection(db, "users", user.uid, "crossRefs"));
+        const portalPosition = buildDefaultPortalPosition(selectedNodeId, newDoc.id);
         await setDoc(doc(db, "users", user.uid, "crossRefs", newDoc.id), {
           label,
           code,
           nodeIds: [selectedNodeId],
           anchorNodeId: selectedNodeId,
+          ...(portalPosition ? { portalX: portalPosition.x, portalY: portalPosition.y } : {}),
           entityType: newRefType,
           tags: [],
           notes: "",
@@ -2026,6 +2024,8 @@ export default function PlannerPage({ user }: PlannerPageProps) {
           code,
           nodeIds: [selectedNodeId],
           anchorNodeId: selectedNodeId,
+          portalX: portalPosition?.x ?? null,
+          portalY: portalPosition?.y ?? null,
           entityType: newRefType,
           tags: [],
           notes: "",
@@ -2044,7 +2044,7 @@ export default function PlannerPage({ user }: PlannerPageProps) {
     } finally {
       setBusyAction(false);
     }
-  }, [hydrateRefEditor, newRefCode, newRefLabel, newRefType, refs, selectedNodeId, user.uid]);
+  }, [buildDefaultPortalPosition, hydrateRefEditor, newRefCode, newRefLabel, newRefType, refs, selectedNodeId, user.uid]);
 
   const duplicateCrossRef = useCallback(
     async (refId: string) => {
@@ -2060,6 +2060,10 @@ export default function PlannerPage({ user }: PlannerPageProps) {
       }
       const duplicateNodeIds = Array.from(new Set(source.nodeIds));
       const duplicateAnchorNodeId = chooseAnchorNodeId(duplicateNodeIds, source.anchorNodeId);
+      const duplicatePortalPosition =
+        typeof source.portalX === "number" && typeof source.portalY === "number"
+          ? { x: source.portalX + 34, y: source.portalY + 34 }
+          : buildDefaultPortalPosition(duplicateAnchorNodeId, `${source.id}:copy:${duplicateLabel}`);
       setBusyAction(true);
       setError(null);
       try {
@@ -2069,6 +2073,7 @@ export default function PlannerPage({ user }: PlannerPageProps) {
           code: source.code,
           nodeIds: duplicateNodeIds,
           ...(duplicateAnchorNodeId ? { anchorNodeId: duplicateAnchorNodeId } : {}),
+          ...(duplicatePortalPosition ? { portalX: duplicatePortalPosition.x, portalY: duplicatePortalPosition.y } : {}),
           entityType: source.entityType,
           tags: source.tags,
           notes: source.notes,
@@ -2084,6 +2089,8 @@ export default function PlannerPage({ user }: PlannerPageProps) {
           label: duplicateLabel,
           nodeIds: duplicateNodeIds,
           anchorNodeId: duplicateAnchorNodeId,
+          portalX: duplicatePortalPosition?.x ?? null,
+          portalY: duplicatePortalPosition?.y ?? null,
           createdAtMs: 0,
           updatedAtMs: 0,
         });
@@ -2093,7 +2100,7 @@ export default function PlannerPage({ user }: PlannerPageProps) {
         setBusyAction(false);
       }
     },
-    [hydrateRefEditor, refs, user.uid]
+    [buildDefaultPortalPosition, hydrateRefEditor, refs, user.uid]
   );
 
   const saveCrossRefEdits = useCallback(async () => {
@@ -2145,6 +2152,12 @@ export default function PlannerPage({ user }: PlannerPageProps) {
     const mergedContact = primary.contact.trim() || duplicate.contact.trim();
     const mergedType = primary.entityType !== "entity" ? primary.entityType : duplicate.entityType;
     const mergedAnchorNodeId = chooseAnchorNodeId(mergedNodeIds, primary.anchorNodeId, duplicate.anchorNodeId);
+    const mergedPortalPosition =
+      typeof primary.portalX === "number" && typeof primary.portalY === "number"
+        ? { x: primary.portalX, y: primary.portalY }
+        : typeof duplicate.portalX === "number" && typeof duplicate.portalY === "number"
+          ? { x: duplicate.portalX, y: duplicate.portalY }
+          : buildDefaultPortalPosition(mergedAnchorNodeId, primary.id);
 
     setBusyAction(true);
     setError(null);
@@ -2153,6 +2166,7 @@ export default function PlannerPage({ user }: PlannerPageProps) {
       batch.update(doc(db, "users", user.uid, "crossRefs", primary.id), {
         nodeIds: mergedNodeIds,
         anchorNodeId: mergedAnchorNodeId ?? deleteField(),
+        ...(mergedPortalPosition ? { portalX: mergedPortalPosition.x, portalY: mergedPortalPosition.y } : {}),
         tags: mergedTags,
         links: mergedLinks,
         notes: mergedNotes,
@@ -2171,6 +2185,8 @@ export default function PlannerPage({ user }: PlannerPageProps) {
         ...primary,
         nodeIds: mergedNodeIds,
         anchorNodeId: mergedAnchorNodeId,
+        portalX: mergedPortalPosition?.x ?? primary.portalX,
+        portalY: mergedPortalPosition?.y ?? primary.portalY,
         tags: mergedTags,
         links: mergedLinks,
         notes: mergedNotes,
@@ -2182,7 +2198,7 @@ export default function PlannerPage({ user }: PlannerPageProps) {
     } finally {
       setBusyAction(false);
     }
-  }, [activePortalRefId, editRefId, hydrateRefEditor, mergeFromRefId, refs, user.uid]);
+  }, [activePortalRefId, buildDefaultPortalPosition, editRefId, hydrateRefEditor, mergeFromRefId, refs, user.uid]);
 
   const deleteCrossRefBubble = useCallback(async () => {
     if (!db || !editRefId) return;
@@ -2279,8 +2295,18 @@ export default function PlannerPage({ user }: PlannerPageProps) {
     async (_: React.MouseEvent, node: Node) => {
       if (!db) return;
 
-      // Only save tree node positions (not portals)
       if (node.id.startsWith("portal:")) {
+        const refId = node.id.replace("portal:", "");
+        try {
+          await updateDoc(doc(db, "users", user.uid, "crossRefs", refId), {
+            portalX: node.position.x,
+            portalY: node.position.y,
+            updatedAt: serverTimestamp(),
+          });
+        } catch (actionError: unknown) {
+          showSaveError();
+          setError(actionError instanceof Error ? actionError.message : "Could not save bubble position.");
+        }
         return;
       }
 
@@ -2303,7 +2329,8 @@ export default function PlannerPage({ user }: PlannerPageProps) {
     async (_: React.MouseEvent, draggedNodes: Node[]) => {
       if (!db) return;
       const movedTreeNodes = draggedNodes.filter((entry) => !entry.id.startsWith("portal:"));
-      if (movedTreeNodes.length === 0) return;
+      const movedPortals = draggedNodes.filter((entry) => entry.id.startsWith("portal:"));
+      if (movedTreeNodes.length === 0 && movedPortals.length === 0) return;
       try {
         let batch = writeBatch(db);
         let count = 0;
@@ -2311,6 +2338,20 @@ export default function PlannerPage({ user }: PlannerPageProps) {
           batch.update(doc(db, "users", user.uid, "nodes", entry.id), {
             x: entry.position.x,
             y: entry.position.y,
+            updatedAt: serverTimestamp(),
+          });
+          count += 1;
+          if (count >= 450) {
+            await batch.commit();
+            batch = writeBatch(db);
+            count = 0;
+          }
+        }
+        for (const entry of movedPortals) {
+          const refId = entry.id.replace("portal:", "");
+          batch.update(doc(db, "users", user.uid, "crossRefs", refId), {
+            portalX: entry.position.x,
+            portalY: entry.position.y,
             updatedAt: serverTimestamp(),
           });
           count += 1;
