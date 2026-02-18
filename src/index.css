@@ -173,6 +173,62 @@ textarea {
   cursor: not-allowed;
 }
 
+/* "Forgot password?" subtle link below the password field */
+.auth-forgot-link {
+  align-self: flex-end;
+  background: none;
+  border: none;
+  padding: 0;
+  margin-top: -6px;
+  font-size: 11.5px;
+  color: rgba(125, 211, 252, 0.75);
+  cursor: pointer;
+  text-decoration: underline;
+  text-underline-offset: 2px;
+  transition: color 120ms ease;
+}
+.auth-forgot-link:hover {
+  color: rgba(186, 230, 253, 0.95);
+}
+
+/* "← Back to sign in" ghost link button inside forgot form */
+.auth-link-btn {
+  background: none;
+  border: none;
+  padding: 4px 0;
+  font-size: 11.5px;
+  color: rgba(148, 163, 184, 0.8);
+  cursor: pointer;
+  text-align: center;
+  transition: color 120ms ease;
+}
+.auth-link-btn:hover {
+  color: rgba(203, 213, 225, 0.95);
+}
+
+/* Success state after sending reset email */
+.auth-reset-success {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  margin-top: 12px;
+}
+.auth-reset-success p {
+  margin: 0;
+  font-size: 13px;
+  color: rgba(187, 247, 208, 0.95);
+}
+.auth-reset-success strong {
+  color: rgba(134, 239, 172, 1);
+}
+.auth-reset-hint {
+  font-size: 11.5px !important;
+  color: rgba(148, 163, 184, 0.85) !important;
+}
+.auth-reset-success .auth-submit {
+  margin-top: 6px;
+}
+
 .planner-shell {
   height: 100%;
   display: grid;

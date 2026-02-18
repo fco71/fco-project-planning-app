@@ -3,6 +3,7 @@ import React, { createContext, useContext, useEffect, useMemo, useState } from "
 import {
   createUserWithEmailAndPassword,
   onAuthStateChanged,
+  sendPasswordResetEmail,
   signInWithEmailAndPassword,
   signOut as fbSignOut,
   updateProfile,
@@ -19,6 +20,7 @@ export type AuthState = {
   signIn: (email: string, password: string) => Promise<void>;
   signUp: (displayName: string, email: string, password: string) => Promise<void>;
   signOut: () => Promise<void>;
+  sendPasswordReset: (email: string) => Promise<void>;
 };
 
 const Ctx = createContext<AuthState | null>(null);
@@ -83,6 +85,14 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
     await fbSignOut(auth);
   }
 
+  async function sendPasswordReset(email: string) {
+    if (offlineMode) return;
+    if (!envOk || !auth) {
+      throw new Error(`Firebase env missing: ${missingEnv.join(", ")}`);
+    }
+    await sendPasswordResetEmail(auth, email.trim());
+  }
+
   const value = useMemo<AuthState>(
     () => ({
       user,
@@ -92,6 +102,7 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
       signIn,
       signUp,
       signOut,
+      sendPasswordReset,
     }),
     [user, loading]
   );
