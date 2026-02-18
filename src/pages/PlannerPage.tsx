@@ -1187,11 +1187,14 @@ export default function PlannerPage({ user }: PlannerPageProps) {
       });
   }, [filteredTreeIds, nodesById]);
 
+  const filteredTreeIdSet = useMemo(() => new Set(filteredTreeIds), [filteredTreeIds]);
+
   const visiblePortals = useMemo(() => {
     return refs
       .map((ref) => {
         const validNodeIds = ref.nodeIds.filter((id) => nodesById.has(id));
-        const inView = validNodeIds.filter((id) => visibleTreeIdSet.has(id));
+        // Use filteredTreeIdSet (collapse-aware) so bubbles on collapsed nodes disappear properly
+        const inView = validNodeIds.filter((id) => filteredTreeIdSet.has(id));
         const resolvedAnchorId = chooseAnchorNodeId(validNodeIds, ref.anchorNodeId);
         const anchorId = chooseAnchorNodeId(inView, resolvedAnchorId);
         const anchorPosition = anchorId ? resolveNodePosition(anchorId) : null;
@@ -1212,7 +1215,7 @@ export default function PlannerPage({ user }: PlannerPageProps) {
         if (a.anchorId !== b.anchorId) return a.anchorId.localeCompare(b.anchorId);
         return a.ref.code.localeCompare(b.ref.code) || a.ref.label.localeCompare(b.ref.label);
       });
-  }, [nodesById, refs, resolveNodePosition, visibleTreeIdSet]);
+  }, [filteredTreeIdSet, nodesById, refs, resolveNodePosition]);
 
   useEffect(() => {
     if (!db) return;
@@ -1462,6 +1465,9 @@ export default function PlannerPage({ user }: PlannerPageProps) {
 
   const [displayNodes, setDisplayNodes] = useState<Node[]>([]);
   const draggingNodeIdsRef = useRef<Set<string>>(new Set());
+  // Keep a ref to visiblePortals so handleNodesChange can compute portal follow without state cascade
+  const visiblePortalsRef = useRef(visiblePortals);
+  useEffect(() => { visiblePortalsRef.current = visiblePortals; }, [visiblePortals]);
 
   useEffect(() => {
     setDisplayNodes((previous) => {
@@ -1491,11 +1497,29 @@ export default function PlannerPage({ user }: PlannerPageProps) {
       }
     });
     draggingNodeIdsRef.current = draggingIds;
-    setDisplayNodes((nds) => applyNodeChanges(changes, nds));
-    if (Object.keys(livePositionUpdates).length > 0) {
-      setLiveNodePositions((previous) => {
-        return { ...previous, ...livePositionUpdates };
+
+    // Apply node changes and also update portal positions inline to avoid a second render
+    setDisplayNodes((nds) => {
+      const updated = applyNodeChanges(changes, nds);
+      if (Object.keys(livePositionUpdates).length === 0) return updated;
+      // For each portal, if its anchor is being dragged, shift portal by the same delta
+      const posById = new Map(updated.map((n) => [n.id, n.position] as const));
+      return updated.map((node) => {
+        if (!node.id.startsWith("portal:")) return node;
+        const entry = visiblePortalsRef.current.find((p) => `portal:${p.ref.id}` === node.id);
+        if (!entry) return node;
+        const newAnchorPos = livePositionUpdates[entry.anchorId];
+        if (!newAnchorPos) return node;
+        const anchorNode = posById.get(entry.anchorId);
+        if (!anchorNode) return node;
+        const dx = newAnchorPos.x - entry.anchorPosition.x;
+        const dy = newAnchorPos.y - entry.anchorPosition.y;
+        return { ...node, position: { x: node.position.x + dx, y: node.position.y + dy } };
       });
+    });
+
+    if (Object.keys(livePositionUpdates).length > 0) {
+      setLiveNodePositions((previous) => ({ ...previous, ...livePositionUpdates }));
     }
   }, []);
 
@@ -3628,96 +3652,47 @@ export default function PlannerPage({ user }: PlannerPageProps) {
 
         {showBubblesSection ? (
         <div className="planner-panel-block">
-          <h3>Cross-Reference Bubbles</h3>
+          <h3>Bubbles</h3>
           <p className="planner-subtle">
-            Use these for shared entities across branches (e.g., vendor, partner, person).
+            Shared entities across branches — vendor, partner, person, etc.
           </p>
-          <p className="planner-subtle">
-            Anchor node: <strong>{selectedNode ? buildNodePath(selectedNode.id, nodesById) : "Select a node first"}</strong>
-          </p>
-          <div className="planner-row-label">Bubble motion tuning</div>
-          <div className="planner-reference-item">
-            <label className="planner-subtle" htmlFor="bubble-repulsion-strength">
-              Repulsion strength: {bubbleRepulsionStrength.toFixed(2)}
-            </label>
-            <input
-              id="bubble-repulsion-strength"
-              type="range"
-              min={0.2}
-              max={1.3}
-              step={0.05}
-              value={bubbleRepulsionStrength}
-              onChange={(event) => {
-                const next = Number(event.target.value);
-                if (!Number.isFinite(next)) return;
-                setBubbleRepulsionStrength(clampNumber(next, 0.2, 1.3));
-              }}
-            />
-            <label className="planner-subtle" htmlFor="bubble-max-drift">
-              Max drift: {bubbleMaxDriftPx}px
-            </label>
-            <input
-              id="bubble-max-drift"
-              type="range"
-              min={8}
-              max={96}
-              step={2}
-              value={bubbleMaxDriftPx}
-              onChange={(event) => {
-                const next = Number(event.target.value);
-                if (!Number.isFinite(next)) return;
-                setBubbleMaxDriftPx(clampNumber(Math.round(next), 8, 96));
-              }}
-            />
-            <div className="planner-inline-buttons">
-              <button
-                onClick={() => {
-                  setBubbleRepulsionStrength(0.55);
-                  setBubbleMaxDriftPx(34);
-                }}
-                disabled={busyAction || (Math.abs(bubbleRepulsionStrength - 0.55) < 0.001 && bubbleMaxDriftPx === 34)}
-              >
-                Reset motion
-              </button>
-              <button
-                onClick={() => {
-                  setBubbleRepulsionStrength((value) => clampNumber(value - 0.1, 0.2, 1.3));
-                }}
-                disabled={busyAction}
-              >
-                Softer
-              </button>
-            </div>
+
+          {/* ── CREATE / ATTACH ── */}
+          <div className="planner-row-label">
+            {selectedNode ? `Attach to: ${selectedNode.title}` : "Select a node to attach"}
           </div>
           <input
             ref={newRefLabelInputRef}
             value={newRefLabel}
             onChange={(event) => setNewRefLabel(event.target.value)}
-            placeholder="Reference name (e.g., Vendor, Partner, Person)"
+            placeholder="Name (e.g., Mario Pinto, ACME Corp)"
           />
-          <input
-            value={newRefCode}
-            onChange={(event) => setNewRefCode(event.target.value)}
-            placeholder="Bubble code (optional, e.g., VN)"
-          />
-          <select value={newRefType} onChange={(event) => setNewRefType(event.target.value as EntityType)}>
-            {ENTITY_TYPE_GROUPS.map((group) => (
-              <optgroup key={group.label} label={group.label}>
-                {group.options.map((entityType) => (
-                  <option key={entityType} value={entityType}>
-                    {entityType}
-                  </option>
-                ))}
-              </optgroup>
-            ))}
-          </select>
+          <div className="planner-inline-buttons">
+            <input
+              value={newRefCode}
+              onChange={(event) => setNewRefCode(event.target.value)}
+              placeholder="Code (e.g., MP)"
+              style={{ flex: 1 }}
+            />
+            <select value={newRefType} onChange={(event) => setNewRefType(event.target.value as EntityType)} style={{ flex: 1 }}>
+              {ENTITY_TYPE_GROUPS.map((group) => (
+                <optgroup key={group.label} label={group.label}>
+                  {group.options.map((entityType) => (
+                    <option key={entityType} value={entityType}>
+                      {entityType}
+                    </option>
+                  ))}
+                </optgroup>
+              ))}
+            </select>
+          </div>
           <button onClick={createCrossRef} disabled={busyAction || !selectedNodeId || newRefLabel.trim().length === 0}>
-            Create bubble and attach to selected
+            Create and attach to selected
           </button>
 
           {newRefSuggestions.length > 0 ? (
             <>
-              <div className="planner-row-label">Attach an existing bubble</div>
+              <div className="planner-row-label">Or attach existing</div>
               <div className="planner-chip-list">
                 {newRefSuggestions.map((ref) => (
                   <button
@@ -3729,104 +3704,98 @@ export default function PlannerPage({ user }: PlannerPageProps) {
                     }}
                     title={describeRefTargets(ref, 4)}
                   >
-                    {`${ref.code} - ${ref.label} (${ref.entityType})`}
+                    {`${ref.code} — ${ref.label}`}
                   </button>
                 ))}
               </div>
             </>
           ) : null}
 
-          <div className="planner-row-label">Attached to selected node</div>
+          {/* ── ON SELECTED NODE ── */}
+          <div className="planner-row-label">On selected node</div>
           <div className="planner-chip-list">
             {selectedNodeRefs.length === 0 || !selectedNodeId ? (
-              <span className="planner-subtle">No bubbles attached to selected node.</span>
+              <span className="planner-subtle">None attached.</span>
             ) : (
               selectedNodeRefs.map((ref) => (
                 <div key={ref.id} className="chip with-action">
                   <button
                     onClick={() => selectRefForEditing(ref.id)}
                     title={describeRefTargets(ref, 4)}
-                  >{`${ref.code} - ${ref.label} (${ref.nodeIds.length})`}</button>
+                  >{`${ref.code} — ${ref.label}`}</button>
                   <button
                     className="chip-action"
                     onClick={() => detachCrossRef(ref.id, selectedNodeId)}
                     title="Detach from selected node"
                   >
-                    x
+                    ×
                   </button>
                 </div>
               ))
             )}
           </div>
 
-          <div className="planner-row-label">Active bubble</div>
-          <select
-            value={editRefId}
-            onChange={(event) => {
-              const refId = event.target.value;
-              if (!refId) {
-                hydrateRefEditor(null);
-                setActivePortalRefId(null);
-                setLinkNodeQuery("");
-                setLinkTargetNodeId("");
-                return;
-              }
-              selectRefForEditing(refId);
-            }}
-          >
-            <option value="">Select active bubble...</option>
-            {refs.map((ref) => (
-              <option key={ref.id} value={ref.id}>
-                {`${ref.code} - ${ref.label} (${ref.nodeIds.length})`}
-              </option>
-            ))}
-          </select>
-          <div className="planner-inline-buttons">
-            <button
-              onClick={() => {
-                if (!editRefId) return;
-                void duplicateCrossRef(editRefId);
-              }}
-              disabled={busyAction || !editRefId}
-            >
-              Duplicate active
-            </button>
-            <button
-              onClick={() => {
-                if (!editRefId || !selectedNodeId) return;
-                if (editedRefLinkedOnSelected) {
-                  void detachCrossRef(editRefId, selectedNodeId);
-                } else {
-                  void linkCrossRefToNode(editRefId, selectedNodeId);
-                }
-              }}
-              disabled={busyAction || !editRefId || !selectedNodeId}
-            >
-              {!selectedNodeId
-                ? "Select node first"
-                : editedRefLinkedOnSelected
-                  ? "Unlink active"
-                  : "Link active"}
-            </button>
-          </div>
-
-          <details className="planner-advanced-tools">
-            <summary>Open bubble manager</summary>
-            <div className="planner-advanced-tools-content">
-              <div className="planner-row-label">Bubble scope</div>
-              <div className="planner-filter-toggle">
+          {/* ── ACTIVE BUBBLE (set by clicking on canvas or selecting here) ── */}
+          {activePortalRef ? (
+            <div className="planner-panel-block" style={{ marginTop: 8, padding: "10px 12px" }}>
+              <div style={{ fontWeight: 700, fontSize: 13, marginBottom: 4 }}>
+                {`${activePortalRef.code} — ${activePortalRef.label}`}
+                <span className="planner-kind-badge" style={{ marginLeft: 6 }}>{activePortalRef.entityType}</span>
+              </div>
+              {activePortalRef.contact ? <p className="planner-subtle" style={{ margin: "2px 0" }}>{activePortalRef.contact}</p> : null}
+              {activePortalRef.notes ? <p className="planner-subtle" style={{ margin: "2px 0" }}>{activePortalRef.notes}</p> : null}
+              {activePortalRef.links.length > 0 ? (
+                <div style={{ margin: "4px 0" }}>
+                  {activePortalRef.links.map((url) => (
+                    <a key={url} href={url} target="_blank" rel="noreferrer" style={{ display: "block", fontSize: 11, wordBreak: "break-all" }}>
+                      {url}
+                    </a>
+                  ))}
+                </div>
+              ) : null}
+              <div className="planner-row-label" style={{ marginTop: 6 }}>Linked nodes</div>
+              <div className="planner-reference-list">
+                {activePortalTargets.map((target) => (
+                  <button key={target.id} onClick={() => jumpToReferencedNode(target.id)}>
+                    {buildNodePath(target.id, nodesById)}
+                  </button>
+                ))}
+              </div>
+              <div className="planner-inline-buttons" style={{ marginTop: 6 }}>
                 <button
-                  type="button"
-                  className={refScopeFilter === "view" ? "active" : ""}
-                  onClick={() => setRefScopeFilter("view")}
+                  onClick={() => {
+                    if (!selectedNodeId) return;
+                    if (activePortalRef.nodeIds.includes(selectedNodeId)) {
+                      void detachCrossRef(activePortalRef.id, selectedNodeId);
+                    } else {
+                      void linkCrossRefToNode(activePortalRef.id, selectedNodeId);
+                    }
+                  }}
+                  disabled={busyAction || !selectedNodeId}
                 >
-                  Current view
+                  {!selectedNodeId ? "Select node" : activePortalRef.nodeIds.includes(selectedNodeId) ? "Unlink selected" : "Link to selected"}
                 </button>
                 <button
-                  type="button"
-                  className={refScopeFilter === "all" ? "active" : ""}
-                  onClick={() => setRefScopeFilter("all")}
+                  onClick={() => {
+                    selectRefForEditing(activePortalRef.id);
+                  }}
+                  disabled={busyAction}
                 >
+                  Edit bubble
+                </button>
+              </div>
+            </div>
+          ) : null}
+
+          {/* ── BUBBLE MANAGER (full list + edit) ── */}
+          <details className="planner-advanced-tools">
+            <summary>Manage all bubbles ({refs.length})</summary>
+            <div className="planner-advanced-tools-content">
+              <div className="planner-filter-toggle">
+                <button type="button" className={refScopeFilter === "view" ? "active" : ""} onClick={() => setRefScopeFilter("view")}>
+                  This view
+                </button>
+                <button type="button" className={refScopeFilter === "all" ? "active" : ""} onClick={() => setRefScopeFilter("all")}>
                   All
                 </button>
                 <button
@@ -3834,27 +3803,25 @@ export default function PlannerPage({ user }: PlannerPageProps) {
                   className={refCategoryFilter === "people" ? "active" : ""}
                   onClick={() => setRefCategoryFilter(refCategoryFilter === "people" ? "all" : "people")}
                 >
-                  People only
+                  People
                 </button>
               </div>
-
-              <div className="planner-row-label">All bubbles</div>
               <input
                 value={refSearchQuery}
                 onChange={(event) => setRefSearchQuery(event.target.value)}
-                placeholder="Search bubbles by code or name..."
+                placeholder="Search bubbles..."
               />
               <div className="planner-reference-list">
                 {filteredRefs.length === 0 ? (
                   <span className="planner-subtle">
-                    {refs.length === 0 ? "No bubbles created yet." : "No bubbles match this view/filter."}
+                    {refs.length === 0 ? "No bubbles yet." : "No matches."}
                   </span>
                 ) : (
                   filteredRefs.map((ref) => {
                     const linkedOnSelected = selectedNodeId ? selectedNodeRefIds.has(ref.id) : false;
                     return (
                       <div key={ref.id} className="planner-reference-item">
-                        <button onClick={() => selectRefForEditing(ref.id)}>{`${ref.code} - ${ref.label}`}</button>
+                        <button onClick={() => selectRefForEditing(ref.id)}>{`${ref.code} — ${ref.label}`}</button>
                         <div className="planner-reference-preview">{describeRefLibraryPreview(ref)}</div>
                         <div className="planner-reference-actions">
                           <button
@@ -3868,11 +3835,7 @@ export default function PlannerPage({ user }: PlannerPageProps) {
                             }}
                             disabled={busyAction || !selectedNodeId}
                           >
-                            {!selectedNodeId
-                              ? "Select node first"
-                              : linkedOnSelected
-                                ? "Unlink selected"
-                                : "Link to selected"}
+                            {!selectedNodeId ? "Select node" : linkedOnSelected ? "Unlink" : "Link to selected"}
                           </button>
                         </div>
                       </div>
@@ -3881,187 +3844,178 @@ export default function PlannerPage({ user }: PlannerPageProps) {
                 )}
               </div>
 
-              <div className="planner-row-label">Edit active bubble</div>
-              <input
-                value={editRefLabel}
-                onChange={(event) => setEditRefLabel(event.target.value)}
-                placeholder="Bubble name"
-                disabled={!editRefId}
-              />
-              <input
-                value={editRefCode}
-                onChange={(event) => setEditRefCode(event.target.value)}
-                placeholder="Bubble code"
-                disabled={!editRefId}
-              />
-              <select
-                value={editRefType}
-                onChange={(event) => setEditRefType(event.target.value as EntityType)}
-                disabled={!editRefId}
-              >
-                {ENTITY_TYPE_GROUPS.map((group) => (
-                  <optgroup key={group.label} label={group.label}>
-                    {group.options.map((entityType) => (
-                      <option key={entityType} value={entityType}>
-                        {entityType}
-                      </option>
-                    ))}
-                  </optgroup>
-                ))}
-              </select>
-              <input
-                value={editRefTags}
-                onChange={(event) => setEditRefTags(event.target.value)}
-                placeholder="Tags (comma-separated)"
-                disabled={!editRefId}
-              />
-              <input
-                value={editRefContact}
-                onChange={(event) => setEditRefContact(event.target.value)}
-                placeholder="Contact info (email / phone / person)"
-                disabled={!editRefId}
-              />
-              <textarea
-                value={editRefLinks}
-                onChange={(event) => setEditRefLinks(event.target.value)}
-                placeholder="One URL per line"
-                rows={3}
-                disabled={!editRefId}
-              />
-              <textarea
-                value={editRefNotes}
-                onChange={(event) => setEditRefNotes(event.target.value)}
-                placeholder="Entity notes"
-                rows={4}
-                disabled={!editRefId}
-              />
-              <button onClick={saveCrossRefEdits} disabled={busyAction || !editRefId || editRefLabel.trim().length === 0}>
-                Save changes
-              </button>
-
-          <details className="planner-advanced-tools">
-            <summary>Advanced bubble tools</summary>
-            <div className="planner-advanced-tools-content">
-              <div className="planner-row-label">Recent bubbles</div>
-              <div className="planner-chip-list">
-                {recentEntityRefs.length === 0 ? (
-                  <span className="planner-subtle">No recent bubbles yet.</span>
-                ) : (
-                  recentEntityRefs.map((ref) => (
-                    <button
-                      key={ref.id}
-                      className="chip"
-                      onClick={() => selectRefForEditing(ref.id)}
-                      title={describeRefTargets(ref, 4)}
+              {/* Edit active bubble */}
+              {editRefId ? (
+                <>
+                  <div className="planner-row-label">
+                    Editing: {editRefLabel || "—"}
+                  </div>
+                  <input
+                    value={editRefLabel}
+                    onChange={(event) => setEditRefLabel(event.target.value)}
+                    placeholder="Bubble name"
+                  />
+                  <div className="planner-inline-buttons">
+                    <input
+                      value={editRefCode}
+                      onChange={(event) => setEditRefCode(event.target.value)}
+                      placeholder="Code"
+                      style={{ flex: 1 }}
+                    />
+                    <select
+                      value={editRefType}
+                      onChange={(event) => setEditRefType(event.target.value as EntityType)}
+                      style={{ flex: 1 }}
                     >
-                      {`${ref.code} · ${formatUpdatedTime(ref.updatedAtMs)}`}
+                      {ENTITY_TYPE_GROUPS.map((group) => (
+                        <optgroup key={group.label} label={group.label}>
+                          {group.options.map((entityType) => (
+                            <option key={entityType} value={entityType}>{entityType}</option>
+                          ))}
+                        </optgroup>
+                      ))}
+                    </select>
+                  </div>
+                  <input
+                    value={editRefTags}
+                    onChange={(event) => setEditRefTags(event.target.value)}
+                    placeholder="Tags (comma-separated)"
+                  />
+                  <input
+                    value={editRefContact}
+                    onChange={(event) => setEditRefContact(event.target.value)}
+                    placeholder="Contact info"
+                  />
+                  <textarea
+                    value={editRefNotes}
+                    onChange={(event) => setEditRefNotes(event.target.value)}
+                    placeholder="Notes"
+                    rows={3}
+                  />
+                  <textarea
+                    value={editRefLinks}
+                    onChange={(event) => setEditRefLinks(event.target.value)}
+                    placeholder="One URL per line"
+                    rows={2}
+                  />
+                  <div className="planner-inline-buttons">
+                    <button onClick={saveCrossRefEdits} disabled={busyAction || editRefLabel.trim().length === 0}>
+                      Save
                     </button>
-                  ))
-                )}
-              </div>
+                    <button onClick={() => void duplicateCrossRef(editRefId)} disabled={busyAction}>
+                      Duplicate
+                    </button>
+                  </div>
 
-              <div className="planner-row-label">Merge likely duplicate</div>
-              <select value={mergeFromRefId} onChange={(event) => setMergeFromRefId(event.target.value)} disabled={!editRefId}>
-                <option value="">
-                  {editRefId ? "Select duplicate bubble..." : "Select a bubble first..."}
-                </option>
-                {mergeCandidateRefs.map((ref) => (
-                  <option key={ref.id} value={ref.id}>
-                    {`${ref.code} - ${ref.label} (${ref.entityType})`}
-                  </option>
-                ))}
-              </select>
-              <button onClick={mergeCrossRefIntoEdited} disabled={busyAction || !editRefId || !mergeFromRefId}>
-                Merge duplicate
-              </button>
+                  {/* Link to another node */}
+                  <div className="planner-row-label">Link to node</div>
+                  <input
+                    value={linkNodeQuery}
+                    onChange={(event) => setLinkNodeQuery(event.target.value)}
+                    placeholder="Search node..."
+                  />
+                  <select value={linkTargetNodeId} onChange={(event) => setLinkTargetNodeId(event.target.value)}>
+                    <option value="">Choose node...</option>
+                    {linkableNodeOptions.map((entry) => (
+                      <option key={entry.id} value={entry.id}>{entry.path}</option>
+                    ))}
+                  </select>
+                  <button
+                    onClick={() => { if (editRefId && linkTargetNodeId) linkCrossRefToNode(editRefId, linkTargetNodeId); }}
+                    disabled={busyAction || !linkTargetNodeId}
+                  >
+                    Link node
+                  </button>
 
-              <div className="planner-row-label">Link selected bubble to another node</div>
-              <input
-                value={linkNodeQuery}
-                onChange={(event) => setLinkNodeQuery(event.target.value)}
-                placeholder="Search node path across all projects..."
-                disabled={!editRefId}
-              />
-              <select
-                value={linkTargetNodeId}
-                onChange={(event) => setLinkTargetNodeId(event.target.value)}
-                disabled={!editRefId}
-              >
-                <option value="">
-                  {editRefId ? "Choose node to link..." : "Select a bubble first..."}
-                </option>
-                {linkableNodeOptions.map((entry) => (
-                  <option key={entry.id} value={entry.id}>
-                    {entry.path}
-                  </option>
-                ))}
-              </select>
-              <button
-                onClick={() => {
-                  if (!editRefId || !linkTargetNodeId) return;
-                  linkCrossRefToNode(editRefId, linkTargetNodeId);
-                }}
-                disabled={busyAction || !editRefId || !linkTargetNodeId}
-              >
-                Link node
-              </button>
+                  {/* Linked nodes */}
+                  <div className="planner-row-label">All linked nodes</div>
+                  <div className="planner-reference-list">
+                    {editableRefTargets.length === 0 ? (
+                      <span className="planner-subtle">Not linked to any node yet.</span>
+                    ) : (
+                      editableRefTargets.map((entry) => (
+                        <div key={entry.id} className="planner-reference-target-item">
+                          <button onClick={() => jumpToReferencedNode(entry.id)}>{entry.path}</button>
+                          <button className="danger" onClick={() => detachCrossRef(editRefId, entry.id)} disabled={busyAction}>
+                            Unlink
+                          </button>
+                        </div>
+                      ))
+                    )}
+                  </div>
 
-              <div className="planner-row-label">Linked nodes</div>
-              <div className="planner-reference-list">
-                {!editRefId ? (
-                  <span className="planner-subtle">Select a bubble to manage links.</span>
-                ) : editableRefTargets.length === 0 ? (
-                  <span className="planner-subtle">This bubble is not linked yet.</span>
-                ) : (
-                  editableRefTargets.map((entry) => (
-                    <div key={entry.id} className="planner-reference-target-item">
-                      <button onClick={() => jumpToReferencedNode(entry.id)}>{entry.path}</button>
-                      <button className="danger" onClick={() => detachCrossRef(editRefId, entry.id)} disabled={busyAction}>
-                        Unlink
+                  {/* Merge */}
+                  {mergeCandidateRefs.length > 0 ? (
+                    <>
+                      <div className="planner-row-label">Merge duplicate</div>
+                      <select value={mergeFromRefId} onChange={(event) => setMergeFromRefId(event.target.value)}>
+                        <option value="">Select duplicate...</option>
+                        {mergeCandidateRefs.map((ref) => (
+                          <option key={ref.id} value={ref.id}>{`${ref.code} — ${ref.label}`}</option>
+                        ))}
+                      </select>
+                      <button onClick={mergeCrossRefIntoEdited} disabled={busyAction || !mergeFromRefId}>
+                        Merge into current
                       </button>
-                    </div>
-                  ))
-                )}
-              </div>
+                    </>
+                  ) : null}
 
-              <div className="planner-row-label">Danger zone</div>
-              <button className="danger" onClick={deleteCrossRefBubble} disabled={busyAction || !editRefId}>
-                Delete bubble
-              </button>
+                  <button className="danger" onClick={deleteCrossRefBubble} disabled={busyAction} style={{ marginTop: 8 }}>
+                    Delete bubble
+                  </button>
+                </>
+              ) : (
+                <p className="planner-subtle">Click a bubble above to edit it.</p>
+              )}
             </div>
           </details>
+
+          {/* ── MOTION TUNING (rarely needed) ── */}
+          <details className="planner-advanced-tools">
+            <summary>Bubble motion settings</summary>
+            <div className="planner-advanced-tools-content">
+              <label className="planner-subtle" htmlFor="bubble-repulsion-strength">
+                Repulsion: {bubbleRepulsionStrength.toFixed(2)}
+              </label>
+              <input
+                id="bubble-repulsion-strength"
+                type="range" min={0.2} max={1.3} step={0.05}
+                value={bubbleRepulsionStrength}
+                onChange={(event) => {
+                  const next = Number(event.target.value);
+                  if (!Number.isFinite(next)) return;
+                  setBubbleRepulsionStrength(clampNumber(next, 0.2, 1.3));
+                }}
+              />
+              <label className="planner-subtle" htmlFor="bubble-max-drift">
+                Max drift: {bubbleMaxDriftPx}px
+              </label>
+              <input
+                id="bubble-max-drift"
+                type="range" min={8} max={96} step={2}
+                value={bubbleMaxDriftPx}
+                onChange={(event) => {
+                  const next = Number(event.target.value);
+                  if (!Number.isFinite(next)) return;
+                  setBubbleMaxDriftPx(clampNumber(Math.round(next), 8, 96));
+                }}
+              />
+              <div className="planner-inline-buttons">
+                <button
+                  onClick={() => { setBubbleRepulsionStrength(0.55); setBubbleMaxDriftPx(34); }}
+                  disabled={busyAction || (Math.abs(bubbleRepulsionStrength - 0.55) < 0.001 && bubbleMaxDriftPx === 34)}
+                >
+                  Reset
+                </button>
+                <button onClick={() => setBubbleRepulsionStrength((v) => clampNumber(v - 0.1, 0.2, 1.3))} disabled={busyAction}>
+                  Softer
+                </button>
+              </div>
             </div>
           </details>
         </div>
         ) : null}
 
-        {showBubblesSection && activePortalRef ? (
-          <div className="planner-panel-block">
-            <h3>{`${activePortalRef.code} - ${activePortalRef.label}`}</h3>
-            <p className="planner-subtle">
-              {`${activePortalRef.entityType}${activePortalRef.tags.length > 0 ? ` · ${activePortalRef.tags.join(", ")}` : ""}`}
-            </p>
-            {activePortalRef.contact ? <p className="planner-subtle">{`Contact: ${activePortalRef.contact}`}</p> : null}
-            {activePortalRef.notes ? <p className="planner-subtle">{activePortalRef.notes}</p> : null}
-            {activePortalRef.links.length > 0 ? (
-              <div className="planner-reference-list">
-                {activePortalRef.links.map((url) => (
-                  <a key={url} href={url} target="_blank" rel="noreferrer">
-                    {url}
-                  </a>
-                ))}
-              </div>
-            ) : null}
-            <p className="planner-subtle">All locations where this bubble exists:</p>
-            <div className="planner-reference-list">
-              {activePortalTargets.map((target) => (
-                <button key={target.id} onClick={() => jumpToReferencedNode(target.id)}>
-                  {buildNodePath(target.id, nodesById)}
-                </button>
-              ))}
-            </div>
-          </div>
-        ) : null}
 
         {error ? <div className="planner-error">{error}</div> : null}
           </>
