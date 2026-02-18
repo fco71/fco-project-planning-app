@@ -869,7 +869,8 @@ textarea {
 }
 
 .react-flow__node.planner-portal-node {
-  transition: transform 150ms ease, box-shadow 150ms ease;
+  /* transform is driven by the spring physics loop — no CSS easing on position */
+  transition: box-shadow 150ms ease;
 }
 
 .react-flow__node.planner-portal-node:hover {

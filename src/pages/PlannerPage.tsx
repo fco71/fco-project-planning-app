@@ -381,6 +381,36 @@ function collapsedKeyFromIds(ids: Iterable<string>): string {
   return Array.from(ids).sort().join("|");
 }
 
+// ── Portal bubble spring physics ───────────────────────────────────────────
+const SPRING_STIFFNESS       = 170;  // higher → snappier response
+const SPRING_DAMPING         = 22;   // higher → less oscillation
+const SPRING_SETTLE_THRESHOLD = 0.15; // px — below this → treat as at rest
+
+type SpringParticle = {
+  x: number; y: number;   // current simulated position
+  vx: number; vy: number; // current velocity (px/s)
+  targetX: number; targetY: number; // spring pull target
+};
+
+function stepSpring(p: SpringParticle, dt: number): void {
+  const ax = -SPRING_STIFFNESS * (p.x - p.targetX) - SPRING_DAMPING * p.vx;
+  const ay = -SPRING_STIFFNESS * (p.y - p.targetY) - SPRING_DAMPING * p.vy;
+  p.vx += ax * dt;
+  p.vy += ay * dt;
+  p.x  += p.vx * dt;
+  p.y  += p.vy * dt;
+}
+
+function isSpringSettled(p: SpringParticle): boolean {
+  return (
+    Math.abs(p.x  - p.targetX) < SPRING_SETTLE_THRESHOLD &&
+    Math.abs(p.y  - p.targetY) < SPRING_SETTLE_THRESHOLD &&
+    Math.abs(p.vx) < SPRING_SETTLE_THRESHOLD &&
+    Math.abs(p.vy) < SPRING_SETTLE_THRESHOLD
+  );
+}
+// ──────────────────────────────────────────────────────────────────────────
+
 export default function PlannerPage({ user }: PlannerPageProps) {
   const [profileName, setProfileName] = useState("");
   const [rootNodeId, setRootNodeId] = useState<string | null>(null);
@@ -1521,12 +1551,40 @@ export default function PlannerPage({ user }: PlannerPageProps) {
   }, [baseEdges, hoverEdgeIds, hoveredEdgeId, hoveredNodeId]);
 
   const [displayNodes, setDisplayNodes] = useState<Node[]>([]);
-  const draggingNodeIdsRef = useRef<Set<string>>(new Set());
-  const draggedNodeIdRef = useRef<string | null>(null);
-  // Keep a ref to visiblePortals so handleNodesChange can compute portal follow without state cascade
+  const draggingNodeIdsRef     = useRef<Set<string>>(new Set());
+  const draggedNodeIdRef       = useRef<string | null>(null);
+  // Spring physics refs — written every rAF frame, never trigger renders
+  const portalSpringStateRef   = useRef<Map<string, SpringParticle>>(new Map());
+  const liveAnchorPositionsRef = useRef<Map<string, { x: number; y: number }>>(new Map());
+  const springRafIdRef         = useRef<number | null>(null);
+  const springActiveRef        = useRef(false);
+  // Keep a ref to visiblePortals so the spring loop can read it without closures
   const visiblePortalsRef = useRef(visiblePortals);
-  useEffect(() => { visiblePortalsRef.current = visiblePortals; }, [visiblePortals]);
 
+  // Keep visiblePortalsRef current AND initialise/prune spring particles whenever portals change.
+  useEffect(() => {
+    visiblePortalsRef.current = visiblePortals;
+    const existing = portalSpringStateRef.current;
+    const next = new Map<string, SpringParticle>();
+    for (const entry of visiblePortals) {
+      const id = `portal:${entry.ref.id}`;
+      const prev = existing.get(id);
+      if (prev) {
+        // Preserve live velocity; just refresh target so the spring pulls to the new rest position.
+        next.set(id, { ...prev, targetX: entry.position.x, targetY: entry.position.y });
+      } else {
+        // Brand-new portal — start at rest at the computed position.
+        next.set(id, {
+          x: entry.position.x, y: entry.position.y,
+          vx: 0, vy: 0,
+          targetX: entry.position.x, targetY: entry.position.y,
+        });
+      }
+    }
+    portalSpringStateRef.current = next;
+  }, [visiblePortals]);
+
+  // flowNodes → displayNodes: freeze positions of dragging nodes so ReactFlow doesn't fight us.
   useEffect(() => {
     setDisplayNodes((previous) => {
       if (previous.length === 0) return flowNodes;
@@ -1540,6 +1598,76 @@ export default function PlannerPage({ user }: PlannerPageProps) {
       });
     });
   }, [flowNodes]);
+
+  // rAF spring loop — runs only while dragging or while any portal is still settling.
+  const startSpringLoop = useCallback(() => {
+    if (springActiveRef.current) return;
+    springActiveRef.current = true;
+    let lastTime: number | null = null;
+
+    const tick = (now: number) => {
+      const dt = lastTime === null ? 0.016 : Math.min((now - lastTime) / 1000, 0.05);
+      lastTime = now;
+
+      const particles = portalSpringStateRef.current;
+      const anchors   = liveAnchorPositionsRef.current;
+      const portals   = visiblePortalsRef.current;
+
+      // 1. Update each portal's spring target from latest live anchor position.
+      for (const entry of portals) {
+        const id = `portal:${entry.ref.id}`;
+        const particle = particles.get(id);
+        if (!particle) continue;
+        const liveAnchor = anchors.get(entry.anchorId);
+        if (!liveAnchor) continue;
+        // Portal's saved offset from its anchor (persisted to Firestore).
+        const savedAnchorX = entry.ref.portalAnchorX ?? entry.anchorPosition.x;
+        const savedAnchorY = entry.ref.portalAnchorY ?? entry.anchorPosition.y;
+        const offsetX = (entry.ref.portalX ?? entry.position.x) - savedAnchorX;
+        const offsetY = (entry.ref.portalY ?? entry.position.y) - savedAnchorY;
+        particle.targetX = liveAnchor.x + offsetX;
+        particle.targetY = liveAnchor.y + offsetY;
+      }
+
+      // 2. Step physics for every particle.
+      for (const particle of particles.values()) {
+        stepSpring(particle, dt);
+      }
+
+      // 3. Write spring positions into displayNodes (portal nodes only).
+      setDisplayNodes((nds) =>
+        nds.map((node) => {
+          if (!node.id.startsWith("portal:")) return node;
+          const particle = particles.get(node.id);
+          if (!particle) return node;
+          return { ...node, position: { x: particle.x, y: particle.y } };
+        })
+      );
+
+      // 4. Stop when drag is done and all particles have settled.
+      const isDragging = draggingNodeIdsRef.current.size > 0;
+      const allSettled = !isDragging && [...particles.values()].every(isSpringSettled);
+      if (allSettled) {
+        springActiveRef.current = false;
+        springRafIdRef.current  = null;
+        return;
+      }
+      springRafIdRef.current = requestAnimationFrame(tick);
+    };
+
+    springRafIdRef.current = requestAnimationFrame(tick);
+  }, []); // reads only from refs — no closure deps
+
+  // Cancel the rAF loop on unmount.
+  useEffect(() => {
+    return () => {
+      if (springRafIdRef.current !== null) {
+        cancelAnimationFrame(springRafIdRef.current);
+        springRafIdRef.current  = null;
+        springActiveRef.current = false;
+      }
+    };
+  }, []);
 
   const handleNodesChange: OnNodesChange = useCallback((changes) => {
     const draggingIds = new Set(draggingNodeIdsRef.current);
@@ -1556,30 +1684,18 @@ export default function PlannerPage({ user }: PlannerPageProps) {
     });
     draggingNodeIdsRef.current = draggingIds;
 
-    // Apply node changes and also update portal positions inline to avoid a second render
-    setDisplayNodes((nds) => {
-      const updated = applyNodeChanges(changes, nds);
-      if (Object.keys(livePositionUpdates).length === 0) return updated;
-      // For each portal, if its anchor is being dragged, shift portal by the same delta
-      const posById = new Map(updated.map((n) => [n.id, n.position] as const));
-      return updated.map((node) => {
-        if (!node.id.startsWith("portal:")) return node;
-        const entry = visiblePortalsRef.current.find((p) => `portal:${p.ref.id}` === node.id);
-        if (!entry) return node;
-        const newAnchorPos = livePositionUpdates[entry.anchorId];
-        if (!newAnchorPos) return node;
-        const anchorNode = posById.get(entry.anchorId);
-        if (!anchorNode) return node;
-        const dx = newAnchorPos.x - entry.anchorPosition.x;
-        const dy = newAnchorPos.y - entry.anchorPosition.y;
-        return { ...node, position: { x: node.position.x + dx, y: node.position.y + dy } };
-      });
-    });
+    // Portal positions are now driven by the spring loop — just apply tree-node changes.
+    setDisplayNodes((nds) => applyNodeChanges(changes, nds));
 
     if (Object.keys(livePositionUpdates).length > 0) {
+      // Feed live anchor positions into the spring loop's ref (zero cost, no render).
+      for (const [id, pos] of Object.entries(livePositionUpdates)) {
+        liveAnchorPositionsRef.current.set(id, pos);
+      }
       setLiveNodePositions((previous) => ({ ...previous, ...livePositionUpdates }));
+      startSpringLoop(); // idempotent — checks springActiveRef.current
     }
-  }, []);
+  }, [startSpringLoop]);
 
   // Save warning helper (successful autosaves are silent).
   const showSaveError = useCallback(() => {
