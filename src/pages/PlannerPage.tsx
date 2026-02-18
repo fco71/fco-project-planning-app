@@ -1,4 +1,5 @@
 import React, { memo, useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { useUndoRedo, firestoreDeleteField, type LocalOp, type FirestoreOp } from "../hooks/useUndoRedo";
 import ReactFlow, {
   Background,
   Handle,
@@ -446,6 +447,51 @@ export default function PlannerPage({ user }: PlannerPageProps) {
   const syncedCollapsedKeyRef = useRef("");
   const lastFocusKeyRef = useRef("");
 
+  // ── Undo / Redo ──────────────────────────────────────────────────────────
+  const {
+    canUndo,
+    canRedo,
+    push: pushHistory,
+    undo,
+    redo,
+    suppressSnapshotRef,
+    newNodeDocId,
+    undoLabel,
+    redoLabel,
+  } = useUndoRedo(user.uid);
+
+  /**
+   * Apply a list of LocalOps to React state immediately (used by undo/redo).
+   * Kept as a stable callback; setNodes/setRefs identity is guaranteed stable.
+   */
+  const applyLocalOps = useCallback((ops: LocalOp[]) => {
+    const nodeOps = ops.filter((o) => o.target === "nodes");
+    const refOps  = ops.filter((o) => o.target === "refs");
+    if (nodeOps.length > 0) {
+      setNodes((prev) => {
+        let next = prev;
+        for (const op of nodeOps) {
+          if (op.op === "patch")  next = next.map((n) => n.id === op.nodeId ? { ...n, ...op.patch } as TreeNode : n);
+          if (op.op === "add")    next = [...next, op.node as TreeNode];
+          if (op.op === "remove") { const ids = new Set(op.nodeIds); next = next.filter((n) => !ids.has(n.id)); }
+        }
+        return next;
+      });
+    }
+    if (refOps.length > 0) {
+      setRefs((prev) => {
+        let next = prev;
+        for (const op of refOps) {
+          if (op.op === "patch")  next = next.map((r) => r.id === op.refId ? { ...r, ...op.patch } as CrossRef : r);
+          if (op.op === "add")    next = [...next, op.ref as CrossRef];
+          if (op.op === "remove") { const ids = new Set(op.refIds); next = next.filter((r) => !ids.has(r.id)); }
+        }
+        return next;
+      });
+    }
+  }, []);
+  // ─────────────────────────────────────────────────────────────────────────
+
   const nodesById = useMemo(() => new Map(nodes.map((node) => [node.id, node] as const)), [nodes]);
 
   useEffect(() => {
@@ -685,6 +731,8 @@ export default function PlannerPage({ user }: PlannerPageProps) {
         unsubNodes = onSnapshot(
           query(collection(db, "users", user.uid, "nodes")),
           (snapshot) => {
+            // Don't overwrite local state while an undo/redo Firestore write is in flight.
+            if (suppressSnapshotRef.current > 0) return;
             const nextNodes = snapshot.docs.map((entry) => {
               const value = entry.data() as Partial<TreeNodeDoc>;
               return {
@@ -715,6 +763,8 @@ export default function PlannerPage({ user }: PlannerPageProps) {
         unsubRefs = onSnapshot(
           query(collection(db, "users", user.uid, "crossRefs")),
           (snapshot) => {
+            // Don't overwrite local state while an undo/redo Firestore write is in flight.
+            if (suppressSnapshotRef.current > 0) return;
             const nextRefs = snapshot.docs.map((entry) => {
               const value = entry.data() as Partial<CrossRefDoc> & { createdAt?: unknown; updatedAt?: unknown };
               const entityType = ENTITY_TYPES.includes(value.entityType as EntityType)
@@ -1782,6 +1832,15 @@ export default function PlannerPage({ user }: PlannerPageProps) {
       if (!db) return;
       const previousBody = nodesById.get(nodeId)?.body || "";
       const normalizedBody = nextBody.trim();
+      if (normalizedBody === previousBody) return;
+      pushHistory({
+        id: crypto.randomUUID(),
+        label: `Edit body`,
+        forwardLocal:    [{ target: "nodes", op: "patch", nodeId, patch: { body: normalizedBody } }],
+        forwardFirestore:[{ kind: "updateNode", nodeId, data: { body: normalizedBody || firestoreDeleteField() } }],
+        inverseLocal:    [{ target: "nodes", op: "patch", nodeId, patch: { body: previousBody } }],
+        inverseFirestore:[{ kind: "updateNode", nodeId, data: { body: previousBody || firestoreDeleteField() } }],
+      });
       setBusyAction(true);
       setError(null);
       applyLocalNodePatch(nodeId, { body: normalizedBody });
@@ -1797,7 +1856,7 @@ export default function PlannerPage({ user }: PlannerPageProps) {
         setBusyAction(false);
       }
     },
-    [applyLocalNodePatch, nodesById, user.uid]
+    [applyLocalNodePatch, nodesById, pushHistory, user.uid]
   );
 
   const saveSelectedBody = useCallback(async () => {
@@ -1810,30 +1869,41 @@ export default function PlannerPage({ user }: PlannerPageProps) {
     const title = newChildTitle.trim() || "New Node";
     const parentId = selectedNodeId || currentRootId || rootNodeId;
     if (!parentId) return;
-    const newDoc = doc(collection(db, "users", user.uid, "nodes"));
+    const newId = newNodeDocId();
     const parentPosition = resolveNodePosition(parentId);
     const siblingCount = (childrenByParent.get(parentId) || []).length;
+    const nodeData: TreeNodeDoc = {
+      title,
+      parentId,
+      kind: "item",
+      x: parentPosition.x + 280,
+      y: parentPosition.y + 20 + siblingCount * 96,
+    };
+    pushHistory({
+      id: crypto.randomUUID(),
+      label: `Create "${title}"`,
+      forwardLocal:    [{ target: "nodes", op: "add", node: { ...nodeData, id: newId } }],
+      forwardFirestore:[{ kind: "setNode", nodeId: newId, data: nodeData }],
+      inverseLocal:    [{ target: "nodes", op: "remove", nodeIds: [newId] }],
+      inverseFirestore:[{ kind: "deleteNode", nodeId: newId }],
+    });
     setBusyAction(true);
     setError(null);
     try {
-      await setDoc(doc(db, "users", user.uid, "nodes", newDoc.id), {
-        title,
-        parentId,
-        kind: "item",
-        x: parentPosition.x + 280,
-        y: parentPosition.y + 20 + siblingCount * 96,
+      await setDoc(doc(db, "users", user.uid, "nodes", newId), {
+        ...nodeData,
         createdAt: serverTimestamp(),
         updatedAt: serverTimestamp(),
       } satisfies TreeNodeDoc & { createdAt: unknown; updatedAt: unknown });
       setNewChildTitle("");
-      setPendingSelectedNodeId(newDoc.id);
-      setPendingRenameNodeId(newDoc.id);
+      setPendingSelectedNodeId(newId);
+      setPendingRenameNodeId(newId);
     } catch (actionError: unknown) {
       setError(actionError instanceof Error ? actionError.message : "Could not create node.");
     } finally {
       setBusyAction(false);
     }
-  }, [childrenByParent, currentRootId, newChildTitle, resolveNodePosition, rootNodeId, selectedNodeId, user.uid]);
+  }, [childrenByParent, currentRootId, newChildTitle, newNodeDocId, pushHistory, resolveNodePosition, rootNodeId, selectedNodeId, user.uid]);
 
   const renameSelected = useCallback(async () => {
     if (!db || !selectedNodeId) return;
@@ -1844,6 +1914,15 @@ export default function PlannerPage({ user }: PlannerPageProps) {
       return;
     }
     if (title === currentTitle) return;
+    pushHistory({
+      id: crypto.randomUUID(),
+      label: `Rename "${currentTitle}"`,
+      forwardLocal:    [{ target: "nodes", op: "patch", nodeId: selectedNodeId, patch: { title } }],
+      forwardFirestore:[{ kind: "updateNode", nodeId: selectedNodeId, data: { title } }],
+      inverseLocal:    [{ target: "nodes", op: "patch", nodeId: selectedNodeId, patch: { title: currentTitle } }],
+      inverseFirestore:[{ kind: "updateNode", nodeId: selectedNodeId, data: { title: currentTitle } }],
+    });
+    applyLocalNodePatch(selectedNodeId, { title });
     setBusyAction(true);
     setError(null);
     try {
@@ -1856,12 +1935,20 @@ export default function PlannerPage({ user }: PlannerPageProps) {
     } finally {
       setBusyAction(false);
     }
-  }, [nodesById, renameTitle, selectedNodeId, user.uid]);
+  }, [applyLocalNodePatch, nodesById, pushHistory, renameTitle, selectedNodeId, user.uid]);
 
   const setNodeTaskStatus = useCallback(
     async (nodeId: string, taskStatus: TaskStatus) => {
       if (!db) return;
       const previousTaskStatus = nodesById.get(nodeId)?.taskStatus || "none";
+      pushHistory({
+        id: crypto.randomUUID(),
+        label: `Set task status "${taskStatus}"`,
+        forwardLocal:    [{ target: "nodes", op: "patch", nodeId, patch: { taskStatus } }],
+        forwardFirestore:[{ kind: "updateNode", nodeId, data: { taskStatus: taskStatus === "none" ? firestoreDeleteField() : taskStatus } }],
+        inverseLocal:    [{ target: "nodes", op: "patch", nodeId, patch: { taskStatus: previousTaskStatus } }],
+        inverseFirestore:[{ kind: "updateNode", nodeId, data: { taskStatus: previousTaskStatus === "none" ? firestoreDeleteField() : previousTaskStatus } }],
+      });
       setBusyAction(true);
       setError(null);
       applyLocalNodePatch(nodeId, { taskStatus });
@@ -1877,7 +1964,7 @@ export default function PlannerPage({ user }: PlannerPageProps) {
         setBusyAction(false);
       }
     },
-    [applyLocalNodePatch, nodesById, user.uid]
+    [applyLocalNodePatch, nodesById, pushHistory, user.uid]
   );
 
   const saveStorySteps = useCallback(
@@ -1951,6 +2038,14 @@ export default function PlannerPage({ user }: PlannerPageProps) {
       if (!db) return;
       const normalized = normalizeHexColor(color);
       const previousColor = nodesById.get(nodeId)?.color;
+      pushHistory({
+        id: crypto.randomUUID(),
+        label: normalized ? `Set color "${normalized}"` : `Clear color`,
+        forwardLocal:    [{ target: "nodes", op: "patch", nodeId, patch: { color: normalized } }],
+        forwardFirestore:[{ kind: "updateNode", nodeId, data: { color: normalized ?? firestoreDeleteField() } }],
+        inverseLocal:    [{ target: "nodes", op: "patch", nodeId, patch: { color: previousColor } }],
+        inverseFirestore:[{ kind: "updateNode", nodeId, data: { color: previousColor ?? firestoreDeleteField() } }],
+      });
       setBusyAction(true);
       setError(null);
       applyLocalNodePatch(nodeId, { color: normalized });
@@ -1966,7 +2061,7 @@ export default function PlannerPage({ user }: PlannerPageProps) {
         setBusyAction(false);
       }
     },
-    [applyLocalNodePatch, nodesById, user.uid]
+    [applyLocalNodePatch, nodesById, pushHistory, user.uid]
   );
 
   const organizeVisibleTree = useCallback(async () => {
@@ -2113,6 +2208,54 @@ export default function PlannerPage({ user }: PlannerPageProps) {
     const ids = collectDescendants(selectedNodeId, childrenByParent);
     const idSet = new Set(ids);
     const fallbackId = nodesById.get(selectedNodeId)?.parentId || rootNodeId || null;
+
+    // ── Build undo snapshot BEFORE the batch ─────────────────────────────────
+    const deletedNodes = ids.map((id) => nodesById.get(id)).filter(Boolean) as TreeNode[];
+    const affectedRefs = refs.filter((ref) => ref.nodeIds.some((id) => idSet.has(id)));
+
+    // forward: remove all subtree nodes + delete/update affected refs
+    const fwdLocalNodes: LocalOp[] = [{ target: "nodes", op: "remove", nodeIds: ids }];
+    const fwdFirestoreNodes: FirestoreOp[] = ids.map((id) => ({ kind: "deleteNode" as const, nodeId: id }));
+    const fwdLocalRefs: LocalOp[] = [];
+    const fwdFirestoreRefs: FirestoreOp[] = [];
+    const invLocalRefs: LocalOp[] = [];
+    const invFirestoreRefs: FirestoreOp[] = [];
+
+    affectedRefs.forEach((ref) => {
+      const remaining = ref.nodeIds.filter((id) => !idSet.has(id));
+      if (remaining.length === 0) {
+        fwdLocalRefs.push({ target: "refs", op: "remove", refIds: [ref.id] });
+        fwdFirestoreRefs.push({ kind: "deleteRef", refId: ref.id });
+      } else {
+        const nextAnchorNodeId = chooseAnchorNodeId(remaining, ref.anchorNodeId);
+        const nextAnchorPosition = nextAnchorNodeId ? resolveNodePosition(nextAnchorNodeId) : null;
+        const nextPortalPosition = resolvePortalFollowPosition(ref, nextAnchorPosition, `${ref.id}:delete-selected`);
+        fwdLocalRefs.push({ target: "refs", op: "patch", refId: ref.id, patch: { nodeIds: remaining, anchorNodeId: nextAnchorNodeId, portalX: nextPortalPosition.x, portalY: nextPortalPosition.y } });
+        fwdFirestoreRefs.push({ kind: "updateRef", refId: ref.id, data: { nodeIds: remaining, anchorNodeId: nextAnchorNodeId ?? firestoreDeleteField(), portalX: nextPortalPosition.x, portalY: nextPortalPosition.y, portalAnchorX: nextAnchorPosition?.x ?? firestoreDeleteField(), portalAnchorY: nextAnchorPosition?.y ?? firestoreDeleteField() } });
+      }
+      // inverse: restore the ref to its original state
+      invLocalRefs.push({ target: "refs", op: "patch", refId: ref.id, patch: { nodeIds: ref.nodeIds, anchorNodeId: ref.anchorNodeId, portalX: ref.portalX, portalY: ref.portalY } });
+      invFirestoreRefs.push({ kind: "updateRef", refId: ref.id, data: { nodeIds: ref.nodeIds, anchorNodeId: ref.anchorNodeId ?? firestoreDeleteField(), portalX: ref.portalX, portalY: ref.portalY, portalAnchorX: ref.portalAnchorX ?? firestoreDeleteField(), portalAnchorY: ref.portalAnchorY ?? firestoreDeleteField() } });
+    });
+
+    const deletedTitle = nodesById.get(selectedNodeId)?.title ?? selectedNodeId;
+    pushHistory({
+      id: crypto.randomUUID(),
+      label: `Delete "${deletedTitle}"`,
+      forwardLocal:    [...fwdLocalNodes, ...fwdLocalRefs],
+      forwardFirestore:[...fwdFirestoreNodes, ...fwdFirestoreRefs],
+      inverseLocal:    [
+        { target: "nodes", op: "add", node: deletedNodes[0] ?? {} as TreeNode },
+        ...deletedNodes.slice(1).map((n): LocalOp => ({ target: "nodes", op: "add", node: n })),
+        ...invLocalRefs,
+      ],
+      inverseFirestore:[
+        ...deletedNodes.map((n): FirestoreOp => ({ kind: "setNode", nodeId: n.id, data: { title: n.title, parentId: n.parentId, kind: n.kind, x: n.x ?? 0, y: n.y ?? 0, ...(n.color ? { color: n.color } : {}), ...(n.taskStatus && n.taskStatus !== "none" ? { taskStatus: n.taskStatus } : {}), ...(n.body ? { body: n.body } : {}), ...(n.storySteps ? { storySteps: n.storySteps } : {}) } })),
+        ...invFirestoreRefs,
+      ],
+    });
+    // ─────────────────────────────────────────────────────────────────────────
+
     setBusyAction(true);
     setError(null);
     try {
@@ -2152,18 +2295,49 @@ export default function PlannerPage({ user }: PlannerPageProps) {
     } finally {
       setBusyAction(false);
     }
-  }, [childrenByParent, currentRootId, nodesById, refs, resolveNodePosition, rootNodeId, selectedNodeId, user.uid]);
+  }, [childrenByParent, currentRootId, nodesById, pushHistory, refs, resolveNodePosition, rootNodeId, selectedNodeId, user.uid]);
 
   const linkCrossRefToNode = useCallback(
     async (refId: string, nodeId: string) => {
       if (!db) return;
       const linked = refs.find((entry) => entry.id === refId);
-      const nextNodeIds = linked ? (linked.nodeIds.includes(nodeId) ? linked.nodeIds : [...linked.nodeIds, nodeId]) : [nodeId];
+      // Already linked — nothing to do.
+      if (linked?.nodeIds.includes(nodeId)) return;
+      const nextNodeIds = linked ? [...linked.nodeIds, nodeId] : [nodeId];
       const nextAnchorNodeId = chooseAnchorNodeId(nextNodeIds, linked?.anchorNodeId, nodeId);
       const nextAnchorPosition = nextAnchorNodeId ? resolveNodePosition(nextAnchorNodeId) : null;
       const nextPortalPosition = linked
         ? resolvePortalFollowPosition(linked, nextAnchorPosition, refId)
         : buildDefaultPortalPosition(nextAnchorNodeId, refId);
+
+      // Capture the full before-state for undo.
+      if (linked) {
+        const prevData: Record<string, unknown> = {
+          nodeIds: linked.nodeIds,
+          anchorNodeId: linked.anchorNodeId ?? firestoreDeleteField(),
+          portalX: linked.portalX,
+          portalY: linked.portalY,
+          portalAnchorX: linked.portalAnchorX ?? firestoreDeleteField(),
+          portalAnchorY: linked.portalAnchorY ?? firestoreDeleteField(),
+        };
+        const nextData: Record<string, unknown> = {
+          nodeIds: nextNodeIds,
+          anchorNodeId: nextAnchorNodeId ?? firestoreDeleteField(),
+          portalX: nextPortalPosition?.x ?? linked.portalX,
+          portalY: nextPortalPosition?.y ?? linked.portalY,
+          portalAnchorX: nextAnchorPosition?.x ?? firestoreDeleteField(),
+          portalAnchorY: nextAnchorPosition?.y ?? firestoreDeleteField(),
+        };
+        pushHistory({
+          id: crypto.randomUUID(),
+          label: `Link bubble to node`,
+          forwardLocal:    [{ target: "refs", op: "patch", refId, patch: { nodeIds: nextNodeIds, anchorNodeId: nextAnchorNodeId, portalX: nextData.portalX as number, portalY: nextData.portalY as number } }],
+          forwardFirestore:[{ kind: "updateRef", refId, data: nextData }],
+          inverseLocal:    [{ target: "refs", op: "patch", refId, patch: { nodeIds: linked.nodeIds, anchorNodeId: linked.anchorNodeId, portalX: linked.portalX, portalY: linked.portalY } }],
+          inverseFirestore:[{ kind: "updateRef", refId, data: prevData }],
+        });
+      }
+
       setBusyAction(true);
       setError(null);
       try {
@@ -2194,7 +2368,7 @@ export default function PlannerPage({ user }: PlannerPageProps) {
         setBusyAction(false);
       }
     },
-    [buildDefaultPortalPosition, hydrateRefEditor, refs, resolveNodePosition, user.uid]
+    [buildDefaultPortalPosition, hydrateRefEditor, pushHistory, refs, resolveNodePosition, user.uid]
   );
 
   const createCrossRef = useCallback(async () => {
@@ -2516,6 +2690,33 @@ export default function PlannerPage({ user }: PlannerPageProps) {
           const nextAnchorNodeId = chooseAnchorNodeId(remainingNodeIds, target.anchorNodeId);
           const nextAnchorPosition = nextAnchorNodeId ? resolveNodePosition(nextAnchorNodeId) : null;
           const nextPortalPosition = resolvePortalFollowPosition(target, nextAnchorPosition, target.id);
+
+          // Capture before/after for undo.
+          const prevData: Record<string, unknown> = {
+            nodeIds: target.nodeIds,
+            anchorNodeId: target.anchorNodeId ?? firestoreDeleteField(),
+            portalX: target.portalX,
+            portalY: target.portalY,
+            portalAnchorX: target.portalAnchorX ?? firestoreDeleteField(),
+            portalAnchorY: target.portalAnchorY ?? firestoreDeleteField(),
+          };
+          const nextData: Record<string, unknown> = {
+            nodeIds: remainingNodeIds,
+            anchorNodeId: nextAnchorNodeId ?? firestoreDeleteField(),
+            portalX: nextPortalPosition.x,
+            portalY: nextPortalPosition.y,
+            portalAnchorX: nextAnchorPosition?.x ?? firestoreDeleteField(),
+            portalAnchorY: nextAnchorPosition?.y ?? firestoreDeleteField(),
+          };
+          pushHistory({
+            id: crypto.randomUUID(),
+            label: `Detach bubble from node`,
+            forwardLocal:    [{ target: "refs", op: "patch", refId, patch: { nodeIds: remainingNodeIds, anchorNodeId: nextAnchorNodeId, portalX: nextPortalPosition.x, portalY: nextPortalPosition.y } }],
+            forwardFirestore:[{ kind: "updateRef", refId, data: nextData }],
+            inverseLocal:    [{ target: "refs", op: "patch", refId, patch: { nodeIds: target.nodeIds, anchorNodeId: target.anchorNodeId, portalX: target.portalX, portalY: target.portalY } }],
+            inverseFirestore:[{ kind: "updateRef", refId, data: prevData }],
+          });
+
           await updateDoc(doc(db, "users", user.uid, "crossRefs", refId), {
             nodeIds: remainingNodeIds,
             anchorNodeId: nextAnchorNodeId ?? deleteField(),
@@ -2546,7 +2747,7 @@ export default function PlannerPage({ user }: PlannerPageProps) {
         setBusyAction(false);
       }
     },
-    [editRefId, hydrateRefEditor, refs, resolveNodePosition, user.uid]
+    [editRefId, hydrateRefEditor, pushHistory, refs, resolveNodePosition, user.uid]
   );
 
   const jumpToReferencedNode = useCallback(
@@ -2596,6 +2797,19 @@ export default function PlannerPage({ user }: PlannerPageProps) {
       }
 
       // Save regular node positions silently unless there is an error.
+      const prevNode = nodesById.get(node.id);
+      const prevX = prevNode?.x ?? node.position.x;
+      const prevY = prevNode?.y ?? node.position.y;
+      if (prevX !== node.position.x || prevY !== node.position.y) {
+        pushHistory({
+          id: crypto.randomUUID(),
+          label: `Move "${prevNode?.title ?? node.id}"`,
+          forwardLocal:    [{ target: "nodes", op: "patch", nodeId: node.id, patch: { x: node.position.x, y: node.position.y } }],
+          forwardFirestore:[{ kind: "updateNode", nodeId: node.id, data: { x: node.position.x, y: node.position.y } }],
+          inverseLocal:    [{ target: "nodes", op: "patch", nodeId: node.id, patch: { x: prevX, y: prevY } }],
+          inverseFirestore:[{ kind: "updateNode", nodeId: node.id, data: { x: prevX, y: prevY } }],
+        });
+      }
       setNodes((previous) =>
         previous.map((entry) => (entry.id === node.id ? { ...entry, x: node.position.x, y: node.position.y } : entry))
       );
@@ -2610,7 +2824,7 @@ export default function PlannerPage({ user }: PlannerPageProps) {
         setError(actionError instanceof Error ? actionError.message : "Could not save node position.");
       }
     },
-    [refs, resolveNodePosition, showSaveError, user.uid]
+    [nodesById, pushHistory, refs, resolveNodePosition, showSaveError, user.uid]
   );
 
   const onSelectionDragStop = useCallback(
@@ -2620,6 +2834,37 @@ export default function PlannerPage({ user }: PlannerPageProps) {
       const movedPortals = draggedNodes.filter((entry) => entry.id.startsWith("portal:"));
       if (movedTreeNodes.length === 0 && movedPortals.length === 0) return;
       const movedTreePositions = new Map(movedTreeNodes.map((entry) => [entry.id, entry.position] as const));
+
+      // Build a single undo entry covering all moved tree nodes (skip nodes that haven't actually moved).
+      const movedWithDelta = movedTreeNodes.filter((entry) => {
+        const prev = nodesById.get(entry.id);
+        return prev && (prev.x !== entry.position.x || prev.y !== entry.position.y);
+      });
+      if (movedWithDelta.length > 0) {
+        pushHistory({
+          id: crypto.randomUUID(),
+          label: movedWithDelta.length === 1
+            ? `Move "${nodesById.get(movedWithDelta[0].id)?.title ?? movedWithDelta[0].id}"`
+            : `Move ${movedWithDelta.length} nodes`,
+          forwardLocal: movedWithDelta.map((entry) => ({
+            target: "nodes" as const, op: "patch" as const, nodeId: entry.id,
+            patch: { x: entry.position.x, y: entry.position.y },
+          })),
+          forwardFirestore: movedWithDelta.map((entry) => ({
+            kind: "updateNode" as const, nodeId: entry.id,
+            data: { x: entry.position.x, y: entry.position.y },
+          })),
+          inverseLocal: movedWithDelta.map((entry) => {
+            const prev = nodesById.get(entry.id)!;
+            return { target: "nodes" as const, op: "patch" as const, nodeId: entry.id, patch: { x: prev.x, y: prev.y } };
+          }),
+          inverseFirestore: movedWithDelta.map((entry) => {
+            const prev = nodesById.get(entry.id)!;
+            return { kind: "updateNode" as const, nodeId: entry.id, data: { x: prev.x, y: prev.y } };
+          }),
+        });
+      }
+
       if (movedTreePositions.size > 0) {
         setNodes((previous) =>
           previous.map((entry) => {
@@ -2689,7 +2934,7 @@ export default function PlannerPage({ user }: PlannerPageProps) {
         setError(actionError instanceof Error ? actionError.message : "Could not save node positions.");
       }
     },
-    [refs, resolveNodePosition, showSaveError, user.uid]
+    [nodesById, pushHistory, refs, resolveNodePosition, showSaveError, user.uid]
   );
 
   // Context menu handlers
@@ -2698,29 +2943,39 @@ export default function PlannerPage({ user }: PlannerPageProps) {
       if (!db) return;
       const parentPosition = resolveNodePosition(nodeId);
       const siblingCount = (childrenByParent.get(nodeId) || []).length;
-
-      const newDoc = doc(collection(db, "users", user.uid, "nodes"));
+      const newId = newNodeDocId();
+      const nodeData: TreeNodeDoc = {
+        title: "New Node",
+        parentId: nodeId,
+        kind: "item",
+        x: parentPosition.x + 280,
+        y: parentPosition.y + 20 + siblingCount * 96,
+      };
+      pushHistory({
+        id: crypto.randomUUID(),
+        label: `Create "New Node"`,
+        forwardLocal:    [{ target: "nodes", op: "add", node: { ...nodeData, id: newId } }],
+        forwardFirestore:[{ kind: "setNode", nodeId: newId, data: nodeData }],
+        inverseLocal:    [{ target: "nodes", op: "remove", nodeIds: [newId] }],
+        inverseFirestore:[{ kind: "deleteNode", nodeId: newId }],
+      });
       setBusyAction(true);
       setError(null);
       try {
-        await setDoc(doc(db, "users", user.uid, "nodes", newDoc.id), {
-          title: "New Node",
-          parentId: nodeId,
-          kind: "item",
-          x: parentPosition.x + 280,
-          y: parentPosition.y + 20 + siblingCount * 96,
+        await setDoc(doc(db, "users", user.uid, "nodes", newId), {
+          ...nodeData,
           createdAt: serverTimestamp(),
           updatedAt: serverTimestamp(),
         } satisfies TreeNodeDoc & { createdAt: unknown; updatedAt: unknown });
-        setPendingSelectedNodeId(newDoc.id);
-        setPendingRenameNodeId(newDoc.id);
+        setPendingSelectedNodeId(newId);
+        setPendingRenameNodeId(newId);
       } catch (actionError: unknown) {
         setError(actionError instanceof Error ? actionError.message : "Could not create node.");
       } finally {
         setBusyAction(false);
       }
     },
-    [childrenByParent, resolveNodePosition, user.uid]
+    [childrenByParent, newNodeDocId, pushHistory, resolveNodePosition, user.uid]
   );
 
   const handleContextAddStorySibling = useCallback(
@@ -2765,6 +3020,50 @@ export default function PlannerPage({ user }: PlannerPageProps) {
       const idSet = new Set(ids);
       const fallbackId = nodesById.get(nodeId)?.parentId || rootNodeId || null;
 
+      // ── Build undo snapshot BEFORE the batch ───────────────────────────────
+      const deletedNodes = ids.map((id) => nodesById.get(id)).filter(Boolean) as TreeNode[];
+      const affectedRefs = refs.filter((ref) => ref.nodeIds.some((id) => idSet.has(id)));
+
+      const fwdLocalNodes: LocalOp[] = [{ target: "nodes", op: "remove", nodeIds: ids }];
+      const fwdFirestoreNodes: FirestoreOp[] = ids.map((id) => ({ kind: "deleteNode" as const, nodeId: id }));
+      const fwdLocalRefs: LocalOp[] = [];
+      const fwdFirestoreRefs: FirestoreOp[] = [];
+      const invLocalRefs: LocalOp[] = [];
+      const invFirestoreRefs: FirestoreOp[] = [];
+
+      affectedRefs.forEach((ref) => {
+        const keep = ref.nodeIds.filter((id) => !idSet.has(id));
+        if (keep.length === 0) {
+          fwdLocalRefs.push({ target: "refs", op: "remove", refIds: [ref.id] });
+          fwdFirestoreRefs.push({ kind: "deleteRef", refId: ref.id });
+        } else {
+          const nextAnchorNodeId = chooseAnchorNodeId(keep, ref.anchorNodeId);
+          const nextAnchorPosition = nextAnchorNodeId ? resolveNodePosition(nextAnchorNodeId) : null;
+          const nextPortalPosition = resolvePortalFollowPosition(ref, nextAnchorPosition, `${ref.id}:context-delete`);
+          fwdLocalRefs.push({ target: "refs", op: "patch", refId: ref.id, patch: { nodeIds: keep, anchorNodeId: nextAnchorNodeId, portalX: nextPortalPosition.x, portalY: nextPortalPosition.y } });
+          fwdFirestoreRefs.push({ kind: "updateRef", refId: ref.id, data: { nodeIds: keep, anchorNodeId: nextAnchorNodeId ?? firestoreDeleteField(), portalX: nextPortalPosition.x, portalY: nextPortalPosition.y, portalAnchorX: nextAnchorPosition?.x ?? firestoreDeleteField(), portalAnchorY: nextAnchorPosition?.y ?? firestoreDeleteField() } });
+        }
+        invLocalRefs.push({ target: "refs", op: "patch", refId: ref.id, patch: { nodeIds: ref.nodeIds, anchorNodeId: ref.anchorNodeId, portalX: ref.portalX, portalY: ref.portalY } });
+        invFirestoreRefs.push({ kind: "updateRef", refId: ref.id, data: { nodeIds: ref.nodeIds, anchorNodeId: ref.anchorNodeId ?? firestoreDeleteField(), portalX: ref.portalX, portalY: ref.portalY, portalAnchorX: ref.portalAnchorX ?? firestoreDeleteField(), portalAnchorY: ref.portalAnchorY ?? firestoreDeleteField() } });
+      });
+
+      const deletedTitle = nodesById.get(nodeId)?.title ?? nodeId;
+      pushHistory({
+        id: crypto.randomUUID(),
+        label: `Delete "${deletedTitle}"`,
+        forwardLocal:    [...fwdLocalNodes, ...fwdLocalRefs],
+        forwardFirestore:[...fwdFirestoreNodes, ...fwdFirestoreRefs],
+        inverseLocal: [
+          ...deletedNodes.map((n): LocalOp => ({ target: "nodes", op: "add", node: n })),
+          ...invLocalRefs,
+        ],
+        inverseFirestore:[
+          ...deletedNodes.map((n): FirestoreOp => ({ kind: "setNode", nodeId: n.id, data: { title: n.title, parentId: n.parentId, kind: n.kind, x: n.x ?? 0, y: n.y ?? 0, ...(n.color ? { color: n.color } : {}), ...(n.taskStatus && n.taskStatus !== "none" ? { taskStatus: n.taskStatus } : {}), ...(n.body ? { body: n.body } : {}), ...(n.storySteps ? { storySteps: n.storySteps } : {}) } })),
+          ...invFirestoreRefs,
+        ],
+      });
+      // ───────────────────────────────────────────────────────────────────────
+
       setBusyAction(true);
       setError(null);
       try {
@@ -2807,7 +3106,7 @@ export default function PlannerPage({ user }: PlannerPageProps) {
         setBusyAction(false);
       }
     },
-    [childrenByParent, currentRootId, nodesById, refs, resolveNodePosition, rootNodeId, selectedNodeId, user.uid]
+    [childrenByParent, currentRootId, nodesById, pushHistory, refs, resolveNodePosition, rootNodeId, selectedNodeId, user.uid]
   );
 
   const handleContextDuplicate = useCallback(
@@ -2886,6 +3185,14 @@ export default function PlannerPage({ user }: PlannerPageProps) {
       const previousKind = node.kind;
       const newKind = nextNodeKind(previousKind);
 
+      pushHistory({
+        id: crypto.randomUUID(),
+        label: `Change type to "${newKind}"`,
+        forwardLocal:    [{ target: "nodes", op: "patch", nodeId, patch: { kind: newKind } }],
+        forwardFirestore:[{ kind: "updateNode", nodeId, data: { kind: newKind } }],
+        inverseLocal:    [{ target: "nodes", op: "patch", nodeId, patch: { kind: previousKind } }],
+        inverseFirestore:[{ kind: "updateNode", nodeId, data: { kind: previousKind } }],
+      });
       setBusyAction(true);
       setError(null);
       setSelectedNodeId(nodeId);
@@ -2903,7 +3210,7 @@ export default function PlannerPage({ user }: PlannerPageProps) {
         setBusyAction(false);
       }
     },
-    [applyLocalNodePatch, nodesById, user.uid]
+    [applyLocalNodePatch, nodesById, pushHistory, user.uid]
   );
 
   const handleContextToggleTaskStatus = useCallback(
@@ -3097,6 +3404,21 @@ export default function PlannerPage({ user }: PlannerPageProps) {
       const isMac = navigator.platform.toUpperCase().indexOf('MAC') >= 0;
       const cmdOrCtrl = isMac ? e.metaKey : e.ctrlKey;
 
+      // Undo: Cmd/Ctrl+Z
+      if (cmdOrCtrl && !e.shiftKey && e.key.toLowerCase() === "z") {
+        e.preventDefault();
+        if (canUndo && !busyAction) undo(applyLocalOps);
+        return;
+      }
+
+      // Redo: Cmd/Ctrl+Shift+Z  (also Ctrl+Y on Windows)
+      if ((cmdOrCtrl && e.shiftKey && e.key.toLowerCase() === "z") ||
+          (!isMac && e.ctrlKey && e.key.toLowerCase() === "y")) {
+        e.preventDefault();
+        if (canRedo && !busyAction) redo(applyLocalOps);
+        return;
+      }
+
       if (cmdOrCtrl && e.key.toLowerCase() === "k") {
         e.preventDefault();
         setPaletteOpen((prev) => {
@@ -3217,6 +3539,12 @@ export default function PlannerPage({ user }: PlannerPageProps) {
     runPaletteAction,
     searchQuery,
     selectedNodeId,
+    canUndo,
+    canRedo,
+    undo,
+    redo,
+    applyLocalOps,
+    busyAction,
   ]);
 
   const sidebarIsCollapsed = !isMobileLayout && sidebarCollapsed;
@@ -3242,19 +3570,41 @@ export default function PlannerPage({ user }: PlannerPageProps) {
         className={`planner-sidebar ${sidebarIsCollapsed ? "collapsed" : ""} ${isMobileLayout ? (mobileSidebarOpen ? "mobile-open" : "mobile-hidden") : ""}`}
       >
         <div className="planner-sidebar-header">
-        <button
-          onClick={() => {
-            if (isMobileLayout) {
-              setMobileSidebarOpen(false);
-              return;
-            }
-            setSidebarCollapsed(!sidebarCollapsed);
-          }}
-          className="planner-sidebar-toggle"
-          aria-label={isMobileLayout ? "Close controls" : sidebarIsCollapsed ? "Expand sidebar" : "Collapse sidebar"}
-        >
-          {isMobileLayout ? "Close" : sidebarIsCollapsed ? "→" : "←"}
-        </button>
+          <button
+            onClick={() => {
+              if (isMobileLayout) {
+                setMobileSidebarOpen(false);
+                return;
+              }
+              setSidebarCollapsed(!sidebarCollapsed);
+            }}
+            className="planner-sidebar-toggle"
+            aria-label={isMobileLayout ? "Close controls" : sidebarIsCollapsed ? "Expand sidebar" : "Collapse sidebar"}
+          >
+            {isMobileLayout ? "Close" : sidebarIsCollapsed ? "→" : "←"}
+          </button>
+          {!sidebarIsCollapsed && (
+            <div className="planner-undo-redo-btns">
+              <button
+                className="planner-undo-redo-btn"
+                onClick={() => undo(applyLocalOps)}
+                disabled={!canUndo || busyAction}
+                title={undoLabel ? `Undo: ${undoLabel}` : "Undo (⌘Z)"}
+                aria-label="Undo"
+              >
+                ↩
+              </button>
+              <button
+                className="planner-undo-redo-btn"
+                onClick={() => redo(applyLocalOps)}
+                disabled={!canRedo || busyAction}
+                title={redoLabel ? `Redo: ${redoLabel}` : "Redo (⌘⇧Z)"}
+                aria-label="Redo"
+              >
+                ↪
+              </button>
+            </div>
+          )}
         </div>
 
         {sidebarIsCollapsed ? (
