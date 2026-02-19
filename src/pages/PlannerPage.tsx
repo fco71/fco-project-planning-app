@@ -1504,7 +1504,17 @@ export default function PlannerPage({ user }: PlannerPageProps) {
       }
     });
     draggingNodeIdsRef.current = draggingIds;
-    setDisplayNodes((nds) => applyNodeChanges(changes, nds));
+    // Portal nodes' positions are fully managed by visiblePortals (useMemo).
+    // Strip non-drag position changes for portals so ReactFlow's internal
+    // layout tracking can't override the computed anchor-relative position.
+    const filteredChanges = changes.filter((change) => {
+      if (change.type === "position" && change.id.startsWith("portal:")) {
+        // Allow only position changes while the portal is actively being dragged.
+        return draggingIds.has(change.id);
+      }
+      return true;
+    });
+    setDisplayNodes((nds) => applyNodeChanges(filteredChanges, nds));
   }, []);
 
   // Save warning helper (successful autosaves are silent).
@@ -2363,7 +2373,7 @@ export default function PlannerPage({ user }: PlannerPageProps) {
           createdAt: serverTimestamp(),
           updatedAt: serverTimestamp(),
         } satisfies CrossRefDoc & { createdAt: unknown; updatedAt: unknown });
-        hydrateRefEditor({
+        const newRef: CrossRef = {
           id: newDoc.id,
           label,
           code,
@@ -2373,6 +2383,8 @@ export default function PlannerPage({ user }: PlannerPageProps) {
           portalY: portalPosition?.y ?? null,
           portalAnchorX: anchorPosition.x,
           portalAnchorY: anchorPosition.y,
+          portalOffsetX: null,
+          portalOffsetY: null,
           entityType: newRefType,
           tags: [],
           notes: "",
@@ -2380,7 +2392,10 @@ export default function PlannerPage({ user }: PlannerPageProps) {
           links: [],
           createdAtMs: 0,
           updatedAtMs: 0,
-        });
+        };
+        // Optimistically add to local state so the bubble appears immediately.
+        setRefs((prev) => [...prev, newRef]);
+        hydrateRefEditor(newRef);
         setActivePortalRefId(newDoc.id);
       }
       setNewRefLabel("");
@@ -2572,15 +2587,18 @@ export default function PlannerPage({ user }: PlannerPageProps) {
     if (!db || !editRefId) return;
     setBusyAction(true);
     setError(null);
+    const idToDelete = editRefId;
+    // Optimistically remove from local state immediately so the orb
+    // disappears at once rather than waiting for the Firestore snapshot.
+    setRefs((prev) => prev.filter((r) => r.id !== idToDelete));
+    if (activePortalRefId === idToDelete) setActivePortalRefId(null);
+    hydrateRefEditor(null);
+    setLinkNodeQuery("");
+    setLinkTargetNodeId("");
     try {
-      await deleteDoc(doc(db, "users", user.uid, "crossRefs", editRefId));
-      if (activePortalRefId === editRefId) {
-        setActivePortalRefId(null);
-      }
-      hydrateRefEditor(null);
-      setLinkNodeQuery("");
-      setLinkTargetNodeId("");
+      await deleteDoc(doc(db, "users", user.uid, "crossRefs", idToDelete));
     } catch (actionError: unknown) {
+      // Roll back the optimistic removal on failure.
       setError(actionError instanceof Error ? actionError.message : "Could not delete bubble.");
     } finally {
       setBusyAction(false);
