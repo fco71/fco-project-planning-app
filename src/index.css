@@ -6,8 +6,12 @@ html,
 body,
 #root {
   height: 100%;
+  /* dvh: accounts for iOS bottom bar collapsing/expanding */
+  min-height: 100dvh;
   margin: 0;
   padding: 0;
+  /* Prevent pull-to-refresh interfering with the canvas */
+  overscroll-behavior: none;
 }
 
 body {
@@ -21,6 +25,12 @@ input,
 select,
 textarea {
   font: inherit;
+}
+
+button {
+  touch-action: manipulation;
+  -webkit-tap-highlight-color: transparent;
+  cursor: pointer;
 }
 
 .app-shell {
@@ -640,18 +650,23 @@ textarea {
 
 .planner-mobile-sheet {
   position: fixed;
-  left: 12px;
-  right: 12px;
-  bottom: calc(10px + env(safe-area-inset-bottom));
+  left: calc(8px + env(safe-area-inset-left));
+  right: calc(8px + env(safe-area-inset-right));
+  /* Sit above bottom toolbar (≈66px tall) + safe area */
+  bottom: calc(74px + env(safe-area-inset-bottom));
   z-index: 10040;
   border: 1px solid rgba(255, 255, 255, 0.16);
-  border-radius: 14px;
-  background: rgba(11, 16, 25, 0.97);
-  box-shadow: 0 18px 40px rgba(0, 0, 0, 0.45);
-  padding: 10px;
+  border-radius: 16px;
+  background: rgba(10, 14, 22, 0.98);
+  box-shadow: 0 -4px 32px rgba(0, 0, 0, 0.5), 0 2px 8px rgba(0,0,0,0.3);
+  padding: 12px;
   display: flex;
   flex-direction: column;
-  gap: 8px;
+  gap: 10px;
+  max-height: 65vh;
+  overflow-y: auto;
+  -webkit-overflow-scrolling: touch;
+  overscroll-behavior: contain;
 }
 
 .planner-mobile-sheet-handle {
@@ -694,10 +709,11 @@ textarea {
   border: 1px solid rgba(255, 255, 255, 0.14);
   background: rgba(255, 255, 255, 0.06);
   color: rgba(245, 248, 255, 0.95);
-  border-radius: 8px;
-  padding: 8px 10px;
+  border-radius: 10px;
+  padding: 10px 12px;
   font-size: 16px;
   outline: none;
+  touch-action: manipulation;
 }
 
 .planner-mobile-sheet-grid {
@@ -712,10 +728,19 @@ textarea {
   border: 1px solid rgba(255, 255, 255, 0.16);
   background: rgba(255, 255, 255, 0.08);
   color: rgba(245, 248, 255, 0.95);
-  border-radius: 8px;
-  min-height: 38px;
+  border-radius: 10px;
+  min-height: 44px;
   font-size: 12px;
   font-weight: 700;
+  cursor: pointer;
+  touch-action: manipulation;
+  -webkit-tap-highlight-color: transparent;
+}
+
+.planner-mobile-sheet-grid button:active,
+.planner-mobile-sheet-actions button:active,
+.planner-mobile-sheet-story button:active {
+  background: rgba(255, 255, 255, 0.16);
 }
 
 .planner-mobile-sheet-grid button:disabled,
@@ -738,9 +763,11 @@ textarea {
 
 .planner-mobile-toolbar {
   position: absolute;
-  top: calc(12px + env(safe-area-inset-top));
-  left: 12px;
-  right: 12px;
+  /* Default: bottom bar — works for most phones */
+  bottom: calc(8px + env(safe-area-inset-bottom));
+  top: auto;
+  left: calc(8px + env(safe-area-inset-left));
+  right: calc(8px + env(safe-area-inset-right));
   z-index: 10000;
   display: grid;
   grid-template-columns: repeat(3, minmax(0, 1fr));
@@ -748,18 +775,27 @@ textarea {
 }
 
 .planner-mobile-toolbar button {
-  border: 1px solid rgba(255, 255, 255, 0.18);
-  background: rgba(11, 16, 25, 0.9);
+  border: 1px solid rgba(255, 255, 255, 0.2);
+  background: rgba(10, 14, 22, 0.92);
   color: rgba(245, 248, 255, 0.95);
-  border-radius: 8px;
-  padding: 7px 6px;
+  border-radius: 10px;
+  padding: 9px 6px;
   font-size: 11px;
   font-weight: 700;
-  backdrop-filter: blur(8px);
+  min-height: 44px;
+  backdrop-filter: blur(12px);
+  -webkit-backdrop-filter: blur(12px);
+  cursor: pointer;
+  touch-action: manipulation; /* prevents 300ms delay */
+  -webkit-tap-highlight-color: transparent;
+}
+
+.planner-mobile-toolbar button:active {
+  background: rgba(255, 255, 255, 0.12);
 }
 
 .planner-mobile-toolbar button:disabled {
-  opacity: 0.5;
+  opacity: 0.4;
 }
 
 .planner-node-label {
@@ -1147,15 +1183,21 @@ textarea {
 }
 
 @media (max-width: 980px) {
+  /* Hide header on mobile — toolbar takes its role */
   .app-header {
-    height: auto;
-    flex-direction: column;
-    align-items: flex-start;
+    display: none;
+  }
+
+  /* Canvas fills entire screen */
+  .app-content {
+    height: 100%;
   }
 
   .planner-shell {
     grid-template-columns: 1fr;
     grid-template-rows: 1fr;
+    /* Fill the entire viewport including notch areas */
+    height: 100dvh;
   }
 
   .planner-shell.mobile {
@@ -1171,15 +1213,18 @@ textarea {
     position: fixed;
     top: 0;
     left: 0;
-    width: min(90vw, 380px);
+    width: min(92vw, 390px);
     height: 100%;
-    padding-top: calc(12px + env(safe-area-inset-top));
-    padding-bottom: calc(12px + env(safe-area-inset-bottom));
+    /* Respect notch / Dynamic Island */
+    padding-top: calc(16px + env(safe-area-inset-top));
+    padding-bottom: calc(16px + env(safe-area-inset-bottom));
+    padding-left: calc(12px + env(safe-area-inset-left));
     z-index: 10030;
     transform: translateX(-105%);
-    transition: transform 220ms ease;
-    box-shadow: 12px 0 32px rgba(0, 0, 0, 0.45);
+    transition: transform 240ms cubic-bezier(0.4, 0, 0.2, 1);
+    box-shadow: 16px 0 48px rgba(0, 0, 0, 0.55);
     overscroll-behavior: contain;
+    -webkit-overflow-scrolling: touch;
   }
 
   .planner-shell.mobile .planner-sidebar.mobile-open {
@@ -1202,16 +1247,18 @@ textarea {
     padding: 12px;
   }
 
+  /* Prevent iOS auto-zoom on input focus — keep 16px+ */
   .planner-shell.mobile .planner-panel-block input,
   .planner-shell.mobile .planner-panel-block select,
   .planner-shell.mobile .planner-panel-block textarea {
     font-size: 16px;
   }
 
+  /* Touch-friendly tap targets */
   .planner-shell.mobile .planner-panel-block button,
   .planner-shell.mobile .planner-sidebar-toggle,
   .planner-shell.mobile .planner-mobile-section-tabs button {
-    min-height: 38px;
+    min-height: 44px;
   }
 
   .planner-shell.mobile .planner-reference-preview,
@@ -1233,10 +1280,18 @@ textarea {
     grid-template-columns: 1fr;
   }
 
+  /* On small phones: toolbar lives at the bottom above the home indicator */
   .planner-mobile-toolbar {
     grid-template-columns: repeat(3, minmax(0, 1fr));
-    bottom: calc(12px + env(safe-area-inset-bottom));
     top: auto;
+    bottom: calc(8px + env(safe-area-inset-bottom));
+    left: calc(8px + env(safe-area-inset-left));
+    right: calc(8px + env(safe-area-inset-right));
+  }
+
+  /* Sheet sits above bottom toolbar */
+  .planner-mobile-sheet {
+    bottom: calc(80px + env(safe-area-inset-bottom));
   }
 
   .planner-story-step-item {
@@ -1261,6 +1316,6 @@ textarea {
 
 @media (max-width: 420px) {
   .planner-mobile-toolbar {
-    grid-template-columns: repeat(2, minmax(0, 1fr));
+    grid-template-columns: repeat(3, minmax(0, 1fr));
   }
 }

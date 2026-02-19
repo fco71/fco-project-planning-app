@@ -123,14 +123,14 @@ function normalizeHexColor(value: unknown): string | undefined {
 }
 
 function defaultNodeColor(kind: NodeKind): string {
-  if (kind === "root") return "#3A2C0E";
-  if (kind === "project") return "#101F3E";
-  if (kind === "story") return "#10302A";
-  return "#10141C";
+  if (kind === "root") return "#52340A";
+  if (kind === "project") return "#0A1A50";
+  if (kind === "story") return "#063428";
+  return "#141624";
 }
 
 function storyContainerColor(): string {
-  return "#5B2A86";
+  return "#3A166C";
 }
 
 
@@ -1095,15 +1095,17 @@ export default function PlannerPage({ user }: PlannerPageProps) {
         const showStoryBody = isStory || isStoryLaneBeat;
         const isExpandedStoryCard = expandedStoryNodeIds.has(node.id);
         const bodyText = (node.body || "").trim();
+        // Colors chosen for maximum at-a-glance hierarchy readability.
+        // Hue carries the type; luminance/saturation carries the importance.
         const baseBackground = isRoot
-          ? "rgba(58, 44, 14, 0.92)"
+          ? "rgba(82, 52, 6, 0.97)"         // Root: rich amber-brown — the anchor
           : hasStoryChildren
-            ? "rgba(91, 42, 134, 0.94)"
+            ? "rgba(58, 22, 108, 0.97)"     // Story container: deep violet — narrative hub
           : isProject
-            ? "rgba(16, 31, 62, 0.95)"
+            ? "rgba(10, 26, 80, 0.97)"      // Project: saturated navy blue
           : isStory
-            ? "rgba(16, 48, 42, 0.95)"
-            : "rgba(16, 20, 28, 0.94)";
+            ? "rgba(6, 52, 42, 0.97)"       // Story: deep emerald green
+            : "rgba(20, 22, 36, 0.97)";     // Item: near-black slate — the workhorse
         const background = node.color || baseBackground;
         return {
           id: node.id,
@@ -1171,16 +1173,16 @@ export default function PlannerPage({ user }: PlannerPageProps) {
           },
           style: {
             border: isSearchMatch
-              ? "2px solid rgba(34, 197, 94, 0.9)"
+              ? "2px solid rgba(34, 197, 94, 0.95)"
               : isRoot
-                ? "2px solid rgba(253, 228, 129, 0.9)"
+                ? "2px solid rgba(255, 200, 60, 0.95)"    // bright gold — highest emphasis
                 : hasStoryChildren
-                  ? "1px solid rgba(216, 180, 254, 0.75)"
+                  ? "1.5px solid rgba(192, 132, 252, 0.85)" // bright violet — narrative container
                 : isProject
-                  ? "1px solid rgba(96, 165, 250, 0.6)"
+                  ? "1.5px solid rgba(99, 179, 255, 0.8)"   // sky blue — project level
                 : isStory
-                  ? "1px solid rgba(45, 212, 191, 0.65)"
-                : "1px solid rgba(255, 255, 255, 0.18)",
+                  ? "1.5px solid rgba(52, 211, 153, 0.8)"   // bright emerald — story
+                : "1px solid rgba(100, 106, 140, 0.5)",     // muted slate — item
             borderRadius: isStoryLaneBeat ? 10 : 14,
             width: isStoryLaneBeat ? 300 : showStoryBody ? 280 : 260,
             minHeight: showStoryBody ? (isExpandedStoryCard ? 280 : 190) : undefined,
@@ -1188,8 +1190,16 @@ export default function PlannerPage({ user }: PlannerPageProps) {
             background,
             color: "rgba(250, 252, 255, 0.95)",
             boxShadow: isSearchMatch
-              ? "0 0 0 2px rgba(34, 197, 94, 0.3), 0 12px 28px rgba(0,0,0,0.4)"
-              : "0 10px 24px rgba(0,0,0,0.35)",
+              ? "0 0 0 3px rgba(34, 197, 94, 0.35), 0 12px 28px rgba(0,0,0,0.4)"
+              : isRoot
+                ? "0 0 0 1px rgba(255,200,60,0.15), 0 14px 32px rgba(0,0,0,0.5)"
+                : hasStoryChildren
+                  ? "0 0 0 1px rgba(192,132,252,0.12), 0 12px 28px rgba(0,0,0,0.45)"
+                : isProject
+                  ? "0 0 0 1px rgba(99,179,255,0.1), 0 10px 24px rgba(0,0,0,0.4)"
+                : isStory
+                  ? "0 0 0 1px rgba(52,211,153,0.1), 0 10px 22px rgba(0,0,0,0.4)"
+                : "0 6px 16px rgba(0,0,0,0.35)",
             fontWeight: 700,
             fontSize: 12.5,
           } as React.CSSProperties,
@@ -4477,7 +4487,7 @@ export default function PlannerPage({ user }: PlannerPageProps) {
                 setMobileQuickEditorOpen(false);
               }}
             >
-              Controls
+              ☰ Menu
             </button>
             <button
               onClick={() => {
@@ -4486,7 +4496,7 @@ export default function PlannerPage({ user }: PlannerPageProps) {
               }}
               disabled={!selectedNode}
             >
-              Edit
+              ✏️ Edit
             </button>
             <button
               onClick={() => {
@@ -4495,7 +4505,7 @@ export default function PlannerPage({ user }: PlannerPageProps) {
               }}
               disabled={!selectedNodeId}
             >
-              +Child
+              ＋ Child
             </button>
             <button
               onClick={() => {
@@ -4506,13 +4516,13 @@ export default function PlannerPage({ user }: PlannerPageProps) {
               }}
               disabled={!selectedNode || selectedNode.kind === "root"}
             >
-              {selectedNode?.taskStatus === "done" ? "Todo" : "Done"}
+              {selectedNode?.taskStatus === "done" ? "↩ Todo" : "✓ Done"}
             </button>
             <button onClick={goGrandmotherView} disabled={!rootNodeId}>
-              Home
+              ⌂ Home
             </button>
             <button onClick={goUpOneView} disabled={!currentRootNode?.parentId}>
-              Up
+              ↑ Up
             </button>
           </div>
         ) : null}
