@@ -350,14 +350,23 @@ function getMasterNodeFor(nodeId: string, rootNodeId: string | null, nodesById: 
 }
 
 // ── Portal bubble node ─────────────────────────────────────────────────────
-// No ReactFlow Handles: the dashed edge connects to node center by default.
-// Avoiding Handle avoids a ReactFlow 11 / React 19 useLayoutEffect conflict.
+// One orb per (ref × linked-node) pair. Pinned near its node via fixed offset.
+// No Handles — avoids ReactFlow 11 / React 19 useLayoutEffect conflict.
+// Right-click fires onContextMenu so the parent can show a delete menu.
 const PortalNode = memo(function PortalNode({
   data,
-}: NodeProps<{ code: string; label: string; tooltip: string; count: number; isActive: boolean; onToggle: () => void }>) {
+}: NodeProps<{
+  code: string;
+  tooltip: string;
+  count: number;
+  isActive: boolean;
+  onToggle: () => void;
+  onContextMenu: (e: React.MouseEvent) => void;
+}>) {
   return (
     <div
       style={{ width: "100%", height: "100%", display: "flex", alignItems: "center", justifyContent: "center", position: "relative" }}
+      onContextMenu={(e) => { e.preventDefault(); e.stopPropagation(); data.onContextMenu(e); }}
     >
       <button
         type="button"
@@ -436,6 +445,7 @@ export default function PlannerPage({ user }: PlannerPageProps) {
   const [linkNodeQuery, setLinkNodeQuery] = useState("");
   const [linkTargetNodeId, setLinkTargetNodeId] = useState("");
   const [activePortalRefId, setActivePortalRefId] = useState<string | null>(null);
+  const [portalContextMenu, setPortalContextMenu] = useState<{ x: number; y: number; refId: string } | null>(null);
   const [paletteOpen, setPaletteOpen] = useState(false);
   const [paletteQuery, setPaletteQuery] = useState("");
   const [paletteIndex, setPaletteIndex] = useState(0);
@@ -1058,95 +1068,60 @@ export default function PlannerPage({ user }: PlannerPageProps) {
     return map;
   }, [refs, filteredTreeIdSet]);
 
-  // ── Floating portal bubble nodes (ventovault-style) ──────────────────────
-  // One portal orb per (ref × anchorNode) pair visible in the current view.
-  // Positioned using a smart stack above/below the anchor with side fallback.
-  // Collapse-safe: only emitted when anchorNodeId is in filteredTreeIdSet.
+  // ── Portal bubble nodes ────────────────────────────────────────────────────
+  // One orb per (ref × visible-linked-node). Each orb is pinned at a fixed
+  // offset above its node — no dragging, no position saving.
+  // Multiple refs on the same node stack horizontally (left → right).
+  // Collapse-safe: only shown when the linked nodeId is in filteredTreeIdSet.
   const visiblePortals = useMemo((): Node[] => {
-    const PORTAL_SIZE = 44;
-    const STACK_GAP   = 54;
-    const NODE_WIDTH  = 260; // default tree node width
-    const NODE_HEIGHT = 52;  // approximate tree node height (no story body)
+    const PORTAL_SIZE = 40;
+    const PORTAL_GAP  = 46; // horizontal gap between stacked orbs on same node
+    const NODE_WIDTH  = 260;
+    const OFFSET_Y    = -52; // how far above the node top edge
 
-    // Group refs by their anchor node so we can stack per-anchor.
-    const byAnchor = new Map<string, CrossRef[]>();
+    // Build a map: nodeId → sorted list of refs that link to it
+    const refsByNode = new Map<string, CrossRef[]>();
     for (const ref of refs) {
-      const visibleIds = ref.nodeIds.filter((id) => filteredTreeIdSet.has(id));
-      if (visibleIds.length === 0) continue;
-      // Use the first visible nodeId as anchor (matches resolveNodePosition logic)
-      const anchorId = ref.anchorNodeId && filteredTreeIdSet.has(ref.anchorNodeId)
-        ? ref.anchorNodeId
-        : visibleIds[0];
-      if (!byAnchor.has(anchorId)) byAnchor.set(anchorId, []);
-      byAnchor.get(anchorId)!.push(ref);
+      for (const nodeId of ref.nodeIds) {
+        if (!filteredTreeIdSet.has(nodeId)) continue;
+        if (!refsByNode.has(nodeId)) refsByNode.set(nodeId, []);
+        refsByNode.get(nodeId)!.push(ref);
+      }
     }
-
-    // Build bounds of all visible tree nodes for above/below decision
-    let minY = Infinity, maxY = -Infinity;
-    for (const id of filteredTreeIdSet) {
-      const pos = resolveNodePosition(id);
-      minY = Math.min(minY, pos.y);
-      maxY = Math.max(maxY, pos.y);
-    }
-    const midY = (minY + maxY) / 2;
+    // Sort each node's refs alphabetically by code for stable ordering
+    refsByNode.forEach((nodeRefs) => nodeRefs.sort((a, b) => a.code.localeCompare(b.code)));
 
     const result: Node[] = [];
-    byAnchor.forEach((anchorRefs, anchorId) => {
-      anchorRefs.sort((a, b) => a.code.localeCompare(b.code));
-      const anchor = resolveNodePosition(anchorId);
-      const stackHeight = (anchorRefs.length - 1) * STACK_GAP;
-      const nudge = getNudge(anchorId, 10, 6);
+    refsByNode.forEach((nodeRefs, nodeId) => {
+      const pos = resolveNodePosition(nodeId);
+      // Centre the stack of orbs above the node
+      const totalWidth = nodeRefs.length * PORTAL_SIZE + (nodeRefs.length - 1) * (PORTAL_GAP - PORTAL_SIZE);
+      const startX = pos.x + NODE_WIDTH / 2 - totalWidth / 2;
 
-      // Primary stack: above or below anchor
-      const placeBelow = anchor.y <= midY;
-      const stackX = anchor.x + NODE_WIDTH / 2 - PORTAL_SIZE / 2 + nudge.x;
-      let stackStartY = placeBelow
-        ? anchor.y + NODE_HEIGHT + 72 + nudge.y
-        : anchor.y - 72 - stackHeight - PORTAL_SIZE + nudge.y;
+      nodeRefs.forEach((ref, idx) => {
+        const x = startX + idx * PORTAL_GAP;
+        const y = pos.y + OFFSET_Y;
 
-      // Side fallback: check if primary overlaps anchor rect
-      const anchorRect = { x: anchor.x, y: anchor.y, w: NODE_WIDTH, h: NODE_HEIGHT };
-      const overlapsPrimary = (x: number, y: number) => !(
-        x + PORTAL_SIZE < anchorRect.x || x > anchorRect.x + anchorRect.w ||
-        y + PORTAL_SIZE < anchorRect.y || y > anchorRect.y + anchorRect.h
-      );
-
-      anchorRefs.forEach((ref, idx) => {
-        let x = stackX;
-        let y = stackStartY + idx * STACK_GAP;
-        if (overlapsPrimary(x, y)) {
-          // Side fallback: place to the right (or left if near right edge)
-          x = anchor.x + NODE_WIDTH + 64 + nudge.x;
-          y = anchor.y + NODE_HEIGHT / 2 - stackHeight / 2 + idx * STACK_GAP + nudge.y;
-        }
-
-        // Build tooltip: full label + all linked node titles
+        // Tooltip: label + all linked node titles
         const linkedTitles = ref.nodeIds
           .map((nid) => nodesById.get(nid)?.title)
           .filter(Boolean)
           .join(" · ");
         const tooltip = linkedTitles ? `${ref.label}\n${linkedTitles}` : ref.label;
 
-        // If user has manually dragged this portal, use the saved offset from anchor.
-        // Offset model is layout-change-proof: position = anchor + offset, always.
-        if (typeof ref.portalOffsetX === "number" && typeof ref.portalOffsetY === "number") {
-          x = anchor.x + ref.portalOffsetX;
-          y = anchor.y + ref.portalOffsetY;
-        }
-
         result.push({
-          id: `portal:${ref.id}`,
+          id: `portal:${ref.id}:${nodeId}`,
           position: { x, y },
           type: "portal",
           data: {
             code: ref.code,
-            label: ref.label,
             tooltip,
             count: ref.nodeIds.length,
-            isActive: false, // overridden in flowNodes
+            isActive: false,    // overridden in flowNodes
             onToggle: () => {}, // overridden in flowNodes
+            onContextMenu: () => {}, // overridden in flowNodes
           },
-          draggable: true,
+          draggable: false,
           selectable: false,
           zIndex: 10,
           style: {
@@ -1324,27 +1299,25 @@ export default function PlannerPage({ user }: PlannerPageProps) {
       });
   }, [filteredTreeIds, nodesById]);
 
-  // Dashed orange edges: each portal → its anchor tree node
+  // Dashed orange edges: one short line per (ref × visible linked node)
   const basePortalEdges = useMemo((): Edge[] => {
     const edges: Edge[] = [];
     for (const ref of refs) {
-      const visibleIds = ref.nodeIds.filter((id) => filteredTreeIdSet.has(id));
-      if (visibleIds.length === 0) continue;
-      const anchorId = ref.anchorNodeId && filteredTreeIdSet.has(ref.anchorNodeId)
-        ? ref.anchorNodeId
-        : visibleIds[0];
-      edges.push({
-        id: `portal-edge:${ref.id}`,
-        source: anchorId,
-        target: `portal:${ref.id}`,
-        animated: false,
-        zIndex: 5,
-        style: {
-          stroke: "rgba(255,160,71,0.55)",
-          strokeWidth: 1.5,
-          strokeDasharray: "5 5",
-        },
-      } as Edge);
+      for (const nodeId of ref.nodeIds) {
+        if (!filteredTreeIdSet.has(nodeId)) continue;
+        edges.push({
+          id: `portal-edge:${ref.id}:${nodeId}`,
+          source: nodeId,
+          target: `portal:${ref.id}:${nodeId}`,
+          animated: false,
+          zIndex: 5,
+          style: {
+            stroke: "rgba(255,160,71,0.6)",
+            strokeWidth: 1.5,
+            strokeDasharray: "4 4",
+          },
+        } as Edge);
+      }
     }
     return edges;
   }, [refs, filteredTreeIdSet]);
@@ -1439,9 +1412,11 @@ export default function PlannerPage({ user }: PlannerPageProps) {
       } as Node;
     });
 
-    // Inject active state + toggle callback into portal nodes
+    // Inject active state, toggle, and context-menu callbacks into portal nodes.
+    // Portal IDs are "portal:${refId}:${nodeId}".
     const portalNodes = visiblePortals.map((pNode) => {
-      const refId = pNode.id.replace("portal:", "");
+      const parts = pNode.id.split(":");
+      const refId = parts[1];
       const isActive = activePortalRefId === refId;
       return {
         ...pNode,
@@ -1449,6 +1424,10 @@ export default function PlannerPage({ user }: PlannerPageProps) {
           ...pNode.data,
           isActive,
           onToggle: () => setActivePortalRefId((prev) => prev === refId ? null : refId),
+          onContextMenu: (e: React.MouseEvent) => {
+            e.preventDefault();
+            setPortalContextMenu({ x: e.clientX, y: e.clientY, refId });
+          },
         },
       } as Node;
     });
@@ -2605,6 +2584,40 @@ export default function PlannerPage({ user }: PlannerPageProps) {
     }
   }, [activePortalRefId, editRefId, hydrateRefEditor, user.uid]);
 
+  /** Delete a cross-reference directly by its ID (used by portal right-click context menu). */
+  const deletePortalByRefId = useCallback(async (refId: string) => {
+    if (!db || !refId) return;
+    setBusyAction(true);
+    setError(null);
+    setPortalContextMenu(null);
+    setRefs((prev) => prev.filter((r) => r.id !== refId));
+    if (activePortalRefId === refId) setActivePortalRefId(null);
+    if (editRefId === refId) {
+      hydrateRefEditor(null);
+      setLinkNodeQuery("");
+      setLinkTargetNodeId("");
+    }
+    try {
+      await deleteDoc(doc(db, "users", user.uid, "crossRefs", refId));
+    } catch (actionError: unknown) {
+      setError(actionError instanceof Error ? actionError.message : "Could not delete cross-reference.");
+    } finally {
+      setBusyAction(false);
+    }
+  }, [activePortalRefId, editRefId, hydrateRefEditor, user.uid]);
+
+  // Dismiss the portal context menu when the user clicks outside of it.
+  useEffect(() => {
+    if (!portalContextMenu) return;
+    const handleOutside = (e: MouseEvent) => {
+      const target = e.target as HTMLElement | null;
+      if (target?.closest("[data-portal-context-menu]")) return;
+      setPortalContextMenu(null);
+    };
+    document.addEventListener("mousedown", handleOutside);
+    return () => document.removeEventListener("mousedown", handleOutside);
+  }, [portalContextMenu]);
+
   const selectRefForEditing = useCallback(
     (refId: string) => {
       setActivePortalRefId(refId);
@@ -2748,32 +2761,8 @@ export default function PlannerPage({ user }: PlannerPageProps) {
     async (_: React.MouseEvent, node: Node) => {
       if (!db) return;
 
-      // ── Portal drag: save offset-from-anchor to crossRef ─────────────────
-      // We store portalOffsetX/Y = (portal pos) - (anchor pos) so the bubble
-      // stays correctly placed even when the tree layout recomputes.
-      if (node.id.startsWith("portal:")) {
-        const refId = node.id.replace("portal:", "");
-        const ref = refs.find((r) => r.id === refId);
-        const anchorId = ref?.anchorNodeId && filteredTreeIdSet.has(ref.anchorNodeId)
-          ? ref.anchorNodeId
-          : ref?.nodeIds.find((id) => filteredTreeIdSet.has(id));
-        const anchorPos = anchorId ? resolveNodePosition(anchorId) : null;
-        const offsetX = anchorPos ? node.position.x - anchorPos.x : 0;
-        const offsetY = anchorPos ? node.position.y - anchorPos.y : 0;
-        setRefs((prev) => prev.map((r) => r.id !== refId ? r : {
-          ...r,
-          portalOffsetX: offsetX,
-          portalOffsetY: offsetY,
-        }));
-        try {
-          await updateDoc(doc(db, "users", user.uid, "crossRefs", refId), {
-            portalOffsetX: offsetX,
-            portalOffsetY: offsetY,
-            updatedAt: serverTimestamp(),
-          });
-        } catch { showSaveError(); }
-        return;
-      }
+      // Portal nodes are pinned (draggable: false) — skip silently.
+      if (node.id.startsWith("portal:")) return;
 
       // Snapshot and clear drop-target state before any async work.
       draggedNodeIdRef.current = null;
@@ -2844,7 +2833,7 @@ export default function PlannerPage({ user }: PlannerPageProps) {
         setError(actionError instanceof Error ? actionError.message : "Could not save node position.");
       }
     },
-    [applyLocalNodePatch, dropTargetNodeId, filteredTreeIdSet, nodesById, pushHistory, refs, resolveNodePosition, rootNodeId, showSaveError, user.uid]
+    [applyLocalNodePatch, dropTargetNodeId, filteredTreeIdSet, nodesById, pushHistory, rootNodeId, showSaveError, user.uid]
   );
 
   const onSelectionDragStop = useCallback(
@@ -4521,6 +4510,14 @@ export default function PlannerPage({ user }: PlannerPageProps) {
           onSelectionDragStop={onSelectionDragStop}
           onNodeContextMenu={(event, node) => {
             event.preventDefault();
+            // Portal orb right-click → show portal delete menu
+            if (node.id.startsWith("portal:")) {
+              const parts = node.id.split(":");
+              const refId = parts[1];
+              setPortalContextMenu({ x: event.clientX, y: event.clientY, refId });
+              return;
+            }
+            setPortalContextMenu(null);
             if (isMobileLayout) {
               setSelectedNodeId(node.id);
               setActivePortalRefId(null);
@@ -4538,6 +4535,7 @@ export default function PlannerPage({ user }: PlannerPageProps) {
           }}
           onPaneClick={() => {
             setContextMenu(null);
+            setPortalContextMenu(null);
           }}
           minZoom={0.3}
         >
@@ -4565,6 +4563,92 @@ export default function PlannerPage({ user }: PlannerPageProps) {
             onToggleTaskStatus={handleContextToggleTaskStatus}
           />
         )}
+
+        {/* Portal orb right-click context menu */}
+        {portalContextMenu && (() => {
+          const menuRef = refs.find((r) => r.id === portalContextMenu.refId);
+          return (
+            <div
+              data-portal-context-menu
+              style={{
+                position: "fixed",
+                left: portalContextMenu.x,
+                top: portalContextMenu.y,
+                zIndex: 9999,
+                minWidth: 180,
+                background: "rgba(18, 20, 28, 0.97)",
+                border: "1px solid rgba(255, 160, 71, 0.35)",
+                borderRadius: 8,
+                boxShadow: "0 8px 24px rgba(0,0,0,0.5)",
+                padding: "6px 0",
+                userSelect: "none",
+              }}
+            >
+              {menuRef && (
+                <div
+                  style={{
+                    padding: "6px 14px 8px",
+                    fontSize: 11,
+                    fontWeight: 600,
+                    letterSpacing: "0.06em",
+                    textTransform: "uppercase",
+                    color: "rgba(255,160,71,0.75)",
+                    borderBottom: "1px solid rgba(255,255,255,0.07)",
+                    marginBottom: 4,
+                  }}
+                >
+                  {menuRef.code} · {menuRef.label}
+                </div>
+              )}
+              <button
+                type="button"
+                onClick={() => void deletePortalByRefId(portalContextMenu.refId)}
+                disabled={busyAction}
+                style={{
+                  display: "flex",
+                  alignItems: "center",
+                  gap: 8,
+                  width: "100%",
+                  padding: "7px 14px",
+                  background: "none",
+                  border: "none",
+                  cursor: busyAction ? "not-allowed" : "pointer",
+                  fontSize: 13,
+                  color: busyAction ? "rgba(239,68,68,0.4)" : "rgba(239,68,68,0.9)",
+                  textAlign: "left",
+                  transition: "background 100ms",
+                }}
+                onMouseEnter={(e) => { (e.currentTarget as HTMLButtonElement).style.background = "rgba(239,68,68,0.12)"; }}
+                onMouseLeave={(e) => { (e.currentTarget as HTMLButtonElement).style.background = "none"; }}
+              >
+                <span style={{ fontSize: 15 }}>🗑</span>
+                {busyAction ? "Deleting…" : "Delete cross-reference"}
+              </button>
+              <button
+                type="button"
+                onClick={() => setPortalContextMenu(null)}
+                style={{
+                  display: "flex",
+                  alignItems: "center",
+                  gap: 8,
+                  width: "100%",
+                  padding: "7px 14px",
+                  background: "none",
+                  border: "none",
+                  cursor: "pointer",
+                  fontSize: 13,
+                  color: "rgba(255,255,255,0.45)",
+                  textAlign: "left",
+                  transition: "background 100ms",
+                }}
+                onMouseEnter={(e) => { (e.currentTarget as HTMLButtonElement).style.background = "rgba(255,255,255,0.05)"; }}
+                onMouseLeave={(e) => { (e.currentTarget as HTMLButtonElement).style.background = "none"; }}
+              >
+                Cancel
+              </button>
+            </div>
+          );
+        })()}
 
         {paletteOpen && (
           <div
