@@ -450,6 +450,8 @@ export default function PlannerPage({ user }: PlannerPageProps) {
   const [paletteQuery, setPaletteQuery] = useState("");
   const [paletteIndex, setPaletteIndex] = useState(0);
   const paletteInputRef = useRef<HTMLInputElement>(null);
+  // Swipe-to-dismiss tracking for the mobile quick-editor sheet.
+  const sheetTouchStartY = useRef<number | null>(null);
   const [collapsedNodeIds, setCollapsedNodeIds] = useState<Set<string>>(new Set());
   const [hoveredNodeId, setHoveredNodeId] = useState<string | null>(null);
   const [hoveredEdgeId, setHoveredEdgeId] = useState<string | null>(null);
@@ -1184,9 +1186,10 @@ export default function PlannerPage({ user }: PlannerPageProps) {
                   ? "1.5px solid rgba(52, 211, 153, 0.8)"   // bright emerald — story
                 : "1px solid rgba(100, 106, 140, 0.5)",     // muted slate — item
             borderRadius: isStoryLaneBeat ? 10 : 14,
-            width: isStoryLaneBeat ? 300 : showStoryBody ? 280 : 260,
+            // Slightly wider nodes on mobile to accommodate bigger font without wrapping.
+            width: isStoryLaneBeat ? 300 : showStoryBody ? (isMobileLayout ? 300 : 280) : (isMobileLayout ? 280 : 260),
             minHeight: showStoryBody ? (isExpandedStoryCard ? 280 : 190) : undefined,
-            padding: showStoryBody ? 12 : 10,
+            padding: showStoryBody ? 12 : (isMobileLayout ? 12 : 10),
             background,
             color: "rgba(250, 252, 255, 0.95)",
             boxShadow: isSearchMatch
@@ -1201,7 +1204,7 @@ export default function PlannerPage({ user }: PlannerPageProps) {
                   ? "0 0 0 1px rgba(52,211,153,0.1), 0 10px 22px rgba(0,0,0,0.4)"
                 : "0 6px 16px rgba(0,0,0,0.35)",
             fontWeight: 700,
-            fontSize: 12.5,
+            fontSize: isMobileLayout ? 14 : 12.5,
           } as React.CSSProperties,
           draggable: true,
           selectable: true,
@@ -1214,6 +1217,7 @@ export default function PlannerPage({ user }: PlannerPageProps) {
     currentRootKind,
     expandedStoryNodeIds,
     filteredTreeIds,
+    isMobileLayout,
     nodesById,
     rootNodeId,
     searchMatchingIds,
@@ -1453,10 +1457,11 @@ export default function PlannerPage({ user }: PlannerPageProps) {
   // drag state rather than the stale Firestore snapshot in nodesById.
   // One orb per (ref × visible-linked-node). Stacked horizontally above node.
   const visiblePortals = useMemo((): Node[] => {
-    const PORTAL_SIZE = 40;
-    const PORTAL_GAP  = 46;
-    const NODE_WIDTH  = 260;
-    const OFFSET_Y    = -52; // above the node's top edge
+    // Larger orbs on mobile so they're easy to tap.
+    const PORTAL_SIZE = isMobileLayout ? 48 : 40;
+    const PORTAL_GAP  = isMobileLayout ? 56 : 46;
+    const NODE_WIDTH  = isMobileLayout ? 280 : 260;
+    const OFFSET_Y    = isMobileLayout ? -62 : -52; // above the node's top edge
 
     // Build a map: nodeId → sorted list of refs that link to it
     const refsByNode = new Map<string, CrossRef[]>();
@@ -1514,7 +1519,7 @@ export default function PlannerPage({ user }: PlannerPageProps) {
       });
     });
     return result;
-  }, [refs, filteredTreeIdSet, displayPositionsMap, resolveNodePosition, nodesById]);
+  }, [refs, filteredTreeIdSet, displayPositionsMap, resolveNodePosition, nodesById, isMobileLayout]);
 
   // Inject active state and callbacks into portal nodes.
   // Kept separate from visiblePortals so callback identity changes (activePortalRefId)
@@ -3601,7 +3606,7 @@ export default function PlannerPage({ user }: PlannerPageProps) {
             className="planner-sidebar-toggle"
             aria-label={isMobileLayout ? "Close controls" : sidebarIsCollapsed ? "Expand sidebar" : "Collapse sidebar"}
           >
-            {isMobileLayout ? "Close" : sidebarIsCollapsed ? "→" : "←"}
+            {isMobileLayout ? "✕" : sidebarIsCollapsed ? "→" : "←"}
           </button>
           {!sidebarIsCollapsed && (
             <div className="planner-undo-redo-btns">
@@ -4380,8 +4385,26 @@ export default function PlannerPage({ user }: PlannerPageProps) {
       ) : null}
 
       {isMobileLayout && mobileQuickEditorOpen ? (
-        <section className="planner-mobile-sheet" role="dialog" aria-label="Quick node editor">
-          <div className="planner-mobile-sheet-handle" />
+        <section
+          className="planner-mobile-sheet"
+          role="dialog"
+          aria-label="Quick node editor"
+          onTouchStart={(e) => { sheetTouchStartY.current = e.touches[0]?.clientY ?? null; }}
+          onTouchEnd={(e) => {
+            const startY = sheetTouchStartY.current;
+            if (startY === null) return;
+            const endY = e.changedTouches[0]?.clientY ?? startY;
+            sheetTouchStartY.current = null;
+            // Swipe down ≥ 60px → dismiss
+            if (endY - startY > 60) setMobileQuickEditorOpen(false);
+          }}
+        >
+          <div
+            className="planner-mobile-sheet-handle"
+            onClick={() => setMobileQuickEditorOpen(false)}
+            role="button"
+            aria-label="Close"
+          />
           {selectedNode ? (
             <>
               <div className="planner-mobile-sheet-header">
@@ -4533,15 +4556,32 @@ export default function PlannerPage({ user }: PlannerPageProps) {
           nodeTypes={nodeTypes}
           edgeTypes={edgeTypes}
           fitView
-          fitViewOptions={{ padding: 0.3, maxZoom: 1 }}
+          fitViewOptions={{ padding: isMobileLayout ? 0.12 : 0.3, maxZoom: isMobileLayout ? 0.85 : 1 }}
           nodesConnectable={false}
           selectionOnDrag={!isMobileLayout}
           selectionMode={isMobileLayout ? SelectionMode.Full : SelectionMode.Partial}
+          // On mobile, single-finger drag pans the canvas (no box-selection).
+          // On desktop, panning requires middle-mouse or space+drag.
+          panOnDrag={isMobileLayout ? [0, 1, 2] : [1, 2]}
+          panOnScroll={!isMobileLayout}
           multiSelectionKeyCode={["Shift", "Meta", "Control"]}
           onInit={setRfInstance}
           onNodesChange={handleNodesChange}
           onNodeClick={(_, node) => {
             setContextMenu(null);
+            setPortalContextMenu(null);
+            // Portal orb tap: toggle active state and (on mobile) open Bubbles panel.
+            if (node.id.startsWith("portal:")) {
+              const parts = node.id.split(":");
+              const refId = parts[1];
+              setActivePortalRefId((prev) => (prev === refId ? null : refId));
+              if (isMobileLayout) {
+                setMobileSidebarSection("bubbles");
+                setMobileSidebarOpen(true);
+                setMobileQuickEditorOpen(false);
+              }
+              return;
+            }
             setSelectedNodeId(node.id);
             setActivePortalRefId(null);
             if (isMobileLayout) setMobileSidebarOpen(false);
@@ -4586,6 +4626,11 @@ export default function PlannerPage({ user }: PlannerPageProps) {
           onPaneClick={() => {
             setContextMenu(null);
             setPortalContextMenu(null);
+            // On mobile, tapping the canvas background deselects and closes the sheet.
+            if (isMobileLayout) {
+              setSelectedNodeId(null);
+              setMobileQuickEditorOpen(false);
+            }
           }}
           minZoom={0.3}
         >

@@ -1063,9 +1063,11 @@ button {
   z-index: 9999;
 }
 
-/* Show tooltip on hover of the whole portal node */
+/* Show tooltip on hover (desktop) OR when the button inside is focused (touch tap on mobile) */
 .react-flow__node:hover .planner-portal-label::after,
-.react-flow__node:hover .planner-portal-label::before {
+.react-flow__node:hover .planner-portal-label::before,
+.react-flow__node:focus-within .planner-portal-label::after,
+.react-flow__node:focus-within .planner-portal-label::before {
   opacity: 1;
   transform: translateX(-50%) translateY(0);
 }
@@ -1272,6 +1274,57 @@ button {
 
   .planner-shell.mobile .planner-palette > input {
     font-size: 16px;
+  }
+
+  /* Sidebar close button — big and thumb-reachable */
+  .planner-shell.mobile .planner-sidebar-toggle {
+    min-width: 44px;
+    min-height: 44px;
+    font-size: 18px;
+    padding: 8px 12px;
+    border-radius: 10px;
+  }
+
+  /* Node labels larger on mobile — readable without zooming in */
+  .react-flow__node .planner-node-title {
+    font-size: 14px;
+  }
+
+  .react-flow__node .planner-kind-badge,
+  .react-flow__node .planner-task-badge,
+  .react-flow__node .planner-node-count {
+    font-size: 10.5px;
+  }
+
+  /* Portal orbs larger on mobile for easier tapping */
+  .planner-portal-inner {
+    border-width: 2.5px;
+  }
+
+  /* Sheet handle — bigger tap zone to dismiss */
+  .planner-mobile-sheet-handle {
+    width: 56px;
+    height: 5px;
+    margin: 0 auto 8px;
+    cursor: pointer;
+  }
+
+  /* Section tabs taller for thumb tap */
+  .planner-mobile-section-tabs button {
+    min-height: 44px;
+    font-size: 12px;
+    border-radius: 10px;
+  }
+
+  /* Prevent text selection on canvas elements during touch drag */
+  .planner-canvas {
+    user-select: none;
+    -webkit-user-select: none;
+  }
+
+  /* ReactFlow node wrapper — prevent default touch callout on long press */
+  .react-flow__node {
+    -webkit-touch-callout: none;
   }
 }
 
