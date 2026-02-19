@@ -1422,11 +1422,11 @@ export default function PlannerPage({ user }: PlannerPageProps) {
     });
     draggingNodeIdsRef.current = draggingIds;
 
-    // Strip portal position events — portals derive position from displayPositionsMap,
-    // so ReactFlow's internal tracking must not override them.
-    const treeChanges = changes.filter(
-      (c) => !(c.type === "position" && c.id.startsWith("portal:"))
-    );
+    // Strip ALL change events for portal nodes — portals are not in displayNodes
+    // and derive their positions from displayPositionsMap. Letting ReactFlow
+    // apply select/remove/position changes for portal IDs to displayNodes
+    // causes inconsistencies that make portals flicker or disappear on mobile drag.
+    const treeChanges = changes.filter((c) => !c.id.startsWith("portal:"));
     if (treeChanges.length === 0) return;
 
     // Accumulate changes and flush once per animation frame.
@@ -2819,6 +2819,10 @@ export default function PlannerPage({ user }: PlannerPageProps) {
       // Portal nodes are pinned (draggable: false) — skip silently.
       if (node.id.startsWith("portal:")) return;
 
+      // Ensure dragging state is cleared on drag end (guards against mobile
+      // touch events that don't always fire dragging:false in onNodesChange).
+      draggingNodeIdsRef.current.delete(node.id);
+
       // Snapshot and clear drop-target state before any async work.
       draggedNodeIdRef.current = null;
       const capturedDropTarget = dropTargetNodeId;
@@ -2894,6 +2898,8 @@ export default function PlannerPage({ user }: PlannerPageProps) {
   const onSelectionDragStop = useCallback(
     async (_: React.MouseEvent, draggedNodes: Node[]) => {
       if (!db) return;
+      // Ensure dragging state is cleared for all nodes (guards mobile touch edge cases).
+      draggedNodes.forEach((n) => draggingNodeIdsRef.current.delete(n.id));
       // No re-parenting on multi-select drag — clear drop-target state.
       draggedNodeIdRef.current = null;
       setDropTargetNodeId(null);
