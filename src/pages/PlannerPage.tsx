@@ -1068,75 +1068,8 @@ export default function PlannerPage({ user }: PlannerPageProps) {
     return map;
   }, [refs, filteredTreeIdSet]);
 
-  // ── Portal bubble nodes ────────────────────────────────────────────────────
-  // One orb per (ref × visible-linked-node). Each orb is pinned at a fixed
-  // offset above its node — no dragging, no position saving.
-  // Multiple refs on the same node stack horizontally (left → right).
-  // Collapse-safe: only shown when the linked nodeId is in filteredTreeIdSet.
-  const visiblePortals = useMemo((): Node[] => {
-    const PORTAL_SIZE = 40;
-    const PORTAL_GAP  = 46; // horizontal gap between stacked orbs on same node
-    const NODE_WIDTH  = 260;
-    const OFFSET_Y    = -52; // how far above the node top edge
-
-    // Build a map: nodeId → sorted list of refs that link to it
-    const refsByNode = new Map<string, CrossRef[]>();
-    for (const ref of refs) {
-      for (const nodeId of ref.nodeIds) {
-        if (!filteredTreeIdSet.has(nodeId)) continue;
-        if (!refsByNode.has(nodeId)) refsByNode.set(nodeId, []);
-        refsByNode.get(nodeId)!.push(ref);
-      }
-    }
-    // Sort each node's refs alphabetically by code for stable ordering
-    refsByNode.forEach((nodeRefs) => nodeRefs.sort((a, b) => a.code.localeCompare(b.code)));
-
-    const result: Node[] = [];
-    refsByNode.forEach((nodeRefs, nodeId) => {
-      const pos = resolveNodePosition(nodeId);
-      // Centre the stack of orbs above the node
-      const totalWidth = nodeRefs.length * PORTAL_SIZE + (nodeRefs.length - 1) * (PORTAL_GAP - PORTAL_SIZE);
-      const startX = pos.x + NODE_WIDTH / 2 - totalWidth / 2;
-
-      nodeRefs.forEach((ref, idx) => {
-        const x = startX + idx * PORTAL_GAP;
-        const y = pos.y + OFFSET_Y;
-
-        // Tooltip: label + all linked node titles
-        const linkedTitles = ref.nodeIds
-          .map((nid) => nodesById.get(nid)?.title)
-          .filter(Boolean)
-          .join(" · ");
-        const tooltip = linkedTitles ? `${ref.label}\n${linkedTitles}` : ref.label;
-
-        result.push({
-          id: `portal:${ref.id}:${nodeId}`,
-          position: { x, y },
-          type: "portal",
-          data: {
-            code: ref.code,
-            tooltip,
-            count: ref.nodeIds.length,
-            isActive: false,    // overridden in flowNodes
-            onToggle: () => {}, // overridden in flowNodes
-            onContextMenu: () => {}, // overridden in flowNodes
-          },
-          draggable: false,
-          selectable: false,
-          zIndex: 10,
-          style: {
-            width: PORTAL_SIZE,
-            height: PORTAL_SIZE,
-            borderRadius: 999,
-            background: "transparent",
-            border: "none",
-            padding: 0,
-          },
-        } as Node);
-      });
-    });
-    return result;
-  }, [refs, filteredTreeIdSet, resolveNodePosition, nodesById]);
+  // visiblePortals is computed later (after displayPositionsMap) so it can
+  // read live drag positions. Placeholder comment keeps the section marker.
 
   const baseTreeNodes = useMemo(() => {
     return filteredTreeIds
@@ -1379,8 +1312,11 @@ export default function PlannerPage({ user }: PlannerPageProps) {
     return new Set(activeRef?.nodeIds || []);
   }, [activePortalRefId, refs]);
 
+  // Tree nodes only — portals are injected separately at render time so their
+  // positions can track displayNodes live (during drag) without going through
+  // the flowNodes → displayNodes pipeline (which would lag one render behind).
   const flowNodes = useMemo(() => {
-    const treeNodes = baseTreeNodes.map((node) => {
+    return baseTreeNodes.map((node) => {
       const isSelected = selectedNodeId === node.id;
       const isActivePortalTarget = activeLinkedNodeIds.has(node.id);
       const isHoverRelated = hoverNodeIds.has(node.id);
@@ -1411,29 +1347,7 @@ export default function PlannerPage({ user }: PlannerPageProps) {
         },
       } as Node;
     });
-
-    // Inject active state, toggle, and context-menu callbacks into portal nodes.
-    // Portal IDs are "portal:${refId}:${nodeId}".
-    const portalNodes = visiblePortals.map((pNode) => {
-      const parts = pNode.id.split(":");
-      const refId = parts[1];
-      const isActive = activePortalRefId === refId;
-      return {
-        ...pNode,
-        data: {
-          ...pNode.data,
-          isActive,
-          onToggle: () => setActivePortalRefId((prev) => prev === refId ? null : refId),
-          onContextMenu: (e: React.MouseEvent) => {
-            e.preventDefault();
-            setPortalContextMenu({ x: e.clientX, y: e.clientY, refId });
-          },
-        },
-      } as Node;
-    });
-
-    return [...treeNodes, ...portalNodes];
-  }, [activeLinkedNodeIds, activePortalRefId, baseTreeNodes, dropTargetNodeId, hoverNodeIds, hoveredEdgeId, hoveredNodeId, selectedNodeId, visiblePortals]);
+  }, [activeLinkedNodeIds, baseTreeNodes, dropTargetNodeId, hoverNodeIds, hoveredEdgeId, hoveredNodeId, selectedNodeId]);
 
   const flowEdges = useMemo(() => {
     return baseEdges.map((edge) => {
@@ -1454,9 +1368,16 @@ export default function PlannerPage({ user }: PlannerPageProps) {
     });
   }, [baseEdges, hoverEdgeIds, hoveredEdgeId, hoveredNodeId]);
 
+  // displayNodes: live tree-node positions updated every drag frame.
+  // Portal nodes are NOT stored here — they are injected at render time from
+  // livePortalNodes (which reads displayPositionsMap) so they follow the tree
+  // nodes smoothly without any per-frame state lag.
   const [displayNodes, setDisplayNodes] = useState<Node[]>([]);
   const draggingNodeIdsRef = useRef<Set<string>>(new Set());
   const draggedNodeIdRef   = useRef<string | null>(null);
+  // rAF handle for batching onNodesChange calls (ventovault-map approach).
+  const nodesChangeRafRef  = useRef<number | null>(null);
+  const pendingNodeChangesRef = useRef<Parameters<OnNodesChange>[0] | null>(null);
 
   // flowNodes → displayNodes: freeze positions of actively-dragged nodes so ReactFlow doesn't fight us.
   useEffect(() => {
@@ -1473,7 +1394,10 @@ export default function PlannerPage({ user }: PlannerPageProps) {
     });
   }, [flowNodes]);
 
+  // Batch position change events per animation frame so portals recompute at
+  // rAF cadence (smooth, ~60fps) instead of on every raw pointer event.
   const handleNodesChange: OnNodesChange = useCallback((changes) => {
+    // Update dragging set synchronously (needed for drag-stop detection).
     const draggingIds = new Set(draggingNodeIdsRef.current);
     changes.forEach((change) => {
       if (change.type !== "position") return;
@@ -1483,18 +1407,134 @@ export default function PlannerPage({ user }: PlannerPageProps) {
       }
     });
     draggingNodeIdsRef.current = draggingIds;
-    // Portal nodes' positions are fully managed by visiblePortals (useMemo).
-    // Strip non-drag position changes for portals so ReactFlow's internal
-    // layout tracking can't override the computed anchor-relative position.
-    const filteredChanges = changes.filter((change) => {
-      if (change.type === "position" && change.id.startsWith("portal:")) {
-        // Allow only position changes while the portal is actively being dragged.
-        return draggingIds.has(change.id);
+
+    // Strip portal position events — portals derive position from displayPositionsMap,
+    // so ReactFlow's internal tracking must not override them.
+    const treeChanges = changes.filter(
+      (c) => !(c.type === "position" && c.id.startsWith("portal:"))
+    );
+    if (treeChanges.length === 0) return;
+
+    // Accumulate changes and flush once per animation frame.
+    pendingNodeChangesRef.current = [
+      ...(pendingNodeChangesRef.current ?? []),
+      ...treeChanges,
+    ];
+    if (nodesChangeRafRef.current !== null) return;
+    nodesChangeRafRef.current = window.requestAnimationFrame(() => {
+      const pending = pendingNodeChangesRef.current;
+      pendingNodeChangesRef.current = null;
+      nodesChangeRafRef.current = null;
+      if (pending && pending.length > 0) {
+        setDisplayNodes((nds) => applyNodeChanges(pending, nds));
       }
-      return true;
     });
-    setDisplayNodes((nds) => applyNodeChanges(filteredChanges, nds));
   }, []);
+
+  // Live position map: derived from displayNodes so portals track nodes during drag.
+  // Rebuilt every time displayNodes changes (i.e. every rAF tick during drag).
+  const displayPositionsMap = useMemo(
+    () => new Map(displayNodes.map((n) => [n.id, n.position] as const)),
+    [displayNodes]
+  );
+
+  // ── Portal bubble nodes ────────────────────────────────────────────────────
+  // Computed HERE (after displayPositionsMap) so positions read from the live
+  // drag state rather than the stale Firestore snapshot in nodesById.
+  // One orb per (ref × visible-linked-node). Stacked horizontally above node.
+  const visiblePortals = useMemo((): Node[] => {
+    const PORTAL_SIZE = 40;
+    const PORTAL_GAP  = 46;
+    const NODE_WIDTH  = 260;
+    const OFFSET_Y    = -52; // above the node's top edge
+
+    // Build a map: nodeId → sorted list of refs that link to it
+    const refsByNode = new Map<string, CrossRef[]>();
+    for (const ref of refs) {
+      for (const nodeId of ref.nodeIds) {
+        if (!filteredTreeIdSet.has(nodeId)) continue;
+        if (!refsByNode.has(nodeId)) refsByNode.set(nodeId, []);
+        refsByNode.get(nodeId)!.push(ref);
+      }
+    }
+    refsByNode.forEach((nodeRefs) => nodeRefs.sort((a, b) => a.code.localeCompare(b.code)));
+
+    const result: Node[] = [];
+    refsByNode.forEach((nodeRefs, nodeId) => {
+      // Prefer live drag position from displayPositionsMap; fall back to
+      // resolveNodePosition (nodesById / treeLayout) for the first render
+      // before displayNodes is populated.
+      const pos = displayPositionsMap.get(nodeId) ?? resolveNodePosition(nodeId);
+      const totalWidth = nodeRefs.length * PORTAL_SIZE + (nodeRefs.length - 1) * (PORTAL_GAP - PORTAL_SIZE);
+      const startX = pos.x + NODE_WIDTH / 2 - totalWidth / 2;
+
+      nodeRefs.forEach((ref, idx) => {
+        const x = startX + idx * PORTAL_GAP;
+        const y = pos.y + OFFSET_Y;
+        const linkedTitles = ref.nodeIds
+          .map((nid) => nodesById.get(nid)?.title)
+          .filter(Boolean)
+          .join(" · ");
+        const tooltip = linkedTitles ? `${ref.label}\n${linkedTitles}` : ref.label;
+
+        result.push({
+          id: `portal:${ref.id}:${nodeId}`,
+          position: { x, y },
+          type: "portal",
+          data: {
+            code: ref.code,
+            tooltip,
+            count: ref.nodeIds.length,
+            isActive: false,
+            onToggle: () => {},
+            onContextMenu: () => {},
+          },
+          draggable: false,
+          selectable: false,
+          zIndex: 10,
+          style: {
+            width: PORTAL_SIZE,
+            height: PORTAL_SIZE,
+            borderRadius: 999,
+            background: "transparent",
+            border: "none",
+            padding: 0,
+          },
+        } as Node);
+      });
+    });
+    return result;
+  }, [refs, filteredTreeIdSet, displayPositionsMap, resolveNodePosition, nodesById]);
+
+  // Inject active state and callbacks into portal nodes.
+  // Kept separate from visiblePortals so callback identity changes (activePortalRefId)
+  // don't force a full portal position recompute.
+  const livePortalNodes = useMemo((): Node[] => {
+    return visiblePortals.map((pNode) => {
+      const parts = pNode.id.split(":");
+      const refId = parts[1];
+      const isActive = activePortalRefId === refId;
+      return {
+        ...pNode,
+        data: {
+          ...pNode.data,
+          isActive,
+          onToggle: () => setActivePortalRefId((prev) => prev === refId ? null : refId),
+          onContextMenu: (e: React.MouseEvent) => {
+            e.preventDefault();
+            setPortalContextMenu({ x: e.clientX, y: e.clientY, refId });
+          },
+        },
+      } as Node;
+    });
+  }, [visiblePortals, activePortalRefId]);
+
+  // Final node array passed to ReactFlow: tree nodes from displayNodes + portals
+  // pinned live above their parent nodes.
+  const reactFlowNodes = useMemo(
+    () => [...displayNodes, ...livePortalNodes],
+    [displayNodes, livePortalNodes]
+  );
 
   // Save warning helper (successful autosaves are silent).
   const showSaveError = useCallback(() => {
@@ -4478,7 +4518,7 @@ export default function PlannerPage({ user }: PlannerPageProps) {
         ) : null}
 
         <ReactFlow
-          nodes={displayNodes}
+          nodes={reactFlowNodes}
           edges={flowEdges}
           nodeTypes={nodeTypes}
           edgeTypes={edgeTypes}
