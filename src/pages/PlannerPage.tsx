@@ -72,6 +72,9 @@ type CrossRefDoc = {
   portalY?: number;
   portalAnchorX?: number;
   portalAnchorY?: number;
+  // Preferred layout model: offset from anchor. Layout-change-proof.
+  portalOffsetX?: number;
+  portalOffsetY?: number;
   entityType?: EntityType;
   tags?: string[];
   notes?: string;
@@ -89,6 +92,9 @@ type CrossRef = {
   portalY: number | null;
   portalAnchorX: number | null;
   portalAnchorY: number | null;
+  // Preferred layout model: offset from anchor. Layout-change-proof.
+  portalOffsetX: number | null;
+  portalOffsetY: number | null;
   entityType: EntityType;
   tags: string[];
   notes: string;
@@ -735,6 +741,8 @@ export default function PlannerPage({ user }: PlannerPageProps) {
                 portalY: typeof value.portalY === "number" ? value.portalY : null,
                 portalAnchorX: typeof value.portalAnchorX === "number" ? value.portalAnchorX : null,
                 portalAnchorY: typeof value.portalAnchorY === "number" ? value.portalAnchorY : null,
+                portalOffsetX: typeof value.portalOffsetX === "number" ? value.portalOffsetX : null,
+                portalOffsetY: typeof value.portalOffsetY === "number" ? value.portalOffsetY : null,
                 entityType,
                 tags: asStringArray(value.tags),
                 notes: typeof value.notes === "string" ? value.notes : "",
@@ -1119,15 +1127,11 @@ export default function PlannerPage({ user }: PlannerPageProps) {
           .join(" · ");
         const tooltip = linkedTitles ? `${ref.label}\n${linkedTitles}` : ref.label;
 
-        // If user has manually dragged this portal, use the saved position
-        // (delta-shifted by any anchor movement since it was saved)
-        const savedX = typeof ref.portalX === "number" ? ref.portalX : null;
-        const savedY = typeof ref.portalY === "number" ? ref.portalY : null;
-        if (savedX !== null && savedY !== null) {
-          const savedAnchorX = typeof ref.portalAnchorX === "number" ? ref.portalAnchorX : x;
-          const savedAnchorY = typeof ref.portalAnchorY === "number" ? ref.portalAnchorY : y;
-          x = savedX + (anchor.x - savedAnchorX);
-          y = savedY + (anchor.y - savedAnchorY);
+        // If user has manually dragged this portal, use the saved offset from anchor.
+        // Offset model is layout-change-proof: position = anchor + offset, always.
+        if (typeof ref.portalOffsetX === "number" && typeof ref.portalOffsetY === "number") {
+          x = anchor.x + ref.portalOffsetX;
+          y = anchor.y + ref.portalOffsetY;
         }
 
         result.push({
@@ -2726,7 +2730,9 @@ export default function PlannerPage({ user }: PlannerPageProps) {
     async (_: React.MouseEvent, node: Node) => {
       if (!db) return;
 
-      // ── Portal drag: save new position to crossRef ────────────────────────
+      // ── Portal drag: save offset-from-anchor to crossRef ─────────────────
+      // We store portalOffsetX/Y = (portal pos) - (anchor pos) so the bubble
+      // stays correctly placed even when the tree layout recomputes.
       if (node.id.startsWith("portal:")) {
         const refId = node.id.replace("portal:", "");
         const ref = refs.find((r) => r.id === refId);
@@ -2734,16 +2740,17 @@ export default function PlannerPage({ user }: PlannerPageProps) {
           ? ref.anchorNodeId
           : ref?.nodeIds.find((id) => filteredTreeIdSet.has(id));
         const anchorPos = anchorId ? resolveNodePosition(anchorId) : null;
+        const offsetX = anchorPos ? node.position.x - anchorPos.x : 0;
+        const offsetY = anchorPos ? node.position.y - anchorPos.y : 0;
         setRefs((prev) => prev.map((r) => r.id !== refId ? r : {
           ...r,
-          portalX: node.position.x, portalY: node.position.y,
-          portalAnchorX: anchorPos?.x ?? r.portalAnchorX,
-          portalAnchorY: anchorPos?.y ?? r.portalAnchorY,
+          portalOffsetX: offsetX,
+          portalOffsetY: offsetY,
         }));
         try {
           await updateDoc(doc(db, "users", user.uid, "crossRefs", refId), {
-            portalX: node.position.x, portalY: node.position.y,
-            ...(anchorPos ? { portalAnchorX: anchorPos.x, portalAnchorY: anchorPos.y } : {}),
+            portalOffsetX: offsetX,
+            portalOffsetY: offsetY,
             updatedAt: serverTimestamp(),
           });
         } catch { showSaveError(); }
