@@ -4525,7 +4525,7 @@ export default function PlannerPage({ user }: PlannerPageProps) {
               }}
               disabled={!selectedNode}
             >
-              ✏️ Edit
+              Edit
             </button>
             <button
               onClick={() => {
