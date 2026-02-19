@@ -2,8 +2,6 @@ import React, { memo, useCallback, useEffect, useMemo, useRef, useState } from "
 import { useUndoRedo, firestoreDeleteField, type LocalOp, type FirestoreOp } from "../hooks/useUndoRedo";
 import ReactFlow, {
   Background,
-  Handle,
-  Position,
   SelectionMode,
   applyNodeChanges,
   type Edge,
@@ -346,6 +344,8 @@ function getMasterNodeFor(nodeId: string, rootNodeId: string | null, nodesById: 
 }
 
 // ── Portal bubble node ─────────────────────────────────────────────────────
+// No ReactFlow Handles: the dashed edge connects to node center by default.
+// Avoiding Handle avoids a ReactFlow 11 / React 19 useLayoutEffect conflict.
 const PortalNode = memo(function PortalNode({
   data,
 }: NodeProps<{ code: string; label: string; tooltip: string; count: number; isActive: boolean; onToggle: () => void }>) {
@@ -353,10 +353,6 @@ const PortalNode = memo(function PortalNode({
     <div
       style={{ width: "100%", height: "100%", display: "flex", alignItems: "center", justifyContent: "center", position: "relative" }}
     >
-      <Handle type="target" position={Position.Top} id="portal-target" isConnectable={false}
-        style={{ width: 6, height: 6, opacity: 0, border: "none", background: "transparent", pointerEvents: "none" }} />
-      <Handle type="source" position={Position.Bottom} id="portal-source" isConnectable={false}
-        style={{ width: 6, height: 6, opacity: 0, border: "none", background: "transparent", pointerEvents: "none" }} />
       <button
         type="button"
         className={`planner-portal-inner${data.isActive ? " active" : ""}`}
