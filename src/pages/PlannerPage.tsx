@@ -1345,7 +1345,13 @@ export default function PlannerPage({ user }: PlannerPageProps) {
     return edges;
   }, [refs, filteredTreeIdSet]);
 
-  const baseEdges = [...baseTreeEdges, ...basePortalEdges];
+  // Memoized so hoverIndex (which depends on baseEdges) gets a stable reference
+  // and doesn't recreate itself on every render, preventing the infinite loop:
+  // baseEdges → hoverIndex → hoverNodeIds/hoverEdgeIds → flowNodes → render → repeat
+  const baseEdges = useMemo(
+    () => [...baseTreeEdges, ...basePortalEdges],
+    [baseTreeEdges, basePortalEdges]
+  );
 
   const hoverIndex = useMemo(() => {
     const nodeToEdges = new Map<string, Set<string>>();
@@ -1379,7 +1385,7 @@ export default function PlannerPage({ user }: PlannerPageProps) {
       }
     }
     return ids;
-  }, [hoverIndex.edgeToNodes, hoverIndex.nodeToNeighbors, hoveredEdgeId, hoveredNodeId]);
+  }, [hoverIndex, hoveredEdgeId, hoveredNodeId]);
 
   const hoverEdgeIds = useMemo(() => {
     const ids = new Set<string>();
@@ -1388,7 +1394,7 @@ export default function PlannerPage({ user }: PlannerPageProps) {
       hoverIndex.nodeToEdges.get(hoveredNodeId)?.forEach((id) => ids.add(id));
     }
     return ids;
-  }, [hoverIndex.nodeToEdges, hoveredEdgeId, hoveredNodeId]);
+  }, [hoverIndex, hoveredEdgeId, hoveredNodeId]);
 
   const activeLinkedNodeIds = useMemo(() => {
     if (!activePortalRefId) return new Set<string>();
@@ -1444,7 +1450,7 @@ export default function PlannerPage({ user }: PlannerPageProps) {
     });
 
     return [...treeNodes, ...portalNodes];
-  }, [activeLinkedNodeIds, activePortalRefId, baseTreeNodes, dropTargetNodeId, hoverNodeIds, hoveredEdgeId, hoveredNodeId, selectedNodeId, setActivePortalRefId, visiblePortals]);
+  }, [activeLinkedNodeIds, activePortalRefId, baseTreeNodes, dropTargetNodeId, hoverNodeIds, hoveredEdgeId, hoveredNodeId, selectedNodeId, visiblePortals]);
 
   const flowEdges = useMemo(() => {
     return baseEdges.map((edge) => {
