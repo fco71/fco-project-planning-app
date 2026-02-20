@@ -1461,10 +1461,11 @@ export default function PlannerPage({ user }: PlannerPageProps) {
   // Derived directly from baseNodes (live positions) — identical to how
   // ventovault-map derives portalNodes from baseNodes. No intermediate map needed.
   const visiblePortals = useMemo((): Node[] => {
-    const PORTAL_SIZE = isMobileLayout ? 48 : 40;
-    const PORTAL_GAP  = isMobileLayout ? 56 : 46;
-    const NODE_WIDTH  = isMobileLayout ? 280 : 260;
-    const OFFSET_Y    = isMobileLayout ? -62 : -52;
+    const PORTAL_SIZE    = isMobileLayout ? 48 : 40;
+    const PORTAL_GAP     = isMobileLayout ? 56 : 46;
+    const DEFAULT_WIDTH  = isMobileLayout ? 280 : 260;
+    const DEFAULT_HEIGHT = 60; // minimum node header height before DOM measurement
+    const BUBBLE_OFFSET  = isMobileLayout ? 14 : 12; // gap between node edge and portal centre
 
     // Build map: nodeId → sorted refs that link to it
     const refsByNode = new Map<string, CrossRef[]>();
@@ -1477,19 +1478,27 @@ export default function PlannerPage({ user }: PlannerPageProps) {
     }
     refsByNode.forEach((nodeRefs) => nodeRefs.sort((a, b) => a.code.localeCompare(b.code)));
 
-    // Build a position map from baseNodes (live drag positions).
-    // Falls back to resolveNodePosition for nodes not yet in baseNodes.
-    const livePos = new Map(baseNodes.map((n) => [n.id, n.position] as const));
+    // Build lookup maps from baseNodes (live drag positions + measured dimensions).
+    const livePos    = new Map(baseNodes.map((n) => [n.id, n.position] as const));
+    const liveWidth  = new Map(baseNodes.map((n) => [n.id, (n.width  ?? (n.style as React.CSSProperties)?.width  ?? DEFAULT_WIDTH)  as number] as const));
+    const liveHeight = new Map(baseNodes.map((n) => [n.id, (n.height ?? (n.style as React.CSSProperties)?.height ?? DEFAULT_HEIGHT) as number] as const));
 
     const result: Node[] = [];
     refsByNode.forEach((nodeRefs, nodeId) => {
-      const pos = livePos.get(nodeId) ?? resolveNodePosition(nodeId);
+      const pos        = livePos.get(nodeId)    ?? resolveNodePosition(nodeId);
+      const nodeWidth  = Number(liveWidth.get(nodeId)  ?? DEFAULT_WIDTH);
+      const nodeHeight = Number(liveHeight.get(nodeId) ?? DEFAULT_HEIGHT);
+
+      // Centre the portal row horizontally over the node.
       const totalWidth = nodeRefs.length * PORTAL_SIZE + (nodeRefs.length - 1) * (PORTAL_GAP - PORTAL_SIZE);
-      const startX = pos.x + NODE_WIDTH / 2 - totalWidth / 2;
+      const centreX    = pos.x + nodeWidth / 2;
+      const startX     = centreX - totalWidth / 2;
+
+      // Place portals above the node top edge.
+      const y = pos.y - PORTAL_SIZE - BUBBLE_OFFSET;
 
       nodeRefs.forEach((ref, idx) => {
         const x = startX + idx * PORTAL_GAP;
-        const y = pos.y + OFFSET_Y;
         const linkedTitles = ref.nodeIds
           .map((nid) => nodesById.get(nid)?.title)
           .filter(Boolean)
@@ -1521,6 +1530,7 @@ export default function PlannerPage({ user }: PlannerPageProps) {
           },
         } as Node);
       });
+      void nodeHeight; // measured height reserved for future above/below placement logic
     });
     return result;
   }, [refs, filteredTreeIdSet, baseNodes, resolveNodePosition, nodesById, isMobileLayout]);
