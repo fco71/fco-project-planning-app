@@ -4597,8 +4597,16 @@ export default function PlannerPage({ user }: PlannerPageProps) {
             // Zoom only; changing view root is an explicit action.
             onNodeDoubleClick(_, node);
           }}
-          onNodeMouseEnter={(_, node) => setHoveredNodeId(node.id)}
-          onNodeMouseLeave={() => setHoveredNodeId(null)}
+          onNodeMouseEnter={(_, node) => {
+            // Portal orbs are not in the hover index — hovering them would
+            // dim ALL tree nodes to 0.4 opacity. Skip portals entirely.
+            if (node.id.startsWith("portal:")) return;
+            setHoveredNodeId(node.id);
+          }}
+          onNodeMouseLeave={(_, node) => {
+            if (node.id.startsWith("portal:")) return;
+            setHoveredNodeId(null);
+          }}
           onEdgeMouseEnter={(_, edge) => setHoveredEdgeId(edge.id)}
           onEdgeMouseLeave={() => setHoveredEdgeId(null)}
           onNodeDrag={onNodeDrag}
