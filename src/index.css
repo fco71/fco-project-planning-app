@@ -969,6 +969,9 @@ button {
   box-shadow: none !important;
   padding: 0 !important;
   border-radius: 999px;
+  /* Smooth the ~16ms gap between rAF position updates so the orb
+     glides rather than stepping. Kept short so it doesn't lag. */
+  transition: transform 32ms linear !important;
 }
 
 /* The circular orb button inside the portal node */

@@ -1393,17 +1393,28 @@ export default function PlannerPage({ user }: PlannerPageProps) {
   const nodesChangeRafRef  = useRef<number | null>(null);
   const pendingNodeChangesRef = useRef<Parameters<OnNodesChange>[0] | null>(null);
 
-  // flowNodes → displayNodes: freeze positions of actively-dragged nodes so ReactFlow doesn't fight us.
+  // flowNodes → displayNodes: sync styles/metadata from flowNodes but NEVER
+  // overwrite positions while a drag is in progress. The rAF-batched
+  // handleNodesChange is the sole owner of positions during drag; letting the
+  // effect also write positions causes portals to flash because flowNodes
+  // contains stale Firestore coordinates that fight the live drag coordinates.
   useEffect(() => {
     setDisplayNodes((previous) => {
+      // First render: just use flowNodes directly.
       if (previous.length === 0) return flowNodes;
+
       const draggingIds = draggingNodeIdsRef.current;
+
+      // Not dragging → full sync (positions + styles).
       if (draggingIds.size === 0) return flowNodes;
-      const previousPositions = new Map(previous.map((node) => [node.id, node.position] as const));
+
+      // Dragging → carry live positions forward for ALL nodes.
+      // Non-position props (style, selected, etc.) come from flowNodes so
+      // hover / selection highlights still update, but x/y stays live.
+      const livePositions = new Map(previous.map((n) => [n.id, n.position] as const));
       return flowNodes.map((node) => {
-        if (!draggingIds.has(node.id)) return node;
-        const position = previousPositions.get(node.id);
-        return position ? ({ ...node, position } as Node) : node;
+        const live = livePositions.get(node.id);
+        return live ? ({ ...node, position: live } as Node) : node;
       });
     });
   }, [flowNodes]);
