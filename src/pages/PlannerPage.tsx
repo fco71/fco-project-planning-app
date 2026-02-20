@@ -1338,20 +1338,42 @@ export default function PlannerPage({ user }: PlannerPageProps) {
   const nodesChangeRafRef  = useRef<number | null>(null);
   const pendingNodeChangesRef = useRef<Parameters<OnNodesChange>[0] | null>(null);
 
-  // baseTreeNodes → baseNodes: sync styles/metadata whenever the Firestore-derived
-  // tree changes (node added/removed/renamed) but ONLY update positions for nodes
-  // that are NOT currently being dragged (ReactFlow owns their position during drag).
+  // baseTreeNodes → baseNodes: initialise on first load and handle structural
+  // changes (nodes added / removed / re-parented). We intentionally do NOT sync
+  // style, label, or color changes through this path — those come through
+  // flowNodes (which layers styles on top of baseNodes positions). This means
+  // baseNodes is ONLY written by:
+  //   1. This effect, for structural changes (add/remove/reorder)
+  //   2. handleNodesChange via RAF, for live drag positions
+  // No other writer → no competing updates → no flash.
+  const prevBaseNodeIdsRef = useRef<Set<string>>(new Set());
   useEffect(() => {
+    const incomingIds = new Set(baseTreeNodes.map((n) => n.id));
+    const prevIds = prevBaseNodeIdsRef.current;
+    const added   = baseTreeNodes.filter((n) => !prevIds.has(n.id));
+    const removed  = [...prevIds].filter((id) => !incomingIds.has(id));
+    prevBaseNodeIdsRef.current = incomingIds;
+
+    // First load — initialise with full baseTreeNodes (positions from Firestore).
+    if (prevIds.size === 0) {
+      setBaseNodes(baseTreeNodes);
+      return;
+    }
+
+    // Only update state if the set of node IDs actually changed.
+    if (added.length === 0 && removed.length === 0) return;
+
     setBaseNodes((prev) => {
-      if (prev.length === 0) return baseTreeNodes;
-      // Build a live-position map from current baseNodes (what ReactFlow sees).
       const livePos = new Map(prev.map((n) => [n.id, n.position] as const));
-      return baseTreeNodes.map((node) => {
-        const live = livePos.get(node.id);
-        // Keep the live position if we have one (preserves drag in progress);
-        // fall back to the Firestore position for newly-added nodes.
-        return live ? ({ ...node, position: live } as Node) : node;
-      });
+      // Remove deleted nodes, keep live positions for surviving nodes,
+      // append new nodes with their Firestore-sourced initial positions.
+      const surviving = baseTreeNodes
+        .filter((n) => !added.includes(n))
+        .map((node) => {
+          const live = livePos.get(node.id);
+          return live ? ({ ...node, position: live } as Node) : node;
+        });
+      return [...surviving, ...added];
     });
   }, [baseTreeNodes]);
 
