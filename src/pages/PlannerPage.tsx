@@ -1383,21 +1383,8 @@ export default function PlannerPage({ user }: PlannerPageProps) {
     });
   }, [baseTreeNodes]);
 
-  // Batch onNodesChange events through RAF — identical to ventovault-map.
-  // Portals are stripped here because they are derived nodes not in baseNodes.
-  //
-  // DRAG FREEZE: during drag we skip setBaseNodes entirely so that flowNodes /
-  // reactFlowNodes never get a new array reference. If they did, ReactFlow's
-  // useStoreUpdater (useEffect on the nodes prop) would fire every RAF tick,
-  // calling createNodeInternals which unconditionally resets positionAbsolute
-  // = node.position for every node — overwriting the live drag positions that
-  // ReactFlow's own drag handler wrote into its Zustand store, causing portals
-  // to flash back to their pre-drag position on each frame.
-  //
-  // ReactFlow's drag handler writes positions directly into its internal store
-  // (updateNodePositions → triggerNodeChanges) and does NOT need the nodes
-  // prop to change mid-drag. We accumulate all changes here and flush them
-  // together when the drag ends in onNodeDragStop / onSelectionDragStop.
+  // Batch onNodesChange events through RAF — matches ventovault-map exactly.
+  // Portals are stripped because they are derived nodes, not in baseNodes.
   const handleNodesChange: OnNodesChange = useCallback((changes) => {
     const treeChanges = changes.filter((c) => !c.id.startsWith("portal:"));
     if (treeChanges.length === 0) return;
@@ -1405,9 +1392,6 @@ export default function PlannerPage({ user }: PlannerPageProps) {
       ...(pendingNodeChangesRef.current ?? []),
       ...treeChanges,
     ];
-    // During drag: accumulate but do NOT flush to state — keeps reactFlowNodes
-    // reference stable so createNodeInternals never runs mid-drag.
-    if (isDraggingRef.current) return;
     if (nodesChangeRafRef.current !== null) return;
     nodesChangeRafRef.current = window.requestAnimationFrame(() => {
       const pending = pendingNodeChangesRef.current;
@@ -2845,19 +2829,6 @@ export default function PlannerPage({ user }: PlannerPageProps) {
       // Drag has ended — clear flags so hover updates resume.
       isDraggingRef.current = false;
 
-      // Flush all position changes that were accumulated during drag freeze.
-      // This syncs baseNodes (and therefore flowNodes / reactFlowNodes) with
-      // the final positions that ReactFlow's drag handler wrote into its store.
-      if (pendingNodeChangesRef.current && pendingNodeChangesRef.current.length > 0) {
-        const pending = pendingNodeChangesRef.current;
-        pendingNodeChangesRef.current = null;
-        if (nodesChangeRafRef.current !== null) {
-          cancelAnimationFrame(nodesChangeRafRef.current);
-          nodesChangeRafRef.current = null;
-        }
-        setBaseNodes((nds) => applyNodeChanges(pending, nds));
-      }
-
       // Snapshot and clear drop-target state before any async work.
       // Read from the ref (set during drag without causing re-renders).
       draggedNodeIdRef.current = null;
@@ -2937,17 +2908,6 @@ export default function PlannerPage({ user }: PlannerPageProps) {
       if (!db) return;
       // Drag has ended — clear flags so hover updates resume.
       isDraggingRef.current = false;
-
-      // Flush all position changes accumulated during drag freeze.
-      if (pendingNodeChangesRef.current && pendingNodeChangesRef.current.length > 0) {
-        const pending = pendingNodeChangesRef.current;
-        pendingNodeChangesRef.current = null;
-        if (nodesChangeRafRef.current !== null) {
-          cancelAnimationFrame(nodesChangeRafRef.current);
-          nodesChangeRafRef.current = null;
-        }
-        setBaseNodes((nds) => applyNodeChanges(pending, nds));
-      }
 
       // No re-parenting on multi-select drag — clear drop-target state.
       draggedNodeIdRef.current = null;
