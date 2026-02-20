@@ -1573,6 +1573,17 @@ export default function PlannerPage({ user }: PlannerPageProps) {
     [flowNodes, livePortalNodes]
   );
 
+  // Memoized context value for NodeVisualContext — must be computed here (not
+  // inline in JSX) to satisfy the Rules of Hooks.
+  const nodeVisualState = useMemo<NodeVisualState>(() => ({
+    selectedNodeId,
+    hoveredNodeId,
+    hoveredEdgeId,
+    dropTargetNodeId,
+    hoverNodeIds,
+    activeLinkedNodeIds,
+  }), [selectedNodeId, hoveredNodeId, hoveredEdgeId, dropTargetNodeId, hoverNodeIds, activeLinkedNodeIds]);
+
   // Save warning helper (successful autosaves are silent).
   const showSaveError = useCallback(() => {
     if (saveTimeoutRef.current) clearTimeout(saveTimeoutRef.current);
@@ -4573,14 +4584,7 @@ export default function PlannerPage({ user }: PlannerPageProps) {
           </div>
         ) : null}
 
-        <NodeVisualContext.Provider value={useMemo(() => ({
-          selectedNodeId,
-          hoveredNodeId,
-          hoveredEdgeId,
-          dropTargetNodeId,
-          hoverNodeIds,
-          activeLinkedNodeIds,
-        }), [selectedNodeId, hoveredNodeId, hoveredEdgeId, dropTargetNodeId, hoverNodeIds, activeLinkedNodeIds])}>
+        <NodeVisualContext.Provider value={nodeVisualState}>
         <ReactFlow
           nodes={reactFlowNodes}
           edges={flowEdges}
