@@ -1270,21 +1270,24 @@ export default function PlannerPage({ user }: PlannerPageProps) {
   const basePortalEdges = useMemo((): Edge[] => {
     const edges: Edge[] = [];
     for (const ref of refs) {
-      for (const nodeId of ref.nodeIds) {
-        if (!filteredTreeIdSet.has(nodeId)) continue;
-        edges.push({
-          id: `portal-edge:${ref.id}:${nodeId}`,
-          source: nodeId,
-          target: `portal:${ref.id}:${nodeId}`,
-          animated: false,
-          zIndex: 5,
-          style: {
-            stroke: "rgba(255,160,71,0.6)",
-            strokeWidth: 1.5,
-            strokeDasharray: "4 4",
-          },
-        } as Edge);
-      }
+      // One edge per ref: from anchor node to the single portal bubble.
+      const anchorNodeId =
+        (ref.anchorNodeId && filteredTreeIdSet.has(ref.anchorNodeId) ? ref.anchorNodeId : null) ??
+        ref.nodeIds.find((id) => filteredTreeIdSet.has(id)) ??
+        null;
+      if (!anchorNodeId) continue;
+      edges.push({
+        id: `portal-edge:${ref.id}`,
+        source: anchorNodeId,
+        target: `portal:${ref.id}`,
+        animated: false,
+        zIndex: 5,
+        style: {
+          stroke: "rgba(255,160,71,0.6)",
+          strokeWidth: 1.5,
+          strokeDasharray: "4 4",
+        },
+      } as Edge);
     }
     return edges;
   }, [refs, filteredTreeIdSet]);
@@ -1459,28 +1462,40 @@ export default function PlannerPage({ user }: PlannerPageProps) {
     const NODE_WIDTH  = isMobileLayout ? 280 : 260;
     const OFFSET_Y    = isMobileLayout ? -62 : -52;
 
-    // Build map: nodeId → sorted refs that link to it
-    const refsByNode = new Map<string, CrossRef[]>();
-    for (const ref of refs) {
-      for (const nodeId of ref.nodeIds) {
-        if (!filteredTreeIdSet.has(nodeId)) continue;
-        if (!refsByNode.has(nodeId)) refsByNode.set(nodeId, []);
-        refsByNode.get(nodeId)!.push(ref);
-      }
-    }
-    refsByNode.forEach((nodeRefs) => nodeRefs.sort((a, b) => a.code.localeCompare(b.code)));
+    // ONE portal per ref, shown on its anchor node (or the first visible nodeId).
+    // Previously one portal was shown on every linked node, which caused:
+    //   • N×M portal nodes in ReactFlow (N refs × M linked nodes each)
+    //   • All those extra nodes flashing during drag of any one of them
+    //   • Confusing UX — same ref bubble appearing in multiple places at once
+    //
+    // Now each ref has exactly one bubble. The count badge shows how many nodes
+    // the ref is linked to. The user controls which node hosts the bubble via
+    // the anchorNodeId field.
 
-    // Build a position map from baseNodes (live drag positions).
-    // Falls back to resolveNodePosition for nodes not yet in baseNodes.
+    // Group refs by their anchor node (visible in current view).
+    // anchorNodeId → refs anchored there (sorted by code).
+    const refsByAnchor = new Map<string, CrossRef[]>();
+    for (const ref of refs) {
+      // Pick the anchor: prefer anchorNodeId if it's visible, else first visible nodeId.
+      const anchor =
+        (ref.anchorNodeId && filteredTreeIdSet.has(ref.anchorNodeId) ? ref.anchorNodeId : null) ??
+        ref.nodeIds.find((id) => filteredTreeIdSet.has(id)) ??
+        null;
+      if (!anchor) continue; // ref has no nodes visible in current view — skip
+      if (!refsByAnchor.has(anchor)) refsByAnchor.set(anchor, []);
+      refsByAnchor.get(anchor)!.push(ref);
+    }
+    refsByAnchor.forEach((anchorRefs) => anchorRefs.sort((a, b) => a.code.localeCompare(b.code)));
+
     const livePos = new Map(baseNodes.map((n) => [n.id, n.position] as const));
 
     const result: Node[] = [];
-    refsByNode.forEach((nodeRefs, nodeId) => {
-      const pos = livePos.get(nodeId) ?? resolveNodePosition(nodeId);
-      const totalWidth = nodeRefs.length * PORTAL_SIZE + (nodeRefs.length - 1) * (PORTAL_GAP - PORTAL_SIZE);
+    refsByAnchor.forEach((anchorRefs, anchorNodeId) => {
+      const pos = livePos.get(anchorNodeId) ?? resolveNodePosition(anchorNodeId);
+      const totalWidth = anchorRefs.length * PORTAL_SIZE + (anchorRefs.length - 1) * (PORTAL_GAP - PORTAL_SIZE);
       const startX = pos.x + NODE_WIDTH / 2 - totalWidth / 2;
 
-      nodeRefs.forEach((ref, idx) => {
+      anchorRefs.forEach((ref, idx) => {
         const x = startX + idx * PORTAL_GAP;
         const y = pos.y + OFFSET_Y;
         const linkedTitles = ref.nodeIds
@@ -1490,7 +1505,7 @@ export default function PlannerPage({ user }: PlannerPageProps) {
         const tooltip = linkedTitles ? `${ref.label}\n${linkedTitles}` : ref.label;
 
         result.push({
-          id: `portal:${ref.id}:${nodeId}`,
+          id: `portal:${ref.id}`,
           position: { x, y },
           type: "portal",
           data: {
@@ -1522,8 +1537,8 @@ export default function PlannerPage({ user }: PlannerPageProps) {
   // doesn't re-run the position computation above.
   const livePortalNodes = useMemo((): Node[] => {
     return visiblePortals.map((pNode) => {
-      const parts = pNode.id.split(":");
-      const refId = parts[1];
+      // ID format is now "portal:${ref.id}" — one portal per ref.
+      const refId = pNode.id.slice("portal:".length);
       const isActive = activePortalRefId === refId;
       return {
         ...pNode,
@@ -4575,8 +4590,7 @@ export default function PlannerPage({ user }: PlannerPageProps) {
             setPortalContextMenu(null);
             // Portal orb tap: toggle active state and (on mobile) open Bubbles panel.
             if (node.id.startsWith("portal:")) {
-              const parts = node.id.split(":");
-              const refId = parts[1];
+              const refId = node.id.slice("portal:".length);
               setActivePortalRefId((prev) => (prev === refId ? null : refId));
               if (isMobileLayout) {
                 setMobileSidebarSection("bubbles");
@@ -4614,8 +4628,7 @@ export default function PlannerPage({ user }: PlannerPageProps) {
             event.preventDefault();
             // Portal orb right-click → show portal delete menu
             if (node.id.startsWith("portal:")) {
-              const parts = node.id.split(":");
-              const refId = parts[1];
+              const refId = node.id.slice("portal:".length);
               setPortalContextMenu({ x: event.clientX, y: event.clientY, refId });
               return;
             }
