@@ -455,6 +455,22 @@ export default function PlannerPage({ user }: PlannerPageProps) {
   const [collapsedNodeIds, setCollapsedNodeIds] = useState<Set<string>>(new Set());
   const [hoveredNodeId, setHoveredNodeId] = useState<string | null>(null);
   const [hoveredEdgeId, setHoveredEdgeId] = useState<string | null>(null);
+  // RAF-batch hover updates (ventovault-map pattern) so hover state changes
+  // are coalesced with drag RAF ticks — prevents mid-drag re-renders that
+  // cause ReactFlow to reset positionAbsolute and flash portal bubbles.
+  const hoverRafRef = useRef<number | null>(null);
+  const hoverPendingRef = useRef<{ nodeId: string | null; edgeId: string | null } | null>(null);
+  const scheduleHoverUpdate = useCallback((nodeId: string | null, edgeId: string | null) => {
+    hoverPendingRef.current = { nodeId, edgeId };
+    if (hoverRafRef.current !== null) return;
+    hoverRafRef.current = window.requestAnimationFrame(() => {
+      const pending = hoverPendingRef.current;
+      hoverPendingRef.current = null;
+      hoverRafRef.current = null;
+      setHoveredNodeId(pending?.nodeId ?? null);
+      setHoveredEdgeId(pending?.edgeId ?? null);
+    });
+  }, []);
   const [dropTargetNodeId, setDropTargetNodeId] = useState<string | null>(null);
   const [contextMenu, setContextMenu] = useState<{ x: number; y: number; nodeId: string } | null>(null);
   const [saveStatus, setSaveStatus] = useState<"idle" | "error">("idle");
@@ -1535,6 +1551,7 @@ export default function PlannerPage({ user }: PlannerPageProps) {
   useEffect(() => {
     return () => {
       if (saveTimeoutRef.current) clearTimeout(saveTimeoutRef.current);
+      if (hoverRafRef.current !== null) cancelAnimationFrame(hoverRafRef.current);
     };
   }, []);
 
@@ -4567,17 +4584,16 @@ export default function PlannerPage({ user }: PlannerPageProps) {
             onNodeDoubleClick(_, node);
           }}
           onNodeMouseEnter={(_, node) => {
-            // Portal orbs are not in the hover index — hovering them would
-            // dim ALL tree nodes to 0.4 opacity. Skip portals entirely.
+            // Portal orbs are not in the hover index — skip them entirely.
             if (node.id.startsWith("portal:")) return;
-            setHoveredNodeId(node.id);
+            scheduleHoverUpdate(node.id, hoveredEdgeId);
           }}
           onNodeMouseLeave={(_, node) => {
             if (node.id.startsWith("portal:")) return;
-            setHoveredNodeId(null);
+            scheduleHoverUpdate(null, hoveredEdgeId);
           }}
-          onEdgeMouseEnter={(_, edge) => setHoveredEdgeId(edge.id)}
-          onEdgeMouseLeave={() => setHoveredEdgeId(null)}
+          onEdgeMouseEnter={(_, edge) => scheduleHoverUpdate(hoveredNodeId, edge.id)}
+          onEdgeMouseLeave={() => scheduleHoverUpdate(hoveredNodeId, null)}
           onNodeDrag={onNodeDrag}
           onNodeDragStop={onNodeDragStop}
           onSelectionDragStop={onSelectionDragStop}
