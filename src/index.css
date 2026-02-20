@@ -969,10 +969,9 @@ button {
   box-shadow: none !important;
   padding: 0 !important;
   border-radius: 999px;
-  /* No transition on transform: ReactFlow positions nodes via transform:translate(x,y)
-     on this wrapper. Any CSS transition on transform would animate portal movement
-     each frame during drag, causing visible lag. Hover effects (translateY lift) are
-     handled by .planner-portal-inner which is a child element. */
+  /* No transform transition — ReactFlow positions this element via
+     transform:translate(x,y) every frame. A CSS transition on transform
+     causes visible lag as portals trail behind their parent node during drag. */
 }
 
 /* The circular orb button inside the portal node */
