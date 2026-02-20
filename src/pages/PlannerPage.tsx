@@ -460,13 +460,25 @@ export default function PlannerPage({ user }: PlannerPageProps) {
   // cause ReactFlow to reset positionAbsolute and flash portal bubbles.
   const hoverRafRef = useRef<number | null>(null);
   const hoverPendingRef = useRef<{ nodeId: string | null; edgeId: string | null } | null>(null);
+  // isDraggingRef: true while a node drag is in progress.
+  // We suppress hover state updates and drop-target state updates during drag
+  // to prevent flowNodes from changing reference mid-drag, which would cause
+  // ReactFlow to reset positionAbsolute for all nodes and flash portals.
+  const isDraggingRef = useRef(false);
+  // dropTargetIdRef: tracks the drop target during drag without triggering
+  // React state updates (and thus no flowNodes recompute mid-drag).
+  const dropTargetIdRef = useRef<string | null>(null);
   const scheduleHoverUpdate = useCallback((nodeId: string | null, edgeId: string | null) => {
+    // Suppress hover updates while dragging — prevents flowNodes recompute mid-drag.
+    if (isDraggingRef.current) return;
     hoverPendingRef.current = { nodeId, edgeId };
     if (hoverRafRef.current !== null) return;
     hoverRafRef.current = window.requestAnimationFrame(() => {
       const pending = hoverPendingRef.current;
       hoverPendingRef.current = null;
       hoverRafRef.current = null;
+      // Double-check: if drag started between scheduling and firing, skip.
+      if (isDraggingRef.current) return;
       setHoveredNodeId(pending?.nodeId ?? null);
       setHoveredEdgeId(pending?.edgeId ?? null);
     });
@@ -2773,18 +2785,20 @@ export default function PlannerPage({ user }: PlannerPageProps) {
 
   const onNodeDrag = useCallback(
     (_: React.MouseEvent, node: Node) => {
+      // Mark drag as active — suppresses hover and drop-target state updates.
+      isDraggingRef.current = true;
       // Portal orbs don't trigger re-parenting.
-      if (node.id.startsWith("portal:")) { setDropTargetNodeId(null); return; }
+      if (node.id.startsWith("portal:")) { dropTargetIdRef.current = null; return; }
       // Multi-select drag: suppress re-parenting (ambiguous which is the primary).
       const selectedCount = rfInstance?.getNodes().filter((n) => n.selected && !n.id.startsWith("portal:")).length ?? 0;
       if (selectedCount > 1) {
         draggedNodeIdRef.current = null;
-        setDropTargetNodeId(null);
+        dropTargetIdRef.current = null;
         return;
       }
       draggedNodeIdRef.current = node.id;
       if (!rfInstance) {
-        setDropTargetNodeId(null);
+        dropTargetIdRef.current = null;
         return;
       }
       // All descendants + the node itself are forbidden drop targets (cycle prevention).
@@ -2799,7 +2813,8 @@ export default function PlannerPage({ user }: PlannerPageProps) {
         bestTarget = candidate.id;
         break;
       }
-      setDropTargetNodeId(bestTarget);
+      // Update ref only — no state update to avoid flowNodes recompute mid-drag.
+      dropTargetIdRef.current = bestTarget;
     },
     [childrenByParent, nodesById, rfInstance]
   );
@@ -2811,9 +2826,14 @@ export default function PlannerPage({ user }: PlannerPageProps) {
       // Portal nodes are pinned (draggable: false) — skip silently.
       if (node.id.startsWith("portal:")) return;
 
+      // Drag has ended — clear the dragging flag so hover updates resume.
+      isDraggingRef.current = false;
+
       // Snapshot and clear drop-target state before any async work.
+      // Read from the ref (set during drag without causing re-renders).
       draggedNodeIdRef.current = null;
-      const capturedDropTarget = dropTargetNodeId;
+      const capturedDropTarget = dropTargetIdRef.current;
+      dropTargetIdRef.current = null;
       setDropTargetNodeId(null);
 
       // ── Re-parent branch ─────────────────────────────────────────────────
@@ -2880,14 +2900,17 @@ export default function PlannerPage({ user }: PlannerPageProps) {
         setError(actionError instanceof Error ? actionError.message : "Could not save node position.");
       }
     },
-    [applyLocalNodePatch, dropTargetNodeId, filteredTreeIdSet, nodesById, pushHistory, rootNodeId, showSaveError, user.uid]
+    [applyLocalNodePatch, filteredTreeIdSet, nodesById, pushHistory, rootNodeId, showSaveError, user.uid]
   );
 
   const onSelectionDragStop = useCallback(
     async (_: React.MouseEvent, draggedNodes: Node[]) => {
       if (!db) return;
+      // Drag has ended — clear the dragging flag so hover updates resume.
+      isDraggingRef.current = false;
       // No re-parenting on multi-select drag — clear drop-target state.
       draggedNodeIdRef.current = null;
+      dropTargetIdRef.current = null;
       setDropTargetNodeId(null);
 
       const movedTreeNodes = draggedNodes.filter((n) => !n.id.startsWith("portal:"));
@@ -4594,6 +4617,9 @@ export default function PlannerPage({ user }: PlannerPageProps) {
           }}
           onEdgeMouseEnter={(_, edge) => scheduleHoverUpdate(hoveredNodeId, edge.id)}
           onEdgeMouseLeave={() => scheduleHoverUpdate(hoveredNodeId, null)}
+          onNodeDragStart={(_, node) => {
+            if (!node.id.startsWith("portal:")) isDraggingRef.current = true;
+          }}
           onNodeDrag={onNodeDrag}
           onNodeDragStop={onNodeDragStop}
           onSelectionDragStop={onSelectionDragStop}
