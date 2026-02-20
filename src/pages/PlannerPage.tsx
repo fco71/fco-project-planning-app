@@ -1,4 +1,4 @@
-import React, { memo, useCallback, useEffect, useMemo, useRef, useState } from "react";
+import React, { createContext, memo, useCallback, useContext, useEffect, useMemo, useRef, useState } from "react";
 import { useUndoRedo, firestoreDeleteField, type LocalOp, type FirestoreOp } from "../hooks/useUndoRedo";
 import ReactFlow, {
   Background,
@@ -349,6 +349,54 @@ function getMasterNodeFor(nodeId: string, rootNodeId: string | null, nodesById: 
   return cursor.id || rootNodeId;
 }
 
+// ── Node visual-state context ──────────────────────────────────────────────
+// Provides hover/selection/portal-target state to node components via context
+// so the nodes[] prop reference to ReactFlow never changes for style reasons —
+// only for actual position or structure changes. This prevents ReactFlow's
+// internal setNodes from resetting positionAbsolute mid-drag.
+type NodeVisualState = {
+  selectedNodeId: string | null;
+  hoveredNodeId: string | null;
+  hoveredEdgeId: string | null;
+  dropTargetNodeId: string | null;
+  hoverNodeIds: ReadonlySet<string>;
+  activeLinkedNodeIds: ReadonlySet<string>;
+};
+const NodeVisualContext = createContext<NodeVisualState>({
+  selectedNodeId: null,
+  hoveredNodeId: null,
+  hoveredEdgeId: null,
+  dropTargetNodeId: null,
+  hoverNodeIds: new Set(),
+  activeLinkedNodeIds: new Set(),
+});
+
+// ── Tree node wrapper ──────────────────────────────────────────────────────
+// Reads visual state from NodeVisualContext so it can apply hover/selection
+// classes without the parent needing to pass new node objects to ReactFlow.
+const TreeNode = memo(function TreeNode({ id, data }: NodeProps) {
+  const { selectedNodeId, hoveredNodeId, hoveredEdgeId, dropTargetNodeId, hoverNodeIds, activeLinkedNodeIds } = useContext(NodeVisualContext);
+  const isSelected = selectedNodeId === id;
+  const isDropTarget = dropTargetNodeId === id;
+  const isActivePortalTarget = activeLinkedNodeIds.has(id);
+  const isHoverRelated = hoverNodeIds.has(id);
+  const isHoverDimmed = !!(hoveredNodeId || hoveredEdgeId) && !isHoverRelated;
+  const className = [
+    "planner-tree-node-inner",
+    isSelected           ? "rf-selected"       : "",
+    isDropTarget         ? "drop-target-hover"  : "",
+    isActivePortalTarget ? "rf-portal-target"   : "",
+    isHoverRelated       ? "rf-hover-related"   : "",
+    isHoverDimmed        ? "rf-hover-dimmed"    : "",
+  ].filter(Boolean).join(" ");
+  // Read CSS custom properties set by baseTreeNodes for background/shadow/padding
+  return (
+    <div className={className} style={{ background: "var(--node-bg)", padding: "var(--node-padding)", fontSize: "var(--node-font-size)" }}>
+      {data.label as React.ReactNode}
+    </div>
+  );
+});
+
 // ── Portal bubble node ─────────────────────────────────────────────────────
 // One orb per (ref × linked-node) pair. Pinned near its node via fixed offset.
 // No Handles — avoids ReactFlow 11 / React 19 useLayoutEffect conflict.
@@ -384,7 +432,7 @@ const PortalNode = memo(function PortalNode({
   );
 });
 
-const nodeTypes: NodeTypes = { portal: PortalNode };
+const nodeTypes: NodeTypes = { portal: PortalNode, tree: TreeNode };
 const edgeTypes: EdgeTypes = Object.freeze({});
 const ENTITY_TYPES: EntityType[] = ["entity", "organization", "partner", "vendor", "investor", "person", "contact", "client"];
 const PEOPLE_ENTITY_TYPES = new Set<EntityType>(["person", "contact", "client"]);
@@ -1172,39 +1220,46 @@ export default function PlannerPage({ user }: PlannerPageProps) {
               </div>
             ),
           },
+          // Base style: only structural/non-interactive properties.
+          // Border, boxShadow, opacity for hover/selection are applied via CSS
+          // classes in TreeNode (reading NodeVisualContext) so the node object
+          // reference never changes for interactive-state reasons.
           style: {
+            // Default border (overridden by CSS class when selected/hovered)
             border: isSearchMatch
               ? "2px solid rgba(34, 197, 94, 0.95)"
               : isRoot
-                ? "2px solid rgba(255, 200, 60, 0.95)"    // bright gold — highest emphasis
+                ? "2px solid rgba(255, 200, 60, 0.95)"
                 : hasStoryChildren
-                  ? "1.5px solid rgba(192, 132, 252, 0.85)" // bright violet — narrative container
+                  ? "1.5px solid rgba(192, 132, 252, 0.85)"
                 : isProject
-                  ? "1.5px solid rgba(99, 179, 255, 0.8)"   // sky blue — project level
+                  ? "1.5px solid rgba(99, 179, 255, 0.8)"
                 : isStory
-                  ? "1.5px solid rgba(52, 211, 153, 0.8)"   // bright emerald — story
-                : "1px solid rgba(100, 106, 140, 0.5)",     // muted slate — item
+                  ? "1.5px solid rgba(52, 211, 153, 0.8)"
+                : "1px solid rgba(100, 106, 140, 0.5)",
             borderRadius: isStoryLaneBeat ? 10 : 14,
-            // Slightly wider nodes on mobile to accommodate bigger font without wrapping.
             width: isStoryLaneBeat ? 300 : showStoryBody ? (isMobileLayout ? 300 : 280) : (isMobileLayout ? 280 : 260),
             minHeight: showStoryBody ? (isExpandedStoryCard ? 280 : 190) : undefined,
-            padding: showStoryBody ? 12 : (isMobileLayout ? 12 : 10),
-            background,
+            padding: 0, // padding handled inside TreeNode div
+            background: "transparent", // background on inner div via CSS
             color: "rgba(250, 252, 255, 0.95)",
-            boxShadow: isSearchMatch
-              ? "0 0 0 3px rgba(34, 197, 94, 0.35), 0 12px 28px rgba(0,0,0,0.4)"
-              : isRoot
-                ? "0 0 0 1px rgba(255,200,60,0.15), 0 14px 32px rgba(0,0,0,0.5)"
-                : hasStoryChildren
-                  ? "0 0 0 1px rgba(192,132,252,0.12), 0 12px 28px rgba(0,0,0,0.45)"
-                : isProject
-                  ? "0 0 0 1px rgba(99,179,255,0.1), 0 10px 24px rgba(0,0,0,0.4)"
-                : isStory
-                  ? "0 0 0 1px rgba(52,211,153,0.1), 0 10px 22px rgba(0,0,0,0.4)"
-                : "0 6px 16px rgba(0,0,0,0.35)",
+            // Store base shadow as CSS var so TreeNode CSS can reference it
+            ["--node-bg" as string]: background,
+            ["--node-base-shadow" as string]: isRoot
+              ? "0 0 0 1px rgba(255,200,60,0.15), 0 14px 32px rgba(0,0,0,0.5)"
+              : hasStoryChildren
+                ? "0 0 0 1px rgba(192,132,252,0.12), 0 12px 28px rgba(0,0,0,0.45)"
+              : isProject
+                ? "0 0 0 1px rgba(99,179,255,0.1), 0 10px 24px rgba(0,0,0,0.4)"
+              : isStory
+                ? "0 0 0 1px rgba(52,211,153,0.1), 0 10px 22px rgba(0,0,0,0.4)"
+              : "0 6px 16px rgba(0,0,0,0.35)",
+            ["--node-padding" as string]: showStoryBody ? "12px" : (isMobileLayout ? "12px" : "10px"),
+            ["--node-font-size" as string]: isMobileLayout ? "14px" : "12.5px",
             fontWeight: 700,
             fontSize: isMobileLayout ? 14 : 12.5,
           } as React.CSSProperties,
+          type: "tree",
           draggable: true,
           selectable: true,
         } as Node;
@@ -1397,40 +1452,11 @@ export default function PlannerPage({ user }: PlannerPageProps) {
     });
   }, []);
 
-  // Styled tree nodes — positions come from baseNodes (live), styles from state flags.
-  const flowNodes = useMemo(() => {
-    return baseNodes.map((node) => {
-      const isSelected = selectedNodeId === node.id;
-      const isActivePortalTarget = activeLinkedNodeIds.has(node.id);
-      const isHoverRelated = hoverNodeIds.has(node.id);
-      const isDropTarget = node.id === dropTargetNodeId;
-      return {
-        ...node,
-        className: isDropTarget ? "drop-target-hover" : undefined,
-        style: {
-          ...(node.style || {}),
-          border: isSelected
-            ? "2px solid rgba(253, 224, 71, 0.95)"
-            : isDropTarget
-              ? "2px solid rgba(52, 211, 153, 0.95)"
-            : isActivePortalTarget
-              ? "2px solid rgba(251, 146, 60, 0.85)"
-            : (node.style as React.CSSProperties)?.border,
-          boxShadow: isSelected
-            ? "0 0 0 3px rgba(253, 224, 71, 0.18), 0 14px 32px rgba(0,0,0,0.45)"
-            : isDropTarget
-              ? "0 0 0 4px rgba(52, 211, 153, 0.28), 0 14px 32px rgba(0,0,0,0.5)"
-            : isActivePortalTarget
-              ? "0 0 0 2px rgba(251,146,60,0.2), 0 14px 30px rgba(0,0,0,0.42)"
-            : isHoverRelated
-              ? "0 0 0 2px rgba(125,211,252,0.22), 0 14px 30px rgba(0,0,0,0.42)"
-              : (node.style as React.CSSProperties)?.boxShadow,
-          opacity: hoveredNodeId || hoveredEdgeId ? (isHoverRelated ? 1 : 0.4) : 1,
-          transition: "opacity 180ms cubic-bezier(0.4, 0, 0.2, 1), box-shadow 180ms cubic-bezier(0.4, 0, 0.2, 1), border-color 180ms cubic-bezier(0.4, 0, 0.2, 1)",
-        },
-      } as Node;
-    });
-  }, [activeLinkedNodeIds, baseNodes, dropTargetNodeId, hoverNodeIds, hoveredEdgeId, hoveredNodeId, selectedNodeId]);
+  // flowNodes = baseNodes directly. NO per-hover/selection mapping.
+  // Visual state (selected border, hover opacity, portal highlight) is applied
+  // via NodeVisualContext read inside the node component — so the nodes[] prop
+  // reference only changes when positions or structure change, never for UI state.
+  const flowNodes = baseNodes;
 
   const flowEdges = useMemo(() => {
     return baseEdges.map((edge) => {
@@ -4547,6 +4573,14 @@ export default function PlannerPage({ user }: PlannerPageProps) {
           </div>
         ) : null}
 
+        <NodeVisualContext.Provider value={useMemo(() => ({
+          selectedNodeId,
+          hoveredNodeId,
+          hoveredEdgeId,
+          dropTargetNodeId,
+          hoverNodeIds,
+          activeLinkedNodeIds,
+        }), [selectedNodeId, hoveredNodeId, hoveredEdgeId, dropTargetNodeId, hoverNodeIds, activeLinkedNodeIds])}>
         <ReactFlow
           nodes={reactFlowNodes}
           edges={flowEdges}
@@ -4641,6 +4675,7 @@ export default function PlannerPage({ user }: PlannerPageProps) {
         >
           <Background gap={22} size={1} />
         </ReactFlow>
+        </NodeVisualContext.Provider>
 
         {/* Context Menu */}
         {contextMenu && (
