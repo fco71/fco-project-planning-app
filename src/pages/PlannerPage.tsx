@@ -1070,8 +1070,7 @@ export default function PlannerPage({ user }: PlannerPageProps) {
     return map;
   }, [refs, filteredTreeIdSet]);
 
-  // visiblePortals is computed later (after displayPositionsMap) so it can
-  // read live drag positions. Placeholder comment keeps the section marker.
+  // visiblePortals is computed after baseNodes so it reads live drag positions.
 
   const baseTreeNodes = useMemo(() => {
     return filteredTreeIds
@@ -1329,8 +1328,56 @@ export default function PlannerPage({ user }: PlannerPageProps) {
   // Tree nodes only — portals are injected separately at render time so their
   // positions can track displayNodes live (during drag) without going through
   // the flowNodes → displayNodes pipeline (which would lag one render behind).
+  // ── ventovault-map pattern ─────────────────────────────────────────────────
+  // baseNodes is the single source of truth for tree node positions.
+  // onNodesChange (RAF-batched) writes directly into baseNodes via applyNodeChanges.
+  // Portal positions are derived from baseNodes in a useMemo — no intermediate
+  // displayNodes state, no competing useEffect, no flashing.
+  const [baseNodes, setBaseNodes] = useState<Node[]>([]);
+  const draggedNodeIdRef   = useRef<string | null>(null);
+  const nodesChangeRafRef  = useRef<number | null>(null);
+  const pendingNodeChangesRef = useRef<Parameters<OnNodesChange>[0] | null>(null);
+
+  // baseTreeNodes → baseNodes: sync styles/metadata whenever the Firestore-derived
+  // tree changes (node added/removed/renamed) but ONLY update positions for nodes
+  // that are NOT currently being dragged (ReactFlow owns their position during drag).
+  useEffect(() => {
+    setBaseNodes((prev) => {
+      if (prev.length === 0) return baseTreeNodes;
+      // Build a live-position map from current baseNodes (what ReactFlow sees).
+      const livePos = new Map(prev.map((n) => [n.id, n.position] as const));
+      return baseTreeNodes.map((node) => {
+        const live = livePos.get(node.id);
+        // Keep the live position if we have one (preserves drag in progress);
+        // fall back to the Firestore position for newly-added nodes.
+        return live ? ({ ...node, position: live } as Node) : node;
+      });
+    });
+  }, [baseTreeNodes]);
+
+  // Batch onNodesChange events through RAF — identical to ventovault-map.
+  // Portals are stripped here because they are derived nodes not in baseNodes.
+  const handleNodesChange: OnNodesChange = useCallback((changes) => {
+    const treeChanges = changes.filter((c) => !c.id.startsWith("portal:"));
+    if (treeChanges.length === 0) return;
+    pendingNodeChangesRef.current = [
+      ...(pendingNodeChangesRef.current ?? []),
+      ...treeChanges,
+    ];
+    if (nodesChangeRafRef.current !== null) return;
+    nodesChangeRafRef.current = window.requestAnimationFrame(() => {
+      const pending = pendingNodeChangesRef.current;
+      pendingNodeChangesRef.current = null;
+      nodesChangeRafRef.current = null;
+      if (pending && pending.length > 0) {
+        setBaseNodes((nds) => applyNodeChanges(pending, nds));
+      }
+    });
+  }, []);
+
+  // Styled tree nodes — positions come from baseNodes (live), styles from state flags.
   const flowNodes = useMemo(() => {
-    return baseTreeNodes.map((node) => {
+    return baseNodes.map((node) => {
       const isSelected = selectedNodeId === node.id;
       const isActivePortalTarget = activeLinkedNodeIds.has(node.id);
       const isHoverRelated = hoverNodeIds.has(node.id);
@@ -1361,7 +1408,7 @@ export default function PlannerPage({ user }: PlannerPageProps) {
         },
       } as Node;
     });
-  }, [activeLinkedNodeIds, baseTreeNodes, dropTargetNodeId, hoverNodeIds, hoveredEdgeId, hoveredNodeId, selectedNodeId]);
+  }, [activeLinkedNodeIds, baseNodes, dropTargetNodeId, hoverNodeIds, hoveredEdgeId, hoveredNodeId, selectedNodeId]);
 
   const flowEdges = useMemo(() => {
     return baseEdges.map((edge) => {
@@ -1382,99 +1429,16 @@ export default function PlannerPage({ user }: PlannerPageProps) {
     });
   }, [baseEdges, hoverEdgeIds, hoveredEdgeId, hoveredNodeId]);
 
-  // displayNodes: live tree-node positions updated every drag frame.
-  // Portal nodes are NOT stored here — they are injected at render time from
-  // livePortalNodes (which reads displayPositionsMap) so they follow the tree
-  // nodes smoothly without any per-frame state lag.
-  const [displayNodes, setDisplayNodes] = useState<Node[]>([]);
-  const draggingNodeIdsRef = useRef<Set<string>>(new Set());
-  const draggedNodeIdRef   = useRef<string | null>(null);
-  // rAF handle for batching onNodesChange calls (ventovault-map approach).
-  const nodesChangeRafRef  = useRef<number | null>(null);
-  const pendingNodeChangesRef = useRef<Parameters<OnNodesChange>[0] | null>(null);
-
-  // flowNodes → displayNodes: sync styles/metadata from flowNodes but NEVER
-  // overwrite positions while a drag is in progress. The rAF-batched
-  // handleNodesChange is the sole owner of positions during drag; letting the
-  // effect also write positions causes portals to flash because flowNodes
-  // contains stale Firestore coordinates that fight the live drag coordinates.
-  useEffect(() => {
-    setDisplayNodes((previous) => {
-      // First render: just use flowNodes directly.
-      if (previous.length === 0) return flowNodes;
-
-      const draggingIds = draggingNodeIdsRef.current;
-
-      // Not dragging → full sync (positions + styles).
-      if (draggingIds.size === 0) return flowNodes;
-
-      // Dragging → carry live positions forward for ALL nodes.
-      // Non-position props (style, selected, etc.) come from flowNodes so
-      // hover / selection highlights still update, but x/y stays live.
-      const livePositions = new Map(previous.map((n) => [n.id, n.position] as const));
-      return flowNodes.map((node) => {
-        const live = livePositions.get(node.id);
-        return live ? ({ ...node, position: live } as Node) : node;
-      });
-    });
-  }, [flowNodes]);
-
-  // Batch position change events per animation frame so portals recompute at
-  // rAF cadence (smooth, ~60fps) instead of on every raw pointer event.
-  const handleNodesChange: OnNodesChange = useCallback((changes) => {
-    // Update dragging set synchronously (needed for drag-stop detection).
-    const draggingIds = new Set(draggingNodeIdsRef.current);
-    changes.forEach((change) => {
-      if (change.type !== "position") return;
-      if ("dragging" in change) {
-        if (change.dragging) draggingIds.add(change.id);
-        else draggingIds.delete(change.id);
-      }
-    });
-    draggingNodeIdsRef.current = draggingIds;
-
-    // Strip ALL change events for portal nodes — portals are not in displayNodes
-    // and derive their positions from displayPositionsMap. Letting ReactFlow
-    // apply select/remove/position changes for portal IDs to displayNodes
-    // causes inconsistencies that make portals flicker or disappear on mobile drag.
-    const treeChanges = changes.filter((c) => !c.id.startsWith("portal:"));
-    if (treeChanges.length === 0) return;
-
-    // Accumulate changes and flush once per animation frame.
-    pendingNodeChangesRef.current = [
-      ...(pendingNodeChangesRef.current ?? []),
-      ...treeChanges,
-    ];
-    if (nodesChangeRafRef.current !== null) return;
-    nodesChangeRafRef.current = window.requestAnimationFrame(() => {
-      const pending = pendingNodeChangesRef.current;
-      pendingNodeChangesRef.current = null;
-      nodesChangeRafRef.current = null;
-      if (pending && pending.length > 0) {
-        setDisplayNodes((nds) => applyNodeChanges(pending, nds));
-      }
-    });
-  }, []);
-
-  // Live position map: derived from displayNodes so portals track nodes during drag.
-  // Rebuilt every time displayNodes changes (i.e. every rAF tick during drag).
-  const displayPositionsMap = useMemo(
-    () => new Map(displayNodes.map((n) => [n.id, n.position] as const)),
-    [displayNodes]
-  );
-
   // ── Portal bubble nodes ────────────────────────────────────────────────────
-  // Computed HERE (after displayPositionsMap) so positions read from the live
-  // drag state rather than the stale Firestore snapshot in nodesById.
-  // One orb per (ref × visible-linked-node). Stacked horizontally above node.
+  // Derived directly from baseNodes (live positions) — identical to how
+  // ventovault-map derives portalNodes from baseNodes. No intermediate map needed.
   const visiblePortals = useMemo((): Node[] => {
-    // Larger orbs on mobile so they're easy to tap.
     const PORTAL_SIZE = isMobileLayout ? 48 : 40;
     const PORTAL_GAP  = isMobileLayout ? 56 : 46;
     const NODE_WIDTH  = isMobileLayout ? 280 : 260;
-    const OFFSET_Y    = isMobileLayout ? -62 : -52; // above the node's top edge
+    const OFFSET_Y    = isMobileLayout ? -62 : -52;
 
-    // Build a map: nodeId → sorted list of refs that link to it
+    // Build map: nodeId → sorted refs that link to it
     const refsByNode = new Map<string, CrossRef[]>();
     for (const ref of refs) {
       for (const nodeId of ref.nodeIds) {
@@ -1485,12 +1449,13 @@ export default function PlannerPage({ user }: PlannerPageProps) {
     }
     refsByNode.forEach((nodeRefs) => nodeRefs.sort((a, b) => a.code.localeCompare(b.code)));
 
+    // Build a position map from baseNodes (live drag positions).
+    // Falls back to resolveNodePosition for nodes not yet in baseNodes.
+    const livePos = new Map(baseNodes.map((n) => [n.id, n.position] as const));
+
     const result: Node[] = [];
     refsByNode.forEach((nodeRefs, nodeId) => {
-      // Prefer live drag position from displayPositionsMap; fall back to
-      // resolveNodePosition (nodesById / treeLayout) for the first render
-      // before displayNodes is populated.
-      const pos = displayPositionsMap.get(nodeId) ?? resolveNodePosition(nodeId);
+      const pos = livePos.get(nodeId) ?? resolveNodePosition(nodeId);
       const totalWidth = nodeRefs.length * PORTAL_SIZE + (nodeRefs.length - 1) * (PORTAL_GAP - PORTAL_SIZE);
       const startX = pos.x + NODE_WIDTH / 2 - totalWidth / 2;
 
@@ -1530,11 +1495,10 @@ export default function PlannerPage({ user }: PlannerPageProps) {
       });
     });
     return result;
-  }, [refs, filteredTreeIdSet, displayPositionsMap, resolveNodePosition, nodesById, isMobileLayout]);
+  }, [refs, filteredTreeIdSet, baseNodes, resolveNodePosition, nodesById, isMobileLayout]);
 
-  // Inject active state and callbacks into portal nodes.
-  // Kept separate from visiblePortals so callback identity changes (activePortalRefId)
-  // don't force a full portal position recompute.
+  // Inject active state and callbacks — kept separate so toggling activePortalRefId
+  // doesn't re-run the position computation above.
   const livePortalNodes = useMemo((): Node[] => {
     return visiblePortals.map((pNode) => {
       const parts = pNode.id.split(":");
@@ -1555,11 +1519,10 @@ export default function PlannerPage({ user }: PlannerPageProps) {
     });
   }, [visiblePortals, activePortalRefId]);
 
-  // Final node array passed to ReactFlow: tree nodes from displayNodes + portals
-  // pinned live above their parent nodes.
+  // Final node array — styled tree nodes + portal orbs (ventovault-map: viewNodes).
   const reactFlowNodes = useMemo(
-    () => [...displayNodes, ...livePortalNodes],
-    [displayNodes, livePortalNodes]
+    () => [...flowNodes, ...livePortalNodes],
+    [flowNodes, livePortalNodes]
   );
 
   // Save warning helper (successful autosaves are silent).
@@ -2796,7 +2759,8 @@ export default function PlannerPage({ user }: PlannerPageProps) {
       // Portal orbs don't trigger re-parenting.
       if (node.id.startsWith("portal:")) { setDropTargetNodeId(null); return; }
       // Multi-select drag: suppress re-parenting (ambiguous which is the primary).
-      if (draggingNodeIdsRef.current.size > 1) {
+      const selectedCount = rfInstance?.getNodes().filter((n) => n.selected && !n.id.startsWith("portal:")).length ?? 0;
+      if (selectedCount > 1) {
         draggedNodeIdRef.current = null;
         setDropTargetNodeId(null);
         return;
@@ -2829,10 +2793,6 @@ export default function PlannerPage({ user }: PlannerPageProps) {
 
       // Portal nodes are pinned (draggable: false) — skip silently.
       if (node.id.startsWith("portal:")) return;
-
-      // Ensure dragging state is cleared on drag end (guards against mobile
-      // touch events that don't always fire dragging:false in onNodesChange).
-      draggingNodeIdsRef.current.delete(node.id);
 
       // Snapshot and clear drop-target state before any async work.
       draggedNodeIdRef.current = null;
@@ -2909,8 +2869,6 @@ export default function PlannerPage({ user }: PlannerPageProps) {
   const onSelectionDragStop = useCallback(
     async (_: React.MouseEvent, draggedNodes: Node[]) => {
       if (!db) return;
-      // Ensure dragging state is cleared for all nodes (guards mobile touch edge cases).
-      draggedNodes.forEach((n) => draggingNodeIdsRef.current.delete(n.id));
       // No re-parenting on multi-select drag — clear drop-target state.
       draggedNodeIdRef.current = null;
       setDropTargetNodeId(null);
