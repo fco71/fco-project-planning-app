@@ -1470,12 +1470,17 @@ export default function PlannerPage({ user }: PlannerPageProps) {
   }, [baseEdges, hoverEdgeIds, hoveredEdgeId, hoveredNodeId]);
 
   // ── Portal bubble nodes ────────────────────────────────────────────────────
-  // Positions are frozen during drag — snapshoted into portalPosRef on drag end
-  // and exposed via portalPosTick (a counter). This means visiblePortals never
-  // recomputes mid-drag, so reactFlowNodes reference stays stable, so ReactFlow
-  // never calls createNodeInternals during drag, so portals never flash.
+  // Keep portalPosRef/portalPosTick for drag-stop snapshot (used by onNodeDragStop).
   const portalPosRef = useRef<Map<string, { x: number; y: number }>>(new Map());
   const [portalPosTick, setPortalPosTick] = useState(0);
+
+  // Live position map built from baseNodes — same state that flowNodes reads.
+  // Both flowNodes and visiblePortals update in the same render, so portals
+  // always have the correct position when ReactFlow calls createNodeInternals.
+  const baseNodePosById = useMemo(
+    () => new Map(baseNodes.map((n) => [n.id, n.position])),
+    [baseNodes]
+  );
 
   const visiblePortals = useMemo((): Node[] => {
     const PORTAL_SIZE = isMobileLayout ? 48 : 40;
@@ -1493,12 +1498,10 @@ export default function PlannerPage({ user }: PlannerPageProps) {
     }
     refsByNode.forEach((nodeRefs) => nodeRefs.sort((a, b) => a.code.localeCompare(b.code)));
 
-    // Use frozen positions from ref — only updated on drag end via portalPosTick.
-    const posMap = portalPosRef.current;
-
     const result: Node[] = [];
     refsByNode.forEach((nodeRefs, nodeId) => {
-      const pos = posMap.get(nodeId) ?? resolveNodePosition(nodeId);
+      // Read live position from baseNodes — follows drag in real time.
+      const pos = baseNodePosById.get(nodeId) ?? resolveNodePosition(nodeId);
       const totalWidth = nodeRefs.length * PORTAL_SIZE + (nodeRefs.length - 1) * (PORTAL_GAP - PORTAL_SIZE);
       const startX = pos.x + NODE_WIDTH / 2 - totalWidth / 2;
 
@@ -1533,9 +1536,7 @@ export default function PlannerPage({ user }: PlannerPageProps) {
       });
     });
     return result;
-    // portalPosTick replaces baseNodes — only changes on drag end, not every frame.
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [refs, filteredTreeIdSet, portalPosTick, resolveNodePosition, isMobileLayout]);
+  }, [refs, filteredTreeIdSet, baseNodePosById, resolveNodePosition, isMobileLayout]);
 
   // Inject active state and callbacks — kept separate so toggling activePortalRefId
   // doesn't re-run the position computation above.
