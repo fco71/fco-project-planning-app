@@ -391,7 +391,6 @@ const PortalOverlay = memo(function PortalOverlay({
   const NODE_WIDTH  = isMobileLayout ? 280 : 260;
   const OFFSET_Y    = isMobileLayout ? -62 : -52; // flow-space px above node top edge
 
-  const containerRef = useRef<HTMLDivElement>(null);
   const rafRef = useRef<number | null>(null);
 
   // Each entry maps to { left, top, size } in CSS pixels relative to overlay container.
@@ -404,8 +403,10 @@ const PortalOverlay = memo(function PortalOverlay({
     function tick() {
       if (!alive) return;
 
+      // vp.x and vp.y are the pan offset in px relative to the ReactFlow container
+      // origin — which is the same origin as our overlay (both are children of
+      // .planner-canvas). No getBoundingClientRect needed.
       const vp = rfInstance.getViewport(); // { x, y, zoom }
-      const containerRect = containerRef.current?.getBoundingClientRect();
 
       const next = new Map<string, { left: number; top: number; size: number }>();
       for (const entry of entries) {
@@ -417,19 +418,11 @@ const PortalOverlay = memo(function PortalOverlay({
         const bubbleFlowX = rfNode.position.x + NODE_WIDTH / 2 - totalWidth / 2 + entry.slotIndex * PORTAL_GAP;
         const bubbleFlowY = rfNode.position.y + OFFSET_Y;
 
-        // Convert flow → viewport-relative screen px
-        // screenPx = flowPx * zoom + vpOffset
-        const screenX = bubbleFlowX * vp.zoom + vp.x;
-        const screenY = bubbleFlowY * vp.zoom + vp.y;
-
-        // Subtract container offset so coords are relative to overlay div
-        const offsetX = containerRect ? containerRect.left : 0;
-        const offsetY = containerRect ? containerRect.top  : 0;
-
+        // Convert flow-space → container-relative px:  px = flow * zoom + panOffset
         next.set(entry.id, {
-          left: screenX - offsetX,
-          top:  screenY - offsetY,
-          size: PORTAL_SIZE * vp.zoom, // scale with zoom
+          left: bubbleFlowX * vp.zoom + vp.x,
+          top:  bubbleFlowY * vp.zoom + vp.y,
+          size: PORTAL_SIZE * vp.zoom,
         });
       }
       setLayout(next);
@@ -445,7 +438,6 @@ const PortalOverlay = memo(function PortalOverlay({
 
   return (
     <div
-      ref={containerRef}
       style={{
         position: "absolute",
         inset: 0,
