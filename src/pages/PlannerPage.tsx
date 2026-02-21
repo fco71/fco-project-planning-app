@@ -1519,8 +1519,17 @@ export default function PlannerPage({ user }: PlannerPageProps) {
   }, [visiblePortals, activePortalRefId]);
 
   // Final node array — styled tree nodes + portal orbs (ventovault-map: viewNodes).
-  const reactFlowNodes = useMemo(
-    () => [...flowNodes, ...livePortalNodes],
+  // IMPORTANT: portals must be filtered to only those whose parentId is actually
+  // present in flowNodes — ReactFlow crashes with "Parent node not found" otherwise.
+  // Parents must also come before children in the array.
+  const reactFlowNodes = useMemo(() => {
+    const renderedIds = new Set(flowNodes.map((n) => n.id));
+    const safePortals = livePortalNodes.filter((p) => {
+      const parentId = (p as Node & { parentId?: string }).parentId;
+      return parentId ? renderedIds.has(parentId) : true;
+    });
+    return [...flowNodes, ...safePortals];
+  },
     [flowNodes, livePortalNodes]
   );
 
