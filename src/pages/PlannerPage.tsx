@@ -1266,7 +1266,7 @@ export default function PlannerPage({ user }: PlannerPageProps) {
       });
   }, [filteredTreeIds, nodesById]);
 
-  // Dashed orange edges: one short line per (ref × visible linked node)
+  // Dashed orange edges: one per (ref × visible linked node)
   const basePortalEdges = useMemo((): Edge[] => {
     const edges: Edge[] = [];
     for (const ref of refs) {
@@ -1364,15 +1364,34 @@ export default function PlannerPage({ user }: PlannerPageProps) {
   // that are NOT currently being dragged (ReactFlow owns their position during drag).
   useEffect(() => {
     setBaseNodes((prev) => {
-      if (prev.length === 0) return baseTreeNodes;
+      if (prev.length === 0) {
+        // First load — also initialise portalPosRef so portals render immediately.
+        portalPosRef.current = new Map(baseTreeNodes.map((n) => [n.id, n.position] as const));
+        setPortalPosTick((t) => t + 1);
+        return baseTreeNodes;
+      }
       // Build a live-position map from current baseNodes (what ReactFlow sees).
       const livePos = new Map(prev.map((n) => [n.id, n.position] as const));
-      return baseTreeNodes.map((node) => {
+      const next = baseTreeNodes.map((node) => {
         const live = livePos.get(node.id);
-        // Keep the live position if we have one (preserves drag in progress);
-        // fall back to the Firestore position for newly-added nodes.
         return live ? ({ ...node, position: live } as Node) : node;
       });
+      // If a node was added from Firestore, update portalPosRef for it.
+      let posChanged = false;
+      const updatedPos = new Map(portalPosRef.current);
+      for (const node of next) {
+        if (!updatedPos.has(node.id)) { updatedPos.set(node.id, node.position); posChanged = true; }
+      }
+      // Remove deleted nodes.
+      const nextIds = new Set(next.map((n) => n.id));
+      for (const id of updatedPos.keys()) {
+        if (!nextIds.has(id)) { updatedPos.delete(id); posChanged = true; }
+      }
+      if (posChanged) {
+        portalPosRef.current = updatedPos;
+        setPortalPosTick((t) => t + 1);
+      }
+      return next;
     });
   }, [baseTreeNodes]);
 
@@ -1451,22 +1470,12 @@ export default function PlannerPage({ user }: PlannerPageProps) {
   }, [baseEdges, hoverEdgeIds, hoveredEdgeId, hoveredNodeId]);
 
   // ── Portal bubble nodes ────────────────────────────────────────────────────
-  // Flash fix: baseNodes updates every RAF frame during drag. If visiblePortals
-  // read baseNodes directly it would recompute every frame → new reactFlowNodes
-  // array reference → ReactFlow's useStoreUpdater fires → createNodeInternals
-  // resets positionAbsolute for every node → flash.
-  //
-  // Fix: portalNodePosRef is a stable ref that mirrors baseNodes positions, but
-  // only gets written when NOT dragging. portalPosTick is a counter that only
-  // increments outside of drag — giving visiblePortals a dependency it can use
-  // without depending on baseNodes (and thus not recomputing during drag).
-  const portalNodePosRef = useRef<Map<string, { x: number; y: number }>>(new Map());
+  // Positions are frozen during drag — snapshoted into portalPosRef on drag end
+  // and exposed via portalPosTick (a counter). This means visiblePortals never
+  // recomputes mid-drag, so reactFlowNodes reference stays stable, so ReactFlow
+  // never calls createNodeInternals during drag, so portals never flash.
+  const portalPosRef = useRef<Map<string, { x: number; y: number }>>(new Map());
   const [portalPosTick, setPortalPosTick] = useState(0);
-  useEffect(() => {
-    if (isDraggingRef.current) return;
-    portalNodePosRef.current = new Map(baseNodes.map((n) => [n.id, n.position] as const));
-    setPortalPosTick((t) => t + 1);
-  }, [baseNodes]);
 
   const visiblePortals = useMemo((): Node[] => {
     const PORTAL_SIZE = isMobileLayout ? 48 : 40;
@@ -1474,7 +1483,6 @@ export default function PlannerPage({ user }: PlannerPageProps) {
     const NODE_WIDTH  = isMobileLayout ? 280 : 260;
     const OFFSET_Y    = isMobileLayout ? -62 : -52;
 
-    // Build map: nodeId → sorted refs that link to it
     const refsByNode = new Map<string, CrossRef[]>();
     for (const ref of refs) {
       for (const nodeId of ref.nodeIds) {
@@ -1485,8 +1493,8 @@ export default function PlannerPage({ user }: PlannerPageProps) {
     }
     refsByNode.forEach((nodeRefs) => nodeRefs.sort((a, b) => a.code.localeCompare(b.code)));
 
-    // Read from the stable ref — frozen during drag so this memo won't fire.
-    const posMap = portalNodePosRef.current;
+    // Use frozen positions from ref — only updated on drag end via portalPosTick.
+    const posMap = portalPosRef.current;
 
     const result: Node[] = [];
     refsByNode.forEach((nodeRefs, nodeId) => {
@@ -1497,11 +1505,6 @@ export default function PlannerPage({ user }: PlannerPageProps) {
       nodeRefs.forEach((ref, idx) => {
         const x = startX + idx * PORTAL_GAP;
         const y = pos.y + OFFSET_Y;
-        const linkedTitles = ref.nodeIds
-          .map((nid) => nodesById.get(nid)?.title)
-          .filter(Boolean)
-          .join(" · ");
-        const tooltip = linkedTitles ? `${ref.label}\n${linkedTitles}` : ref.label;
 
         result.push({
           id: `portal:${ref.id}:${nodeId}`,
@@ -1509,8 +1512,8 @@ export default function PlannerPage({ user }: PlannerPageProps) {
           type: "portal",
           data: {
             code: ref.code,
-            tooltip,
-            count: ref.nodeIds.length,
+            tooltip: ref.label,
+            count: 1,
             isActive: false,
             onToggle: () => {},
             onContextMenu: () => {},
@@ -1530,16 +1533,16 @@ export default function PlannerPage({ user }: PlannerPageProps) {
       });
     });
     return result;
-  // portalPosTick replaces baseNodes in deps — only changes outside of drag.
-  // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [refs, filteredTreeIdSet, portalPosTick, resolveNodePosition, nodesById, isMobileLayout]);
+    // portalPosTick replaces baseNodes — only changes on drag end, not every frame.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [refs, filteredTreeIdSet, portalPosTick, resolveNodePosition, isMobileLayout]);
 
   // Inject active state and callbacks — kept separate so toggling activePortalRefId
   // doesn't re-run the position computation above.
   const livePortalNodes = useMemo((): Node[] => {
     return visiblePortals.map((pNode) => {
-      const parts = pNode.id.split(":");
-      const refId = parts[1];
+      // ID format: "portal:<refId>:<nodeId>"
+      const refId = pNode.id.split(":")[1];
       const isActive = activePortalRefId === refId;
       return {
         ...pNode,
@@ -2835,6 +2838,17 @@ export default function PlannerPage({ user }: PlannerPageProps) {
 
       isDraggingRef.current = false;
 
+      // Snapshot final node positions into portalPosRef, then tick so visiblePortals
+      // recomputes once with the correct post-drag positions.
+      if (rfInstance) {
+        const updatedPos = new Map(portalPosRef.current);
+        rfInstance.getNodes().forEach((n) => {
+          if (!n.id.startsWith("portal:")) updatedPos.set(n.id, n.position);
+        });
+        portalPosRef.current = updatedPos;
+        setPortalPosTick((t) => t + 1);
+      }
+
       // Snapshot drop target from ref (written during drag without setState).
       draggedNodeIdRef.current = null;
       const capturedDropTarget = dropTargetIdRef.current;
@@ -2905,13 +2919,24 @@ export default function PlannerPage({ user }: PlannerPageProps) {
         setError(actionError instanceof Error ? actionError.message : "Could not save node position.");
       }
     },
-    [applyLocalNodePatch, filteredTreeIdSet, nodesById, pushHistory, rootNodeId, showSaveError, user.uid]
+    [applyLocalNodePatch, filteredTreeIdSet, nodesById, pushHistory, rfInstance, rootNodeId, showSaveError, user.uid]
   );
 
   const onSelectionDragStop = useCallback(
     async (_: React.MouseEvent, draggedNodes: Node[]) => {
       if (!db) return;
       isDraggingRef.current = false;
+
+      // Snapshot final positions and tick portals to reposition after drag.
+      if (rfInstance) {
+        const updatedPos = new Map(portalPosRef.current);
+        rfInstance.getNodes().forEach((n) => {
+          if (!n.id.startsWith("portal:")) updatedPos.set(n.id, n.position);
+        });
+        portalPosRef.current = updatedPos;
+        setPortalPosTick((t) => t + 1);
+      }
+
       // No re-parenting on multi-select drag — clear drop-target state.
       draggedNodeIdRef.current = null;
       dropTargetIdRef.current = null;
@@ -2983,7 +3008,7 @@ export default function PlannerPage({ user }: PlannerPageProps) {
         setError(actionError instanceof Error ? actionError.message : "Could not save node positions.");
       }
     },
-    [nodesById, pushHistory, showSaveError, user.uid]
+    [nodesById, pushHistory, rfInstance, showSaveError, user.uid]
   );
 
   // Context menu handlers
@@ -4591,8 +4616,7 @@ export default function PlannerPage({ user }: PlannerPageProps) {
             setPortalContextMenu(null);
             // Portal orb tap: toggle active state and (on mobile) open Bubbles panel.
             if (node.id.startsWith("portal:")) {
-              const parts = node.id.split(":");
-              const refId = parts[1];
+              const refId = node.id.split(":")[1];
               setActivePortalRefId((prev) => (prev === refId ? null : refId));
               if (isMobileLayout) {
                 setMobileSidebarSection("bubbles");
@@ -4630,8 +4654,7 @@ export default function PlannerPage({ user }: PlannerPageProps) {
             event.preventDefault();
             // Portal orb right-click → show portal delete menu
             if (node.id.startsWith("portal:")) {
-              const parts = node.id.split(":");
-              const refId = parts[1];
+              const refId = node.id.split(":")[1];
               setPortalContextMenu({ x: event.clientX, y: event.clientY, refId });
               return;
             }
