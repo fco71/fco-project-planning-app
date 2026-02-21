@@ -1266,28 +1266,10 @@ export default function PlannerPage({ user }: PlannerPageProps) {
       });
   }, [filteredTreeIds, nodesById]);
 
-  // Dashed orange edges: one per (ref × visible linked node)
-  const basePortalEdges = useMemo((): Edge[] => {
-    const edges: Edge[] = [];
-    for (const ref of refs) {
-      for (const nodeId of ref.nodeIds) {
-        if (!filteredTreeIdSet.has(nodeId)) continue;
-        edges.push({
-          id: `portal-edge:${ref.id}:${nodeId}`,
-          source: nodeId,
-          target: `portal:${ref.id}:${nodeId}`,
-          animated: false,
-          zIndex: 5,
-          style: {
-            stroke: "rgba(255,160,71,0.6)",
-            strokeWidth: 1.5,
-            strokeDasharray: "4 4",
-          },
-        } as Edge);
-      }
-    }
-    return edges;
-  }, [refs, filteredTreeIdSet]);
+  // Portal edges — not needed when portals use parentId (they move with the parent
+  // node automatically via ReactFlow's transform). Kept as empty array so the rest
+  // of the edge pipeline (hoverIndex, baseEdges) requires no changes.
+  const basePortalEdges = useMemo((): Edge[] => [], []);
 
   // Memoized so hoverIndex (which depends on baseEdges) gets a stable reference
   // and doesn't recreate itself on every render, preventing the infinite loop:
@@ -1451,9 +1433,10 @@ export default function PlannerPage({ user }: PlannerPageProps) {
   }, [baseEdges, hoverEdgeIds, hoveredEdgeId, hoveredNodeId]);
 
   // ── Portal bubble nodes ────────────────────────────────────────────────────
-  // One bubble per (ref × visible nodeId). Each ref with N linked nodes shows
-  // N independent bubbles — one above each linked node. Portals are purely visual
-  // markers; the user controls repetition manually via naming and color.
+  // One bubble per (ref × visible nodeId). Uses ReactFlow parentId so the portal
+  // is a CHILD of its tree node — ReactFlow moves it synchronously with the parent
+  // via CSS transform every frame, with zero RAF lag and zero flash.
+  // Position is relative to the parent node's top-left corner.
   const visiblePortals = useMemo((): Node[] => {
     const PORTAL_SIZE = isMobileLayout ? 48 : 40;
     const PORTAL_GAP  = isMobileLayout ? 56 : 46;
@@ -1472,21 +1455,21 @@ export default function PlannerPage({ user }: PlannerPageProps) {
     }
     refsByNode.forEach((nodeRefs) => nodeRefs.sort((a, b) => a.code.localeCompare(b.code)));
 
-    const livePos = new Map(baseNodes.map((n) => [n.id, n.position] as const));
-
     const result: Node[] = [];
     refsByNode.forEach((nodeRefs, nodeId) => {
-      const pos = livePos.get(nodeId) ?? resolveNodePosition(nodeId);
+      // Position is RELATIVE to parent node's top-left corner.
+      // Horizontally centered on the parent node, sitting just above it.
       const totalWidth = nodeRefs.length * PORTAL_SIZE + (nodeRefs.length - 1) * (PORTAL_GAP - PORTAL_SIZE);
-      const startX = pos.x + NODE_WIDTH / 2 - totalWidth / 2;
+      const startX = NODE_WIDTH / 2 - totalWidth / 2;
 
       nodeRefs.forEach((ref, idx) => {
         const x = startX + idx * PORTAL_GAP;
-        const y = pos.y + OFFSET_Y;
+        const y = OFFSET_Y; // negative = above the parent node's top edge
 
         result.push({
           id: `portal:${ref.id}:${nodeId}`,
-          position: { x, y },
+          parentId: nodeId,           // ← child of tree node; ReactFlow moves it synchronously
+          position: { x, y },         // relative to parent's top-left corner
           type: "portal",
           data: {
             code: ref.code,
@@ -1511,7 +1494,7 @@ export default function PlannerPage({ user }: PlannerPageProps) {
       });
     });
     return result;
-  }, [refs, filteredTreeIdSet, baseNodes, resolveNodePosition, isMobileLayout]);
+  }, [refs, filteredTreeIdSet, isMobileLayout]);
 
   // Inject active state and callbacks — kept separate so toggling activePortalRefId
   // doesn't re-run the position computation above.
