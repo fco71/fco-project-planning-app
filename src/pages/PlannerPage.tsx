@@ -385,14 +385,17 @@ const PortalOverlay = memo(function PortalOverlay({
   onContextMenu,
   isMobileLayout,
 }: PortalOverlayProps) {
-  const PORTAL_SIZE = isMobileLayout ? 48 : 40;
+  // Flow-space constants — identical to how ventovault-map sizes its portal nodes.
+  const PORTAL_SIZE = isMobileLayout ? 48 : 40; // flow-space px (same as node style width/height)
   const PORTAL_GAP  = isMobileLayout ? 56 : 46;
   const NODE_WIDTH  = isMobileLayout ? 280 : 260;
-  const OFFSET_Y    = isMobileLayout ? -62 : -52;
+  const OFFSET_Y    = isMobileLayout ? -62 : -52; // flow-space px above node top edge
 
+  const containerRef = useRef<HTMLDivElement>(null);
   const rafRef = useRef<number | null>(null);
-  // screen-space pixel positions keyed by entry id
-  const [positions, setPositions] = useState<Map<string, { x: number; y: number }>>(new Map());
+
+  // Each entry maps to { left, top, size } in CSS pixels relative to overlay container.
+  const [layout, setLayout] = useState<Map<string, { left: number; top: number; size: number }>>(new Map());
 
   useEffect(() => {
     if (!rfInstance) return;
@@ -400,19 +403,36 @@ const PortalOverlay = memo(function PortalOverlay({
 
     function tick() {
       if (!alive) return;
-      const next = new Map<string, { x: number; y: number }>();
+
+      const vp = rfInstance.getViewport(); // { x, y, zoom }
+      const containerRect = containerRef.current?.getBoundingClientRect();
+
+      const next = new Map<string, { left: number; top: number; size: number }>();
       for (const entry of entries) {
         const rfNode = rfInstance.getNode(entry.nodeId);
         if (!rfNode) continue;
-        const nodePos = rfNode.position;
-        // Compute bubble flow-space position: centred above the node
+
+        // Flow-space top-left of the bubble
         const totalWidth = entry.slotCount * PORTAL_SIZE + (entry.slotCount - 1) * (PORTAL_GAP - PORTAL_SIZE);
-        const startFlowX = nodePos.x + NODE_WIDTH / 2 - totalWidth / 2;
-        const flowX = startFlowX + entry.slotIndex * PORTAL_GAP + PORTAL_SIZE / 2;
-        const flowY = nodePos.y + OFFSET_Y + PORTAL_SIZE / 2;
-        next.set(entry.id, rfInstance.flowToScreenPosition({ x: flowX, y: flowY }));
+        const bubbleFlowX = rfNode.position.x + NODE_WIDTH / 2 - totalWidth / 2 + entry.slotIndex * PORTAL_GAP;
+        const bubbleFlowY = rfNode.position.y + OFFSET_Y;
+
+        // Convert flow → viewport-relative screen px
+        // screenPx = flowPx * zoom + vpOffset
+        const screenX = bubbleFlowX * vp.zoom + vp.x;
+        const screenY = bubbleFlowY * vp.zoom + vp.y;
+
+        // Subtract container offset so coords are relative to overlay div
+        const offsetX = containerRect ? containerRect.left : 0;
+        const offsetY = containerRect ? containerRect.top  : 0;
+
+        next.set(entry.id, {
+          left: screenX - offsetX,
+          top:  screenY - offsetY,
+          size: PORTAL_SIZE * vp.zoom, // scale with zoom
+        });
       }
-      setPositions(next);
+      setLayout(next);
       rafRef.current = requestAnimationFrame(tick);
     }
 
@@ -425,6 +445,7 @@ const PortalOverlay = memo(function PortalOverlay({
 
   return (
     <div
+      ref={containerRef}
       style={{
         position: "absolute",
         inset: 0,
@@ -434,7 +455,7 @@ const PortalOverlay = memo(function PortalOverlay({
       }}
     >
       {entries.map((entry) => {
-        const pos = positions.get(entry.id);
+        const pos = layout.get(entry.id);
         if (!pos) return null;
         const isActive = activePortalRefId === entry.refId;
         return (
@@ -442,10 +463,10 @@ const PortalOverlay = memo(function PortalOverlay({
             key={entry.id}
             style={{
               position: "absolute",
-              left: pos.x - PORTAL_SIZE / 2,
-              top: pos.y - PORTAL_SIZE / 2,
-              width: PORTAL_SIZE,
-              height: PORTAL_SIZE,
+              left: pos.left,
+              top:  pos.top,
+              width:  pos.size,
+              height: pos.size,
               pointerEvents: "all",
             }}
             onContextMenu={(e) => { e.preventDefault(); e.stopPropagation(); onContextMenu(e, entry.refId); }}
@@ -453,6 +474,7 @@ const PortalOverlay = memo(function PortalOverlay({
             <button
               type="button"
               className={`planner-portal-inner${isActive ? " active" : ""}`}
+              style={{ fontSize: Math.max(8, 10 * pos.size / PORTAL_SIZE) }}
               onClick={(e) => { e.stopPropagation(); onToggle(entry.refId); }}
             >
               <div className="planner-portal-label" data-tooltip={entry.tooltip}>
