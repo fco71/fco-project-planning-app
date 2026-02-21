@@ -7,7 +7,6 @@ import ReactFlow, {
   type Edge,
   type EdgeTypes,
   type Node,
-  type NodeProps,
   type NodeTypes,
   type ReactFlowInstance,
   type OnNodesChange,
@@ -349,42 +348,126 @@ function getMasterNodeFor(nodeId: string, rootNodeId: string | null, nodesById: 
   return cursor.id || rootNodeId;
 }
 
-// ── Portal bubble node ─────────────────────────────────────────────────────
-// One orb per (ref × linked-node) pair. Pinned near its node via fixed offset.
-// No Handles — avoids ReactFlow 11 / React 19 useLayoutEffect conflict.
-// Right-click fires onContextMenu so the parent can show a delete menu.
-const PortalNode = memo(function PortalNode({
-  data,
-}: NodeProps<{
+// ── Portal DOM overlay ──────────────────────────────────────────────────────
+// Portals are rendered as a plain HTML overlay on top of the ReactFlow canvas,
+// NOT as ReactFlow nodes. This is the only approach that avoids the flash caused
+// by ReactFlow's createNodeInternals resetting positionAbsolute on every render
+// of the controlled `nodes` prop (which happens every drag frame via RAF batch).
+//
+// The overlay reads each anchor node's position from rfInstance.getNode() and
+// converts to screen coords via rfInstance.flowToScreenPosition() inside a rAF
+// loop — runs in sync with the browser's paint pipeline, zero lag, zero flash.
+
+type PortalBubbleEntry = {
+  id: string;       // "portal:<refId>:<nodeId>"
+  refId: string;
+  nodeId: string;   // anchor tree node
   code: string;
   tooltip: string;
-  count: number;
-  isActive: boolean;
-  onToggle: () => void;
-  onContextMenu: (e: React.MouseEvent) => void;
-}>) {
+  slotIndex: number;  // horizontal slot index among siblings on same node
+  slotCount: number;  // total portals on same node
+};
+
+type PortalOverlayProps = {
+  entries: PortalBubbleEntry[];
+  rfInstance: ReactFlowInstance | null;
+  activePortalRefId: string | null;
+  onToggle: (refId: string) => void;
+  onContextMenu: (e: React.MouseEvent, refId: string) => void;
+  isMobileLayout: boolean;
+};
+
+const PortalOverlay = memo(function PortalOverlay({
+  entries,
+  rfInstance,
+  activePortalRefId,
+  onToggle,
+  onContextMenu,
+  isMobileLayout,
+}: PortalOverlayProps) {
+  const PORTAL_SIZE = isMobileLayout ? 48 : 40;
+  const PORTAL_GAP  = isMobileLayout ? 56 : 46;
+  const NODE_WIDTH  = isMobileLayout ? 280 : 260;
+  const OFFSET_Y    = isMobileLayout ? -62 : -52;
+
+  const rafRef = useRef<number | null>(null);
+  // screen-space pixel positions keyed by entry id
+  const [positions, setPositions] = useState<Map<string, { x: number; y: number }>>(new Map());
+
+  useEffect(() => {
+    if (!rfInstance) return;
+    let alive = true;
+
+    function tick() {
+      if (!alive) return;
+      const next = new Map<string, { x: number; y: number }>();
+      for (const entry of entries) {
+        const rfNode = rfInstance.getNode(entry.nodeId);
+        if (!rfNode) continue;
+        const nodePos = rfNode.position;
+        // Compute bubble flow-space position: centred above the node
+        const totalWidth = entry.slotCount * PORTAL_SIZE + (entry.slotCount - 1) * (PORTAL_GAP - PORTAL_SIZE);
+        const startFlowX = nodePos.x + NODE_WIDTH / 2 - totalWidth / 2;
+        const flowX = startFlowX + entry.slotIndex * PORTAL_GAP + PORTAL_SIZE / 2;
+        const flowY = nodePos.y + OFFSET_Y + PORTAL_SIZE / 2;
+        next.set(entry.id, rfInstance.flowToScreenPosition({ x: flowX, y: flowY }));
+      }
+      setPositions(next);
+      rafRef.current = requestAnimationFrame(tick);
+    }
+
+    rafRef.current = requestAnimationFrame(tick);
+    return () => {
+      alive = false;
+      if (rafRef.current !== null) cancelAnimationFrame(rafRef.current);
+    };
+  }, [entries, rfInstance, PORTAL_SIZE, PORTAL_GAP, NODE_WIDTH, OFFSET_Y]);
+
   return (
     <div
-      style={{ width: "100%", height: "100%", display: "flex", alignItems: "center", justifyContent: "center", position: "relative" }}
-      onContextMenu={(e) => { e.preventDefault(); e.stopPropagation(); data.onContextMenu(e); }}
+      style={{
+        position: "absolute",
+        inset: 0,
+        pointerEvents: "none",
+        zIndex: 10,
+        overflow: "hidden",
+      }}
     >
-      <button
-        type="button"
-        className={`planner-portal-inner${data.isActive ? " active" : ""}`}
-        onClick={(e) => { e.stopPropagation(); data.onToggle(); }}
-      >
-        <div className="planner-portal-label" data-tooltip={data.tooltip}>
-          {data.code}
-        </div>
-        {data.count > 1 && (
-          <span className="planner-portal-count">{data.count}</span>
-        )}
-      </button>
+      {entries.map((entry) => {
+        const pos = positions.get(entry.id);
+        if (!pos) return null;
+        const isActive = activePortalRefId === entry.refId;
+        return (
+          <div
+            key={entry.id}
+            style={{
+              position: "absolute",
+              left: pos.x - PORTAL_SIZE / 2,
+              top: pos.y - PORTAL_SIZE / 2,
+              width: PORTAL_SIZE,
+              height: PORTAL_SIZE,
+              pointerEvents: "all",
+            }}
+            onContextMenu={(e) => { e.preventDefault(); e.stopPropagation(); onContextMenu(e, entry.refId); }}
+          >
+            <button
+              type="button"
+              className={`planner-portal-inner${isActive ? " active" : ""}`}
+              onClick={(e) => { e.stopPropagation(); onToggle(entry.refId); }}
+            >
+              <div className="planner-portal-label" data-tooltip={entry.tooltip}>
+                {entry.code}
+              </div>
+            </button>
+          </div>
+        );
+      })}
     </div>
   );
 });
 
-const nodeTypes: NodeTypes = { portal: PortalNode };
+// No portal node type — portals are rendered via PortalOverlay, not ReactFlow nodes.
+const nodeTypes: NodeTypes = {};
 const edgeTypes: EdgeTypes = Object.freeze({});
 const ENTITY_TYPES: EntityType[] = ["entity", "organization", "partner", "vendor", "investor", "person", "contact", "client"];
 const PEOPLE_ENTITY_TYPES = new Set<EntityType>(["person", "contact", "client"]);
@@ -1359,9 +1442,9 @@ export default function PlannerPage({ user }: PlannerPageProps) {
   }, [baseTreeNodes]);
 
   // Batch onNodesChange events through RAF — identical to ventovault-map.
-  // Portals are stripped here because they are derived nodes not in baseNodes.
   const handleNodesChange: OnNodesChange = useCallback((changes) => {
-    const treeChanges = changes.filter((c) => !c.id.startsWith("portal:"));
+    if (changes.length === 0) return;
+    const treeChanges = changes;
     if (treeChanges.length === 0) return;
     pendingNodeChangesRef.current = [
       ...(pendingNodeChangesRef.current ?? []),
@@ -1432,19 +1515,12 @@ export default function PlannerPage({ user }: PlannerPageProps) {
     });
   }, [baseEdges, hoverEdgeIds, hoveredEdgeId, hoveredNodeId]);
 
-  // ── Portal bubble nodes ────────────────────────────────────────────────────
-  // One bubble per (ref × visible nodeId). Uses ReactFlow parentId so the portal
-  // is a CHILD of its tree node — ReactFlow moves it synchronously with the parent
-  // via CSS transform every frame, with zero RAF lag and zero flash.
-  // Position is relative to the parent node's top-left corner.
-  const visiblePortals = useMemo((): Node[] => {
-    const PORTAL_SIZE = isMobileLayout ? 48 : 40;
-    const PORTAL_GAP  = isMobileLayout ? 56 : 46;
-    const NODE_WIDTH  = isMobileLayout ? 280 : 260;
-    const OFFSET_Y    = isMobileLayout ? -62 : -52;
-
+  // ── Portal overlay entries ─────────────────────────────────────────────────
+  // Portals are NOT ReactFlow nodes. They are rendered by <PortalOverlay> as a
+  // plain DOM layer. This memo computes the stable descriptor list; the overlay
+  // itself reads live node positions from rfInstance every animation frame.
+  const portalOverlayEntries = useMemo((): PortalBubbleEntry[] => {
     // Group refs by each of their visible linked nodes.
-    // nodeId → refs visible on that node (sorted by code).
     const refsByNode = new Map<string, CrossRef[]>();
     for (const ref of refs) {
       for (const nodeId of ref.nodeIds) {
@@ -1455,82 +1531,27 @@ export default function PlannerPage({ user }: PlannerPageProps) {
     }
     refsByNode.forEach((nodeRefs) => nodeRefs.sort((a, b) => a.code.localeCompare(b.code)));
 
-    const result: Node[] = [];
+    const result: PortalBubbleEntry[] = [];
     refsByNode.forEach((nodeRefs, nodeId) => {
-      // Position is RELATIVE to parent node's top-left corner.
-      // Horizontally centered on the parent node, sitting just above it.
-      const totalWidth = nodeRefs.length * PORTAL_SIZE + (nodeRefs.length - 1) * (PORTAL_GAP - PORTAL_SIZE);
-      const startX = NODE_WIDTH / 2 - totalWidth / 2;
-
       nodeRefs.forEach((ref, idx) => {
-        const x = startX + idx * PORTAL_GAP;
-        const y = OFFSET_Y; // negative = above the parent node's top edge
-
         result.push({
           id: `portal:${ref.id}:${nodeId}`,
-          parentId: nodeId,           // ← child of tree node; ReactFlow moves it synchronously
-          position: { x, y },         // relative to parent's top-left corner
-          type: "portal",
-          data: {
-            code: ref.code,
-            tooltip: ref.label,
-            count: 1,
-            isActive: false,
-            onToggle: () => {},
-            onContextMenu: () => {},
-          },
-          draggable: false,
-          selectable: false,
-          zIndex: 10,
-          style: {
-            width: PORTAL_SIZE,
-            height: PORTAL_SIZE,
-            borderRadius: 999,
-            background: "transparent",
-            border: "none",
-            padding: 0,
-          },
-        } as Node);
+          refId: ref.id,
+          nodeId,
+          code: ref.code,
+          tooltip: ref.label,
+          slotIndex: idx,
+          slotCount: nodeRefs.length,
+        });
       });
     });
     return result;
-  }, [refs, filteredTreeIdSet, isMobileLayout]);
+  }, [refs, filteredTreeIdSet]);
 
-  // Inject active state and callbacks — kept separate so toggling activePortalRefId
-  // doesn't re-run the position computation above.
-  const livePortalNodes = useMemo((): Node[] => {
-    return visiblePortals.map((pNode) => {
-      // ID format: "portal:<refId>:<nodeId>"
-      const refId = pNode.id.split(":")[1];
-      const isActive = activePortalRefId === refId;
-      return {
-        ...pNode,
-        data: {
-          ...pNode.data,
-          isActive,
-          onToggle: () => setActivePortalRefId((prev) => prev === refId ? null : refId),
-          onContextMenu: (e: React.MouseEvent) => {
-            e.preventDefault();
-            setPortalContextMenu({ x: e.clientX, y: e.clientY, refId });
-          },
-        },
-      } as Node;
-    });
-  }, [visiblePortals, activePortalRefId]);
-
-  // Final node array — styled tree nodes + portal orbs (ventovault-map: viewNodes).
-  // IMPORTANT: portals must be filtered to only those whose parentId is actually
-  // present in flowNodes — ReactFlow crashes with "Parent node not found" otherwise.
-  // Parents must also come before children in the array.
-  const reactFlowNodes = useMemo(() => {
-    const renderedIds = new Set(flowNodes.map((n) => n.id));
-    const safePortals = livePortalNodes.filter((p) => {
-      const parentId = (p as Node & { parentId?: string }).parentId;
-      return parentId ? renderedIds.has(parentId) : true;
-    });
-    return [...flowNodes, ...safePortals];
-  },
-    [flowNodes, livePortalNodes]
+  // Final node array — tree nodes only. Portals rendered via DOM overlay.
+  const reactFlowNodes = useMemo(
+    () => flowNodes,
+    [flowNodes]
   );
 
   // Save warning helper (successful autosaves are silent).
@@ -2765,10 +2786,8 @@ export default function PlannerPage({ user }: PlannerPageProps) {
   const onNodeDrag = useCallback(
     (_: React.MouseEvent, node: Node) => {
       isDraggingRef.current = true;
-      // Portal orbs don't trigger re-parenting.
-      if (node.id.startsWith("portal:")) { dropTargetIdRef.current = null; return; }
       // Multi-select drag: suppress re-parenting (ambiguous which is the primary).
-      const selectedCount = rfInstance?.getNodes().filter((n) => n.selected && !n.id.startsWith("portal:")).length ?? 0;
+      const selectedCount = rfInstance?.getNodes().filter((n) => n.selected).length ?? 0;
       if (selectedCount > 1) {
         draggedNodeIdRef.current = null;
         dropTargetIdRef.current = null;
@@ -2782,16 +2801,14 @@ export default function PlannerPage({ user }: PlannerPageProps) {
       // All descendants + the node itself are forbidden drop targets (cycle prevention).
       const forbiddenIds = new Set(collectDescendants(node.id, childrenByParent));
       const currentParentId = nodesById.get(node.id)?.parentId ?? null;
-      // Portals are not valid re-parent targets.
-      const intersecting = rfInstance.getIntersectingNodes(node).filter((c) => !c.id.startsWith("portal:"));
+      const intersecting = rfInstance.getIntersectingNodes(node);
       let bestTarget: string | null = null;
       for (const candidate of intersecting) {
-        if (forbiddenIds.has(candidate.id)) continue;    // self or descendant
-        if (candidate.id === currentParentId) continue;  // already the parent (no-op)
+        if (forbiddenIds.has(candidate.id)) continue;
+        if (candidate.id === currentParentId) continue;
         bestTarget = candidate.id;
         break;
       }
-      // Write to ref only — avoids setState per frame which recomputes flowNodes.
       dropTargetIdRef.current = bestTarget;
     },
     [childrenByParent, nodesById, rfInstance]
@@ -2800,9 +2817,6 @@ export default function PlannerPage({ user }: PlannerPageProps) {
   const onNodeDragStop = useCallback(
     async (_: React.MouseEvent, node: Node) => {
       if (!db) return;
-
-      // Portal nodes are pinned (draggable: false) — skip silently.
-      if (node.id.startsWith("portal:")) return;
 
       isDraggingRef.current = false;
 
@@ -2888,7 +2902,7 @@ export default function PlannerPage({ user }: PlannerPageProps) {
       dropTargetIdRef.current = null;
       setDropTargetNodeId(null);
 
-      const movedTreeNodes = draggedNodes.filter((n) => !n.id.startsWith("portal:"));
+      const movedTreeNodes = draggedNodes;
       if (movedTreeNodes.length === 0) return;
       const movedTreePositions = new Map(movedTreeNodes.map((entry) => [entry.id, entry.position] as const));
 
@@ -4560,17 +4574,6 @@ export default function PlannerPage({ user }: PlannerPageProps) {
           onNodeClick={(_, node) => {
             setContextMenu(null);
             setPortalContextMenu(null);
-            // Portal orb tap: toggle active state and (on mobile) open Bubbles panel.
-            if (node.id.startsWith("portal:")) {
-              const refId = node.id.split(":")[1];
-              setActivePortalRefId((prev) => (prev === refId ? null : refId));
-              if (isMobileLayout) {
-                setMobileSidebarSection("bubbles");
-                setMobileSidebarOpen(true);
-                setMobileQuickEditorOpen(false);
-              }
-              return;
-            }
             setSelectedNodeId(node.id);
             setActivePortalRefId(null);
             if (isMobileLayout) setMobileSidebarOpen(false);
@@ -4581,29 +4584,21 @@ export default function PlannerPage({ user }: PlannerPageProps) {
             onNodeDoubleClick(_, node);
           }}
           onNodeMouseEnter={(_, node) => {
-            if (node.id.startsWith("portal:")) return;
             scheduleHoverUpdate(node.id, hoveredEdgeId);
           }}
-          onNodeMouseLeave={(_, node) => {
-            if (node.id.startsWith("portal:")) return;
+          onNodeMouseLeave={() => {
             scheduleHoverUpdate(null, hoveredEdgeId);
           }}
           onEdgeMouseEnter={(_, edge) => scheduleHoverUpdate(hoveredNodeId, edge.id)}
           onEdgeMouseLeave={() => scheduleHoverUpdate(hoveredNodeId, null)}
-          onNodeDragStart={(_, node) => {
-            if (!node.id.startsWith("portal:")) isDraggingRef.current = true;
+          onNodeDragStart={() => {
+            isDraggingRef.current = true;
           }}
           onNodeDrag={onNodeDrag}
           onNodeDragStop={onNodeDragStop}
           onSelectionDragStop={onSelectionDragStop}
           onNodeContextMenu={(event, node) => {
             event.preventDefault();
-            // Portal orb right-click → show portal delete menu
-            if (node.id.startsWith("portal:")) {
-              const refId = node.id.split(":")[1];
-              setPortalContextMenu({ x: event.clientX, y: event.clientY, refId });
-              return;
-            }
             setPortalContextMenu(null);
             if (isMobileLayout) {
               setSelectedNodeId(node.id);
@@ -4633,6 +4628,25 @@ export default function PlannerPage({ user }: PlannerPageProps) {
         >
           <Background gap={22} size={1} />
         </ReactFlow>
+
+        {/* Portal bubble overlay — rendered outside ReactFlow nodes to avoid flash */}
+        <PortalOverlay
+          entries={portalOverlayEntries}
+          rfInstance={rfInstance}
+          activePortalRefId={activePortalRefId}
+          onToggle={(refId) => {
+            setActivePortalRefId((prev) => prev === refId ? null : refId);
+            if (isMobileLayout) {
+              setMobileSidebarSection("bubbles");
+              setMobileSidebarOpen(true);
+              setMobileQuickEditorOpen(false);
+            }
+          }}
+          onContextMenu={(e, refId) => {
+            setPortalContextMenu({ x: e.clientX, y: e.clientY, refId });
+          }}
+          isMobileLayout={isMobileLayout}
+        />
 
         {/* Context Menu */}
         {contextMenu && (
