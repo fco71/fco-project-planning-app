@@ -70,6 +70,7 @@ type CrossRefDoc = {
   code: string;
   nodeIds: string[];
   anchorNodeId?: string;
+  color?: string;
   portalX?: number;
   portalY?: number;
   portalAnchorX?: number;
@@ -90,6 +91,7 @@ type CrossRef = {
   code: string;
   nodeIds: string[];
   anchorNodeId: string | null;
+  color: string | null;
   portalX: number | null;
   portalY: number | null;
   portalAnchorX: number | null;
@@ -115,6 +117,7 @@ type PaletteItem = {
 };
 
 const HEX_COLOR_REGEX = /^#?[0-9a-fA-F]{6}$/;
+const DEFAULT_BUBBLE_COLOR = "#40B6FF";
 
 function normalizeHexColor(value: unknown): string | undefined {
   if (typeof value !== "string") return undefined;
@@ -188,6 +191,37 @@ function nextNodeKind(kind: NodeKind): NodeKind {
 function normalizeCode(input: string): string {
   const cleaned = input.toUpperCase().replace(/[^A-Z0-9]/g, "").slice(0, 4);
   return cleaned || "REF";
+}
+
+function nextBubbleCode(codes: Iterable<string>): string {
+  let maxSeen = 0;
+  for (const raw of codes) {
+    const match = /^B(\d{1,6})$/i.exec(raw.trim());
+    if (!match) continue;
+    const parsed = Number.parseInt(match[1], 10);
+    if (Number.isFinite(parsed)) maxSeen = Math.max(maxSeen, parsed);
+  }
+  return `B${String(maxSeen + 1).padStart(3, "0")}`;
+}
+
+function hexToRgb(hex: string): { r: number; g: number; b: number } | null {
+  const normalized = normalizeHexColor(hex);
+  if (!normalized) return null;
+  const raw = normalized.slice(1);
+  const parsed = Number.parseInt(raw, 16);
+  if (!Number.isFinite(parsed)) return null;
+  return {
+    r: (parsed >> 16) & 255,
+    g: (parsed >> 8) & 255,
+    b: parsed & 255,
+  };
+}
+
+function rgbaFromHex(hex: string | null | undefined, alpha: number, fallback: string): string {
+  if (!hex) return fallback;
+  const rgb = hexToRgb(hex);
+  if (!rgb) return fallback;
+  return `rgba(${rgb.r}, ${rgb.g}, ${rgb.b}, ${alpha})`;
 }
 
 function initialsFromLabel(input: string): string {
@@ -493,6 +527,7 @@ export default function PlannerPage({ user }: PlannerPageProps) {
   const [expandedStoryNodeIds, setExpandedStoryNodeIds] = useState<Set<string>>(new Set());
   const [newRefLabel, setNewRefLabel] = useState("");
   const [newRefCode, setNewRefCode] = useState("");
+  const [newRefColor, setNewRefColor] = useState(DEFAULT_BUBBLE_COLOR);
   const [newRefType, setNewRefType] = useState<EntityType>("entity");
   const [refSearchQuery, setRefSearchQuery] = useState("");
   const [refCategoryFilter, setRefCategoryFilter] = useState<RefCategoryFilter>("all");
@@ -845,6 +880,7 @@ export default function PlannerPage({ user }: PlannerPageProps) {
                   code: typeof value.code === "string" ? normalizeCode(value.code) : "REF",
                   nodeIds: BUBBLES_SIMPLIFIED_MODE ? (singleNodeId ? [singleNodeId] : []) : parsedNodeIds,
                   anchorNodeId: BUBBLES_SIMPLIFIED_MODE ? singleNodeId : parsedAnchorNodeId,
+                  color: normalizeHexColor(value.color) ?? null,
                   portalX: typeof value.portalX === "number" ? value.portalX : null,
                   portalY: typeof value.portalY === "number" ? value.portalY : null,
                   portalAnchorX: typeof value.portalAnchorX === "number" ? value.portalAnchorX : null,
@@ -1655,6 +1691,7 @@ export default function PlannerPage({ user }: PlannerPageProps) {
           y = clamp(sideYBase + idx * PORTAL_GAP + refNudge.y * 0.2, minY, maxY - PORTAL_SIZE);
         }
         const isActive = activePortalRefId === ref.id;
+        const bubbleColor = ref.color || DEFAULT_BUBBLE_COLOR;
         result.push({
           id: `portal:${ref.id}`,
           position: { x, y },
@@ -1672,9 +1709,9 @@ export default function PlannerPage({ user }: PlannerPageProps) {
             width: PORTAL_SIZE,
             height: PORTAL_SIZE,
             borderRadius: 999,
-            border: isActive ? "2px solid rgba(251,191,36,0.95)" : "2px solid rgba(64,182,255,0.95)",
-            background: isActive ? "rgba(48,30,4,0.88)" : "rgba(12,36,72,0.82)",
-            color: isActive ? "rgba(255,230,130,0.98)" : "rgba(200,235,255,0.95)",
+            border: isActive ? "2px solid rgba(251,191,36,0.95)" : `2px solid ${rgbaFromHex(bubbleColor, 0.95, "rgba(64,182,255,0.95)")}`,
+            background: isActive ? "rgba(48,30,4,0.88)" : rgbaFromHex(bubbleColor, 0.26, "rgba(12,36,72,0.82)"),
+            color: isActive ? "rgba(255,230,130,0.98)" : rgbaFromHex(bubbleColor, 0.98, "rgba(200,235,255,0.95)"),
             fontSize: PORTAL_SIZE >= 48 ? 11 : 10,
             fontWeight: 900,
             display: "flex",
@@ -1816,6 +1853,28 @@ export default function PlannerPage({ user }: PlannerPageProps) {
       })
       .slice(0, 6);
   }, [newRefCode, newRefLabel, refs, selectedNodeId]);
+
+  const nextAutoBubbleCode = useMemo(() => nextBubbleCode(refs.map((ref) => ref.code)), [refs]);
+  const effectiveNewBubbleCode = useMemo(
+    () => (newRefCode.trim() ? normalizeCode(newRefCode) : nextAutoBubbleCode),
+    [newRefCode, nextAutoBubbleCode]
+  );
+
+  const bubblePrefixSuggestions = useMemo(() => {
+    const queryText = newRefLabel.trim().toLowerCase();
+    if (!queryText) return [] as CrossRef[];
+    const dedupe = new Set<string>();
+    return refs
+      .filter((ref) => ref.label.toLowerCase().startsWith(queryText) || ref.code.toLowerCase().startsWith(queryText))
+      .sort((a, b) => b.updatedAtMs - a.updatedAtMs || a.label.localeCompare(b.label))
+      .filter((ref) => {
+        const key = `${ref.label.trim().toLowerCase()}|${ref.color || ""}|${ref.entityType}`;
+        if (dedupe.has(key)) return false;
+        dedupe.add(key);
+        return true;
+      })
+      .slice(0, 6);
+  }, [newRefLabel, refs]);
 
   const editableRef = useMemo(() => {
     if (!editRefId) return null;
@@ -2496,11 +2555,29 @@ export default function PlannerPage({ user }: PlannerPageProps) {
     [buildDefaultPortalPosition, hydrateRefEditor, pushHistory, refs, resolveNodePosition, user.uid]
   );
 
+  const applyBubbleSuggestion = useCallback(
+    (ref: CrossRef) => {
+      setNewRefLabel((previous) => (previous.trim().length > 0 ? previous : ref.label));
+      setNewRefColor(ref.color || DEFAULT_BUBBLE_COLOR);
+      setNewRefType(ref.entityType);
+      if (!newRefCode.trim()) {
+        setNewRefCode(nextAutoBubbleCode);
+      }
+      window.setTimeout(() => {
+        newRefLabelInputRef.current?.focus();
+      }, 0);
+    },
+    [newRefCode, nextAutoBubbleCode]
+  );
+
   const createCrossRef = useCallback(async () => {
     if (!db || !selectedNodeId) return;
     const label = newRefLabel.trim();
     if (!label) return;
-    const code = newRefCode.trim() ? normalizeCode(newRefCode) : initialsFromLabel(label);
+    const code = newRefCode.trim()
+      ? normalizeCode(newRefCode)
+      : (BUBBLES_SIMPLIFIED_MODE ? nextAutoBubbleCode : initialsFromLabel(label));
+    const color = normalizeHexColor(newRefColor) || DEFAULT_BUBBLE_COLOR;
     if (BUBBLES_SIMPLIFIED_MODE) {
       setBusyAction(true);
       setError(null);
@@ -2513,6 +2590,7 @@ export default function PlannerPage({ user }: PlannerPageProps) {
           code,
           nodeIds: [selectedNodeId],
           anchorNodeId: selectedNodeId,
+          color,
           ...(portalPosition ? { portalX: portalPosition.x, portalY: portalPosition.y } : {}),
           portalAnchorX: anchorPosition.x,
           portalAnchorY: anchorPosition.y,
@@ -2526,7 +2604,8 @@ export default function PlannerPage({ user }: PlannerPageProps) {
         } satisfies CrossRefDoc & { createdAt: unknown; updatedAt: unknown });
         setActivePortalRefId(newDoc.id);
         setNewRefLabel("");
-        setNewRefCode("");
+        setNewRefCode(nextBubbleCode([code, ...refs.map((entry) => entry.code)]));
+        setNewRefColor(color);
         setNewRefType("entity");
       } catch (actionError: unknown) {
         setError(actionError instanceof Error ? actionError.message : "Could not create bubble.");
@@ -2578,6 +2657,7 @@ export default function PlannerPage({ user }: PlannerPageProps) {
           code,
           nodeIds: [selectedNodeId],
           anchorNodeId: selectedNodeId,
+          color,
           ...(portalPosition ? { portalX: portalPosition.x, portalY: portalPosition.y } : {}),
           portalAnchorX: anchorPosition.x,
           portalAnchorY: anchorPosition.y,
@@ -2595,6 +2675,7 @@ export default function PlannerPage({ user }: PlannerPageProps) {
           code,
           nodeIds: [selectedNodeId],
           anchorNodeId: selectedNodeId,
+          color,
           portalX: portalPosition?.x ?? null,
           portalY: portalPosition?.y ?? null,
           portalAnchorX: anchorPosition.x,
@@ -2616,13 +2697,14 @@ export default function PlannerPage({ user }: PlannerPageProps) {
       }
       setNewRefLabel("");
       setNewRefCode("");
+      setNewRefColor(DEFAULT_BUBBLE_COLOR);
       setNewRefType("entity");
     } catch (actionError: unknown) {
       setError(actionError instanceof Error ? actionError.message : "Could not create cross-reference.");
     } finally {
       setBusyAction(false);
     }
-  }, [buildDefaultPortalPosition, hydrateRefEditor, newRefCode, newRefLabel, newRefType, refs, resolveNodePosition, selectedNodeId, user.uid]);
+  }, [buildDefaultPortalPosition, hydrateRefEditor, newRefCode, newRefColor, newRefLabel, newRefType, nextAutoBubbleCode, refs, resolveNodePosition, selectedNodeId, user.uid]);
 
   const duplicateCrossRef = useCallback(
     async (refId: string) => {
@@ -2657,6 +2739,7 @@ export default function PlannerPage({ user }: PlannerPageProps) {
           code: source.code,
           nodeIds: duplicateNodeIds,
           ...(duplicateAnchorNodeId ? { anchorNodeId: duplicateAnchorNodeId } : {}),
+          ...(source.color ? { color: source.color } : {}),
           ...(duplicatePortalPosition ? { portalX: duplicatePortalPosition.x, portalY: duplicatePortalPosition.y } : {}),
           ...(duplicateAnchorPosition ? { portalAnchorX: duplicateAnchorPosition.x, portalAnchorY: duplicateAnchorPosition.y } : {}),
           entityType: source.entityType,
@@ -2726,6 +2809,24 @@ export default function PlannerPage({ user }: PlannerPageProps) {
     }
   }, [editRefCode, editRefContact, editRefId, editRefLabel, editRefLinks, editRefNotes, editRefTags, editRefType, user.uid]);
 
+  const updateCrossRefColor = useCallback(
+    async (refId: string, rawColor: string) => {
+      if (!db) return;
+      const normalized = normalizeHexColor(rawColor);
+      if (!normalized) return;
+      setRefs((previous) => previous.map((entry) => (entry.id === refId ? { ...entry, color: normalized } : entry)));
+      try {
+        await updateDoc(doc(db, "users", user.uid, "crossRefs", refId), {
+          color: normalized,
+          updatedAt: serverTimestamp(),
+        });
+      } catch (actionError: unknown) {
+        setError(actionError instanceof Error ? actionError.message : "Could not update bubble color.");
+      }
+    },
+    [user.uid]
+  );
+
   const mergeCrossRefIntoEdited = useCallback(async () => {
     if (!db || !editRefId || !mergeFromRefId || editRefId === mergeFromRefId) return;
     const primary = refs.find((ref) => ref.id === editRefId);
@@ -2738,6 +2839,7 @@ export default function PlannerPage({ user }: PlannerPageProps) {
     const mergedNotes = [primary.notes.trim(), duplicate.notes.trim()].filter(Boolean).join("\n\n");
     const mergedContact = primary.contact.trim() || duplicate.contact.trim();
     const mergedType = primary.entityType !== "entity" ? primary.entityType : duplicate.entityType;
+    const mergedColor = primary.color || duplicate.color || null;
     const mergedAnchorNodeId = chooseAnchorNodeId(mergedNodeIds, primary.anchorNodeId, duplicate.anchorNodeId);
     const mergedAnchorPosition = mergedAnchorNodeId ? resolveNodePosition(mergedAnchorNodeId) : null;
     const mergedPortalPosition =
@@ -2768,6 +2870,7 @@ export default function PlannerPage({ user }: PlannerPageProps) {
         links: mergedLinks,
         notes: mergedNotes,
         contact: mergedContact,
+        ...(mergedColor ? { color: mergedColor } : { color: deleteField() }),
         entityType: mergedType,
         updatedAt: serverTimestamp(),
       });
@@ -2790,6 +2893,7 @@ export default function PlannerPage({ user }: PlannerPageProps) {
         links: mergedLinks,
         notes: mergedNotes,
         contact: mergedContact,
+        color: mergedColor,
         entityType: mergedType,
       });
     } catch (actionError: unknown) {
@@ -3393,6 +3497,8 @@ export default function PlannerPage({ user }: PlannerPageProps) {
       if (anchor) {
         setNewRefLabel((previous) => (previous.trim().length > 0 ? previous : `${anchor.title} Bubble`));
       }
+      if (!newRefCode.trim()) setNewRefCode(nextAutoBubbleCode);
+      if (!normalizeHexColor(newRefColor)) setNewRefColor(DEFAULT_BUBBLE_COLOR);
       setSidebarCollapsed(false);
       setMobileSidebarSection("bubbles");
       setMobileSidebarOpen(true);
@@ -3402,7 +3508,7 @@ export default function PlannerPage({ user }: PlannerPageProps) {
         newRefLabelInputRef.current?.focus();
       }, 40);
     },
-    [nodesById]
+    [newRefCode, newRefColor, nextAutoBubbleCode, nodesById]
   );
 
   const handleContextRename = useCallback((nodeId: string) => {
@@ -4146,6 +4252,25 @@ export default function PlannerPage({ user }: PlannerPageProps) {
                   ))
                 )}
               </div>
+              {CROSS_REFERENCES_ENABLED ? (
+                <>
+                  <div className="planner-row-label">Bubbles</div>
+                  <div className="planner-inline-buttons">
+                    <button
+                      onClick={() => {
+                        setMobileSidebarSection("bubbles");
+                        setMobileSidebarOpen(true);
+                        if (!newRefLabel.trim()) setNewRefLabel(`${selectedNode.title} Bubble`);
+                        window.setTimeout(() => {
+                          newRefLabelInputRef.current?.focus();
+                        }, 20);
+                      }}
+                    >
+                      Add bubble to this node
+                    </button>
+                  </div>
+                </>
+              ) : null}
 
               {selectedNode.kind === "story" ? (
                 <>
@@ -4249,7 +4374,7 @@ export default function PlannerPage({ user }: PlannerPageProps) {
         ) : null}
 
         {showSimpleBubblesSection ? (
-        <div className="planner-panel-block">
+        <div id="cross-ref-bubbles-panel" className="planner-panel-block">
           <h3>Bubbles</h3>
           <p className="planner-subtle">
             Local visual bubbles for each node. No cross-linking between nodes.
@@ -4261,15 +4386,35 @@ export default function PlannerPage({ user }: PlannerPageProps) {
             ref={newRefLabelInputRef}
             value={newRefLabel}
             onChange={(event) => setNewRefLabel(event.target.value)}
+            onKeyDown={(event) => {
+              if (event.key !== "Enter") return;
+              event.preventDefault();
+              if (busyAction || !selectedNodeId || newRefLabel.trim().length === 0) return;
+              void createCrossRef();
+            }}
             placeholder="Bubble name"
           />
           <div className="planner-inline-buttons">
-            <input
-              value={newRefCode}
-              onChange={(event) => setNewRefCode(event.target.value)}
-              placeholder="Code (optional)"
-              style={{ flex: 1 }}
-            />
+            <label style={{ display: "grid", gap: 4, alignItems: "center" }}>
+              <span className="planner-subtle" style={{ fontSize: 11 }}>Color</span>
+              <input
+                type="color"
+                value={newRefColor}
+                onChange={(event) => setNewRefColor(event.target.value)}
+                style={{ width: 54, height: 34, padding: "4px 6px" }}
+              />
+            </label>
+            <div style={{ display: "grid", gap: 4, flex: 1 }}>
+              <input
+                value={newRefCode}
+                onChange={(event) => setNewRefCode(event.target.value)}
+                placeholder={`Code (auto ${nextAutoBubbleCode})`}
+                style={{ flex: 1 }}
+              />
+              <span className="planner-subtle" style={{ fontSize: 11 }}>
+                New bubble code: <strong>{effectiveNewBubbleCode}</strong>
+              </span>
+            </div>
             <button
               onClick={createCrossRef}
               disabled={busyAction || !selectedNodeId || newRefLabel.trim().length === 0}
@@ -4277,6 +4422,27 @@ export default function PlannerPage({ user }: PlannerPageProps) {
               Add bubble
             </button>
           </div>
+          {bubblePrefixSuggestions.length > 0 ? (
+            <>
+              <div className="planner-row-label">Similar bubble styles</div>
+              <div className="planner-chip-list">
+                {bubblePrefixSuggestions.map((ref) => (
+                  <button
+                    key={`template:${ref.id}`}
+                    className="chip"
+                    onClick={() => applyBubbleSuggestion(ref)}
+                    title={`Use style from ${ref.code} — ${ref.label}`}
+                    style={{
+                      borderColor: rgbaFromHex(ref.color, 0.9, "rgba(64,182,255,0.88)"),
+                      boxShadow: `0 0 0 1px ${rgbaFromHex(ref.color, 0.25, "rgba(64,182,255,0.2)")}`,
+                    }}
+                  >
+                    {`${ref.code} · ${ref.label}`}
+                  </button>
+                ))}
+              </div>
+            </>
+          ) : null}
           <div className="planner-row-label">Bubbles on selected node</div>
           <div className="planner-chip-list">
             {selectedNodeRefs.length === 0 || !selectedNodeId ? (
@@ -4287,6 +4453,10 @@ export default function PlannerPage({ user }: PlannerPageProps) {
                   <button
                     onClick={() => setActivePortalRefId((prev) => (prev === ref.id ? null : ref.id))}
                     title={ref.label}
+                    style={{
+                      borderColor: rgbaFromHex(ref.color, 0.9, "rgba(64,182,255,0.88)"),
+                      boxShadow: `0 0 0 1px ${rgbaFromHex(ref.color, 0.25, "rgba(64,182,255,0.2)")}`,
+                    }}
                   >
                     {`${ref.code} — ${ref.label}`}
                   </button>
@@ -4301,6 +4471,22 @@ export default function PlannerPage({ user }: PlannerPageProps) {
               ))
             )}
           </div>
+          {activePortalRef ? (
+            <div className="planner-panel-block" style={{ marginTop: 8, padding: "10px 12px" }}>
+              <div className="planner-row-label">Selected bubble</div>
+              <div className="planner-inline-buttons">
+                <span className="planner-subtle" style={{ alignSelf: "center" }}>{`${activePortalRef.code} — ${activePortalRef.label}`}</span>
+                <input
+                  type="color"
+                  value={activePortalRef.color || DEFAULT_BUBBLE_COLOR}
+                  onChange={(event) => {
+                    void updateCrossRefColor(activePortalRef.id, event.target.value);
+                  }}
+                  style={{ width: 56, height: 34, padding: "4px 6px" }}
+                />
+              </div>
+            </div>
+          ) : null}
         </div>
         ) : null}
 
@@ -4711,6 +4897,69 @@ export default function PlannerPage({ user }: PlannerPageProps) {
               <button onClick={saveSelectedBody} disabled={busyAction || bodyDraft.trim() === (selectedNode.body || "").trim()}>
                 Save Body
               </button>
+              {CROSS_REFERENCES_ENABLED ? (
+                <>
+                  <div className="planner-row-label">Quick bubble on this node</div>
+                  <input
+                    value={newRefLabel}
+                    onChange={(event) => setNewRefLabel(event.target.value)}
+                    onKeyDown={(event) => {
+                      if (event.key !== "Enter") return;
+                      event.preventDefault();
+                      if (busyAction || !selectedNodeId || newRefLabel.trim().length === 0) return;
+                      void createCrossRef();
+                    }}
+                    placeholder="Bubble name"
+                  />
+                  <div className="planner-inline-buttons">
+                    <input
+                      value={newRefCode}
+                      onChange={(event) => setNewRefCode(event.target.value)}
+                      placeholder={`Code (auto ${nextAutoBubbleCode})`}
+                      style={{ flex: 1 }}
+                    />
+                    <input
+                      type="color"
+                      value={newRefColor}
+                      onChange={(event) => setNewRefColor(event.target.value)}
+                      style={{ width: 54, height: 34, padding: "4px 6px" }}
+                    />
+                    <button
+                      onClick={createCrossRef}
+                      disabled={busyAction || !selectedNodeId || newRefLabel.trim().length === 0}
+                    >
+                      Add Bubble
+                    </button>
+                  </div>
+                  {bubblePrefixSuggestions.length > 0 ? (
+                    <div className="planner-chip-list">
+                      {bubblePrefixSuggestions.slice(0, 3).map((ref) => (
+                        <button
+                          key={`mobile-template:${ref.id}`}
+                          className="chip"
+                          onClick={() => applyBubbleSuggestion(ref)}
+                          title={`Use style from ${ref.code} — ${ref.label}`}
+                          style={{
+                            borderColor: rgbaFromHex(ref.color, 0.9, "rgba(64,182,255,0.88)"),
+                            boxShadow: `0 0 0 1px ${rgbaFromHex(ref.color, 0.25, "rgba(64,182,255,0.2)")}`,
+                          }}
+                        >
+                          {`${ref.code} · ${ref.label}`}
+                        </button>
+                      ))}
+                    </div>
+                  ) : null}
+                  <button
+                    onClick={() => {
+                      setMobileSidebarSection("bubbles");
+                      setMobileSidebarOpen(true);
+                      setMobileQuickEditorOpen(false);
+                    }}
+                  >
+                    Open Bubble Panel
+                  </button>
+                </>
+              ) : null}
               <div className="planner-mobile-sheet-grid">
                 <button
                   onClick={() => {
