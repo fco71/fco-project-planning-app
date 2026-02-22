@@ -962,6 +962,16 @@ button {
 
 /* ── Cross-reference floating portal bubbles ────────────────────────── */
 
+/* Ventovault-style hover halo for bubble wrappers */
+.react-flow__node.planner-portal-node {
+  transition: box-shadow 150ms ease, transform 150ms ease;
+}
+
+.react-flow__node.planner-portal-node:hover {
+  box-shadow: 0 0 0 4px rgba(64, 182, 255, 0.3), 0 16px 30px rgba(0, 0, 0, 0.55) !important;
+  transform: translateY(-2px);
+}
+
 /* ReactFlow node wrapper for portal type — transparent shell */
 .react-flow__node[data-type="portal"] {
   background: transparent !important;

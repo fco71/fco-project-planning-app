@@ -29,19 +29,6 @@ function hideBootOverlay() {
   if (fatal) fatal.style.display = "none";
 }
 
-function purgeLegacyServiceWorkers() {
-  if (typeof window === "undefined") return;
-  if (!("serviceWorker" in navigator)) return;
-  navigator.serviceWorker
-    .getRegistrations()
-    .then((registrations) => Promise.all(registrations.map((registration) => registration.unregister())))
-    .then(() => {
-      if (!("caches" in window)) return;
-      return caches.keys().then((keys) => Promise.all(keys.map((key) => caches.delete(key))));
-    })
-    .catch(() => undefined);
-}
-
 ReactDOM.createRoot(document.getElementById("root")!).render(
   <ErrorBoundary>
     <AuthProvider>
@@ -49,9 +36,6 @@ ReactDOM.createRoot(document.getElementById("root")!).render(
     </AuthProvider>
   </ErrorBoundary>
 );
-
-// Force web-only behavior: remove any previous PWA service workers/caches.
-purgeLegacyServiceWorkers();
 
 // If React mounted, kill the HTML boot overlay immediately.
 hideBootOverlay();

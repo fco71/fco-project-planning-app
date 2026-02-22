@@ -17,7 +17,7 @@ type ContextMenuProps = {
   onDelete: (nodeId: string) => void;
   onDuplicate: (nodeId: string) => void;
   onRename: (nodeId: string) => void;
-  onAddCrossRef: (nodeId: string) => void;
+  onAddCrossRef?: (nodeId: string) => void;
   onChangeType: (nodeId: string) => void;
   onToggleTaskStatus: (nodeId: string) => void;
 };
@@ -149,11 +149,13 @@ export function NodeContextMenu({
           label="Rename Node"
           onClick={() => handleAction(() => onRename(nodeId))}
         />
-        <MenuItem
-          icon="🔗"
-          label="Add Cross-Reference"
-          onClick={() => handleAction(() => onAddCrossRef(nodeId))}
-        />
+        {onAddCrossRef ? (
+          <MenuItem
+            icon="🔗"
+            label="Add Bubble"
+            onClick={() => handleAction(() => onAddCrossRef(nodeId))}
+          />
+        ) : null}
         <MenuItem
           icon="⚙"
           label={`Change Type to ${nextKind}`}

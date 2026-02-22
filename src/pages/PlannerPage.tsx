@@ -244,6 +244,45 @@ function chooseAnchorNodeId(nodeIds: string[], ...preferredIds: Array<string | n
   return nodeIds[0] || null;
 }
 
+function asFiniteNumber(value: unknown): number | null {
+  if (typeof value === "number" && Number.isFinite(value)) return value;
+  if (typeof value === "string" && value.trim()) {
+    const parsed = Number(value);
+    return Number.isFinite(parsed) ? parsed : null;
+  }
+  return null;
+}
+
+function inflateRect(
+  rect: { x: number; y: number; width: number; height: number },
+  padding: number
+): { x: number; y: number; width: number; height: number } {
+  if (padding === 0) return rect;
+  return {
+    x: rect.x - padding,
+    y: rect.y - padding,
+    width: rect.width + padding * 2,
+    height: rect.height + padding * 2,
+  };
+}
+
+function rectsOverlap(
+  a: { x: number; y: number; width: number; height: number },
+  b: { x: number; y: number; width: number; height: number }
+): boolean {
+  return !(
+    a.x + a.width < b.x ||
+    a.x > b.x + b.width ||
+    a.y + a.height < b.y ||
+    a.y > b.y + b.height
+  );
+}
+
+function clamp(value: number, min: number, max: number): number {
+  if (min > max) return value;
+  return Math.min(max, Math.max(min, value));
+}
+
 function defaultPortalPositionForAnchor(anchor: { x: number; y: number } | null, seed: string): { x: number; y: number } {
   const baseX = anchor?.x ?? 0;
   const baseY = anchor?.y ?? 0;
@@ -350,7 +389,7 @@ function getMasterNodeFor(nodeId: string, rootNodeId: string | null, nodesById: 
 }
 
 // ── Portal bubble node ─────────────────────────────────────────────────────
-// One orb per (ref × linked-node) pair. Pinned near its node via fixed offset.
+// One orb per cross-reference. Position follows its anchor node with soft motion.
 // No Handles — avoids ReactFlow 11 / React 19 useLayoutEffect conflict.
 // Right-click fires onContextMenu so the parent can show a delete menu.
 const PortalNode = memo(function PortalNode({
@@ -376,9 +415,6 @@ const PortalNode = memo(function PortalNode({
         <div className="planner-portal-label" data-tooltip={data.tooltip}>
           {data.code}
         </div>
-        {data.count > 1 && (
-          <span className="planner-portal-count">{data.count}</span>
-        )}
       </button>
     </div>
   );
@@ -392,6 +428,8 @@ const ENTITY_TYPE_GROUPS: Array<{ label: string; options: EntityType[] }> = [
   { label: "General", options: ["entity", "organization", "partner", "vendor", "investor"] },
   { label: "People", options: ["person", "contact", "client"] },
 ];
+const CROSS_REFERENCES_ENABLED = true;
+const BUBBLES_SIMPLIFIED_MODE = true;
 
 function isPeopleEntityType(entityType: EntityType): boolean {
   return PEOPLE_ENTITY_TYPES.has(entityType);
@@ -754,50 +792,62 @@ export default function PlannerPage({ user }: PlannerPageProps) {
           }
         );
 
-        unsubRefs = onSnapshot(
-          query(collection(db, "users", user.uid, "crossRefs")),
-          (snapshot) => {
-            // Don't overwrite local state while an undo/redo Firestore write is in flight.
-            if (suppressSnapshotRef.current > 0) return;
-            const nextRefs = snapshot.docs.map((entry) => {
-              const value = entry.data() as Partial<CrossRefDoc> & { createdAt?: unknown; updatedAt?: unknown };
-              const entityType = ENTITY_TYPES.includes(value.entityType as EntityType)
-                ? (value.entityType as EntityType)
-                : "entity";
-              return {
-                id: entry.id,
-                label: typeof value.label === "string" ? value.label : entry.id,
-                code: typeof value.code === "string" ? normalizeCode(value.code) : "REF",
-                nodeIds: asStringArray(value.nodeIds),
-                anchorNodeId: typeof value.anchorNodeId === "string" ? value.anchorNodeId : null,
-                portalX: typeof value.portalX === "number" ? value.portalX : null,
-                portalY: typeof value.portalY === "number" ? value.portalY : null,
-                portalAnchorX: typeof value.portalAnchorX === "number" ? value.portalAnchorX : null,
-                portalAnchorY: typeof value.portalAnchorY === "number" ? value.portalAnchorY : null,
-                portalOffsetX: typeof value.portalOffsetX === "number" ? value.portalOffsetX : null,
-                portalOffsetY: typeof value.portalOffsetY === "number" ? value.portalOffsetY : null,
-                entityType,
-                tags: asStringArray(value.tags),
-                notes: typeof value.notes === "string" ? value.notes : "",
-                contact: typeof value.contact === "string" ? value.contact : "",
-                links: asStringArray(value.links),
-                createdAtMs: timestampToMs(value.createdAt),
-                updatedAtMs: timestampToMs(value.updatedAt),
-              } satisfies CrossRef;
-            });
-            nextRefs.sort(
-              (a, b) => b.updatedAtMs - a.updatedAtMs || a.code.localeCompare(b.code) || a.label.localeCompare(b.label)
-            );
-            setRefs(nextRefs);
-            gotRefs = true;
-            markReady();
-          },
-          (snapshotError) => {
-            setError(snapshotError.message);
-            gotRefs = true;
-            markReady();
-          }
-        );
+        if (!CROSS_REFERENCES_ENABLED) {
+          setRefs([]);
+          gotRefs = true;
+          markReady();
+        } else {
+          unsubRefs = onSnapshot(
+            query(collection(db, "users", user.uid, "crossRefs")),
+            (snapshot) => {
+              // Don't overwrite local state while an undo/redo Firestore write is in flight.
+              if (suppressSnapshotRef.current > 0) return;
+              const nextRefs = snapshot.docs.map((entry) => {
+                const value = entry.data() as Partial<CrossRefDoc> & { createdAt?: unknown; updatedAt?: unknown };
+                const entityType = ENTITY_TYPES.includes(value.entityType as EntityType)
+                  ? (value.entityType as EntityType)
+                  : "entity";
+                const parsedNodeIds = asStringArray(value.nodeIds);
+                const parsedAnchorNodeId = typeof value.anchorNodeId === "string" ? value.anchorNodeId : null;
+                const singleNodeId =
+                  parsedNodeIds[0] ||
+                  parsedAnchorNodeId ||
+                  null;
+                return {
+                  id: entry.id,
+                  label: typeof value.label === "string" ? value.label : entry.id,
+                  code: typeof value.code === "string" ? normalizeCode(value.code) : "REF",
+                  nodeIds: BUBBLES_SIMPLIFIED_MODE ? (singleNodeId ? [singleNodeId] : []) : parsedNodeIds,
+                  anchorNodeId: BUBBLES_SIMPLIFIED_MODE ? singleNodeId : parsedAnchorNodeId,
+                  portalX: typeof value.portalX === "number" ? value.portalX : null,
+                  portalY: typeof value.portalY === "number" ? value.portalY : null,
+                  portalAnchorX: typeof value.portalAnchorX === "number" ? value.portalAnchorX : null,
+                  portalAnchorY: typeof value.portalAnchorY === "number" ? value.portalAnchorY : null,
+                  portalOffsetX: typeof value.portalOffsetX === "number" ? value.portalOffsetX : null,
+                  portalOffsetY: typeof value.portalOffsetY === "number" ? value.portalOffsetY : null,
+                  entityType,
+                  tags: asStringArray(value.tags),
+                  notes: typeof value.notes === "string" ? value.notes : "",
+                  contact: typeof value.contact === "string" ? value.contact : "",
+                  links: asStringArray(value.links),
+                  createdAtMs: timestampToMs(value.createdAt),
+                  updatedAtMs: timestampToMs(value.updatedAt),
+                } satisfies CrossRef;
+              });
+              nextRefs.sort(
+                (a, b) => b.updatedAtMs - a.updatedAtMs || a.code.localeCompare(b.code) || a.label.localeCompare(b.label)
+              );
+              setRefs(nextRefs);
+              gotRefs = true;
+              markReady();
+            },
+            (snapshotError) => {
+              setError(snapshotError.message);
+              gotRefs = true;
+              markReady();
+            }
+          );
+        }
       })
       .catch((workspaceError: unknown) => {
         if (cancelled) return;
@@ -1268,6 +1318,7 @@ export default function PlannerPage({ user }: PlannerPageProps) {
 
   // Dashed orange edges: one per (ref × visible linked node)
   const basePortalEdges = useMemo((): Edge[] => {
+    if (!CROSS_REFERENCES_ENABLED) return [];
     const edges: Edge[] = [];
     for (const ref of refs) {
       for (const nodeId of ref.nodeIds) {
@@ -1275,7 +1326,7 @@ export default function PlannerPage({ user }: PlannerPageProps) {
         edges.push({
           id: `portal-edge:${ref.id}:${nodeId}`,
           source: nodeId,
-          target: `portal:${ref.id}:${nodeId}`,
+          target: `portal:${ref.id}`,
           animated: false,
           zIndex: 5,
           style: {
@@ -1474,49 +1525,150 @@ export default function PlannerPage({ user }: PlannerPageProps) {
   const portalPosRef = useRef<Map<string, { x: number; y: number }>>(new Map());
   const [portalPosTick, setPortalPosTick] = useState(0);
 
-  // Live position map built from baseNodes — same state that flowNodes reads.
-  // Both flowNodes and visiblePortals update in the same render, so portals
-  // always have the correct position when ReactFlow calls createNodeInternals.
-  const baseNodePosById = useMemo(
-    () => new Map(baseNodes.map((n) => [n.id, n.position])),
-    [baseNodes]
-  );
-
   const visiblePortals = useMemo((): Node[] => {
+    if (!CROSS_REFERENCES_ENABLED) return [];
     const PORTAL_SIZE = isMobileLayout ? 48 : 40;
-    const PORTAL_GAP  = isMobileLayout ? 56 : 46;
-    const NODE_WIDTH  = isMobileLayout ? 280 : 260;
-    const OFFSET_Y    = isMobileLayout ? -62 : -52;
+    const PORTAL_GAP = isMobileLayout ? 58 : 52;
+    const PORTAL_VERTICAL_GAP = isMobileLayout ? 74 : 66;
+    const PORTAL_SIDE_GAP = isMobileLayout ? 84 : 78;
+    const NODE_FALLBACK_WIDTH = isMobileLayout ? 280 : 260;
+    const NODE_FALLBACK_HEIGHT = isMobileLayout ? 96 : 80;
 
-    const refsByNode = new Map<string, CrossRef[]>();
+    const nodeBounds = baseNodes.map((node) => {
+      const style = (node.style || {}) as React.CSSProperties;
+      const width = asFiniteNumber(style.width) ?? asFiniteNumber(node.width) ?? NODE_FALLBACK_WIDTH;
+      const measuredHeight = asFiniteNumber(style.height) ?? asFiniteNumber(node.height) ?? NODE_FALLBACK_HEIGHT;
+      const minHeight = asFiniteNumber(style.minHeight) ?? 0;
+      return {
+        id: node.id,
+        x: node.position.x,
+        y: node.position.y,
+        width,
+        height: Math.max(measuredHeight, minHeight, NODE_FALLBACK_HEIGHT),
+      };
+    });
+    const boundsByNodeId = new Map(nodeBounds.map((entry) => [entry.id, entry] as const));
+    const sceneBounds = nodeBounds.reduce(
+      (acc, rect) => ({
+        minX: Math.min(acc.minX, rect.x),
+        maxX: Math.max(acc.maxX, rect.x + rect.width),
+        minY: Math.min(acc.minY, rect.y),
+        maxY: Math.max(acc.maxY, rect.y + rect.height),
+      }),
+      { minX: -200, maxX: 200, minY: -200, maxY: 200 }
+    );
+    const sceneMidX = (sceneBounds.minX + sceneBounds.maxX) / 2;
+    const sceneMidY = (sceneBounds.minY + sceneBounds.maxY) / 2;
+    const minX = sceneBounds.minX - (isMobileLayout ? 120 : 160);
+    const maxX = sceneBounds.maxX + (isMobileLayout ? 120 : 180);
+    const minY = sceneBounds.minY - (isMobileLayout ? 100 : 80);
+    const maxY = sceneBounds.maxY + (isMobileLayout ? 120 : 100);
+
+    const refsByAnchor = new Map<string, CrossRef[]>();
     for (const ref of refs) {
-      for (const nodeId of ref.nodeIds) {
-        if (!filteredTreeIdSet.has(nodeId)) continue;
-        if (!refsByNode.has(nodeId)) refsByNode.set(nodeId, []);
-        refsByNode.get(nodeId)!.push(ref);
-      }
+      const visibleNodeIds = ref.nodeIds.filter((nodeId) => filteredTreeIdSet.has(nodeId));
+      if (visibleNodeIds.length === 0) continue;
+      const anchorNodeId = chooseAnchorNodeId(visibleNodeIds, ref.anchorNodeId);
+      if (!anchorNodeId || !boundsByNodeId.has(anchorNodeId)) continue;
+      if (!refsByAnchor.has(anchorNodeId)) refsByAnchor.set(anchorNodeId, []);
+      refsByAnchor.get(anchorNodeId)?.push(ref);
     }
-    refsByNode.forEach((nodeRefs) => nodeRefs.sort((a, b) => a.code.localeCompare(b.code)));
+    refsByAnchor.forEach((anchorRefs) =>
+      anchorRefs.sort((a, b) => a.code.localeCompare(b.code) || a.label.localeCompare(b.label))
+    );
 
+    const placedPortalRects: Array<{ x: number; y: number; width: number; height: number }> = [];
     const result: Node[] = [];
-    refsByNode.forEach((nodeRefs, nodeId) => {
-      // Read live position from baseNodes — follows drag in real time.
-      const pos = baseNodePosById.get(nodeId) ?? resolveNodePosition(nodeId);
-      const totalWidth = nodeRefs.length * PORTAL_SIZE + (nodeRefs.length - 1) * (PORTAL_GAP - PORTAL_SIZE);
-      const startX = pos.x + NODE_WIDTH / 2 - totalWidth / 2;
+    const anchorOrder = Array.from(refsByAnchor.keys()).sort((a, b) => {
+      const aBounds = boundsByNodeId.get(a);
+      const bBounds = boundsByNodeId.get(b);
+      if (!aBounds || !bBounds) return a.localeCompare(b);
+      if (aBounds.y !== bBounds.y) return aBounds.y - bBounds.y;
+      if (aBounds.x !== bBounds.x) return aBounds.x - bBounds.x;
+      return a.localeCompare(b);
+    });
 
-      nodeRefs.forEach((ref, idx) => {
-        const x = startX + idx * PORTAL_GAP;
-        const y = pos.y + OFFSET_Y;
+    const collides = (
+      candidate: { x: number; y: number; width: number; height: number },
+      anchorNodeId: string
+    ): boolean => {
+      const candidateWithSpacing = inflateRect(candidate, 5);
+      const overlapsAnchor = rectsOverlap(candidateWithSpacing, inflateRect(boundsByNodeId.get(anchorNodeId)!, 8));
+      if (overlapsAnchor) return true;
+      const overlapsTreeNode = nodeBounds.some((rect) => {
+        if (rect.id === anchorNodeId) return false;
+        return rectsOverlap(candidateWithSpacing, inflateRect(rect, 6));
+      });
+      if (overlapsTreeNode) return true;
+      return placedPortalRects.some((rect) => rectsOverlap(candidateWithSpacing, inflateRect(rect, 6)));
+    };
 
+    for (const anchorNodeId of anchorOrder) {
+      const anchorRefs = refsByAnchor.get(anchorNodeId);
+      const anchorBounds = boundsByNodeId.get(anchorNodeId);
+      if (!anchorRefs || anchorRefs.length === 0 || !anchorBounds) continue;
+      const anchorNudge = getNudge(anchorNodeId, 12, 6);
+      const stackHeight = (anchorRefs.length - 1) * PORTAL_GAP;
+      const stackXBase = anchorBounds.x + anchorBounds.width / 2 - PORTAL_SIZE / 2 + anchorNudge.x;
+      const placeBelow = anchorBounds.y + anchorBounds.height / 2 <= sceneMidY;
+      let stackYBase = placeBelow
+        ? anchorBounds.y + anchorBounds.height + PORTAL_VERTICAL_GAP
+        : anchorBounds.y - PORTAL_VERTICAL_GAP - stackHeight - PORTAL_SIZE;
+      stackYBase = clamp(stackYBase + anchorNudge.y, minY, maxY - stackHeight - PORTAL_SIZE);
+      const sideXBase =
+        anchorBounds.x +
+        (anchorBounds.x + anchorBounds.width / 2 >= sceneMidX
+          ? -(PORTAL_SIDE_GAP + PORTAL_SIZE)
+          : anchorBounds.width + PORTAL_SIDE_GAP);
+      let sideYBase = anchorBounds.y + anchorBounds.height / 2 - stackHeight / 2 + anchorNudge.y;
+      sideYBase = clamp(sideYBase, minY, maxY - stackHeight - PORTAL_SIZE);
+
+      anchorRefs.forEach((ref, idx) => {
+        const refNudge = getNudge(`${ref.id}:${anchorNodeId}`, 8, 8);
+        const stackCandidate = {
+          x: clamp(stackXBase + refNudge.x * 0.35, minX, maxX - PORTAL_SIZE),
+          y: clamp(stackYBase + idx * PORTAL_GAP + refNudge.y * 0.35, minY, maxY - PORTAL_SIZE),
+          width: PORTAL_SIZE,
+          height: PORTAL_SIZE,
+        };
+        const sideCandidate = {
+          x: clamp(sideXBase + refNudge.x * 0.3, minX, maxX - PORTAL_SIZE),
+          y: clamp(sideYBase + idx * PORTAL_GAP + refNudge.y * 0.3, minY, maxY - PORTAL_SIZE),
+          width: PORTAL_SIZE,
+          height: PORTAL_SIZE,
+        };
+
+        let targetRect = collides(stackCandidate, anchorNodeId) ? sideCandidate : stackCandidate;
+        if (collides(targetRect, anchorNodeId)) {
+          const angleSeed = Math.abs(refNudge.x * 37 + refNudge.y * 17 + idx * 23) % 360;
+          let resolvedRect = targetRect;
+          for (let step = 1; step <= 12; step += 1) {
+            const angle = ((angleSeed + step * 47) * Math.PI) / 180;
+            const radius = 16 + step * 12;
+            const probe = {
+              x: clamp(targetRect.x + Math.cos(angle) * radius, minX, maxX - PORTAL_SIZE),
+              y: clamp(targetRect.y + Math.sin(angle) * radius, minY, maxY - PORTAL_SIZE),
+              width: PORTAL_SIZE,
+              height: PORTAL_SIZE,
+            };
+            if (!collides(probe, anchorNodeId)) {
+              resolvedRect = probe;
+              break;
+            }
+          }
+          targetRect = resolvedRect;
+        }
+
+        placedPortalRects.push(targetRect);
         result.push({
-          id: `portal:${ref.id}:${nodeId}`,
-          position: { x, y },
+          id: `portal:${ref.id}`,
+          position: { x: targetRect.x, y: targetRect.y },
           type: "portal",
+          className: "planner-portal-node",
           data: {
             code: ref.code,
-            tooltip: ref.label,
-            count: 1,
+            tooltip: ref.nodeIds.length > 1 ? `${ref.label}\n${ref.nodeIds.length} linked nodes` : ref.label,
+            count: ref.nodeIds.length,
             isActive: false,
             onToggle: () => {},
             onContextMenu: () => {},
@@ -1534,15 +1686,15 @@ export default function PlannerPage({ user }: PlannerPageProps) {
           },
         } as Node);
       });
-    });
+    }
     return result;
-  }, [refs, filteredTreeIdSet, baseNodePosById, resolveNodePosition, isMobileLayout]);
+  }, [refs, filteredTreeIdSet, baseNodes, isMobileLayout, portalPosTick]);
 
   // Inject active state and callbacks — kept separate so toggling activePortalRefId
   // doesn't re-run the position computation above.
   const livePortalNodes = useMemo((): Node[] => {
     return visiblePortals.map((pNode) => {
-      // ID format: "portal:<refId>:<nodeId>"
+      // ID format: "portal:<refId>"
       const refId = pNode.id.split(":")[1];
       const isActive = activePortalRefId === refId;
       return {
@@ -2369,6 +2521,41 @@ export default function PlannerPage({ user }: PlannerPageProps) {
     const label = newRefLabel.trim();
     if (!label) return;
     const code = newRefCode.trim() ? normalizeCode(newRefCode) : initialsFromLabel(label);
+    if (BUBBLES_SIMPLIFIED_MODE) {
+      setBusyAction(true);
+      setError(null);
+      try {
+        const newDoc = doc(collection(db, "users", user.uid, "crossRefs"));
+        const anchorPosition = resolveNodePosition(selectedNodeId);
+        const portalPosition = buildDefaultPortalPosition(selectedNodeId, newDoc.id);
+        await setDoc(doc(db, "users", user.uid, "crossRefs", newDoc.id), {
+          label,
+          code,
+          nodeIds: [selectedNodeId],
+          anchorNodeId: selectedNodeId,
+          ...(portalPosition ? { portalX: portalPosition.x, portalY: portalPosition.y } : {}),
+          portalAnchorX: anchorPosition.x,
+          portalAnchorY: anchorPosition.y,
+          entityType: "entity",
+          tags: [],
+          notes: "",
+          contact: "",
+          links: [],
+          createdAt: serverTimestamp(),
+          updatedAt: serverTimestamp(),
+        } satisfies CrossRefDoc & { createdAt: unknown; updatedAt: unknown });
+        setActivePortalRefId(newDoc.id);
+        setNewRefLabel("");
+        setNewRefCode("");
+        setNewRefType("entity");
+      } catch (actionError: unknown) {
+        setError(actionError instanceof Error ? actionError.message : "Could not create bubble.");
+      } finally {
+        setBusyAction(false);
+      }
+      return;
+    }
+
     const existingExact = refs.find(
       (ref) => ref.code === code && ref.label.trim().toLowerCase() === label.toLowerCase()
     );
@@ -3220,11 +3407,12 @@ export default function PlannerPage({ user }: PlannerPageProps) {
 
   const handleContextAddCrossRef = useCallback(
     async (nodeId: string) => {
+      if (!CROSS_REFERENCES_ENABLED) return;
       const anchor = nodesById.get(nodeId);
       setSelectedNodeId(nodeId);
       setActivePortalRefId(null);
       if (anchor) {
-        setNewRefLabel((previous) => (previous.trim().length > 0 ? previous : `${anchor.title} Ref`));
+        setNewRefLabel((previous) => (previous.trim().length > 0 ? previous : `${anchor.title} Bubble`));
       }
       setSidebarCollapsed(false);
       setMobileSidebarSection("bubbles");
@@ -3312,13 +3500,15 @@ export default function PlannerPage({ user }: PlannerPageProps) {
     addItem("cmd-grandmother", "Open top view (root)", "Navigation", goGrandmotherView, "top root grandmother home");
     addItem("cmd-up", "Go to parent view", "Navigation", goUpOneView, "up parent back one level");
     addItem("cmd-organize-tree", "Clean up tree layout", "Layout", organizeVisibleTree, "cleanup organize layout tidy tree auto arrange");
-    addItem(
-      "cmd-clean-bubbles",
-      "Clean up cross-reference bubbles",
-      "Cross-reference",
-      cleanUpCrossRefs,
-      "cleanup cross reference bubbles stale deleted"
-    );
+    if (CROSS_REFERENCES_ENABLED && !BUBBLES_SIMPLIFIED_MODE) {
+      addItem(
+        "cmd-clean-bubbles",
+        "Clean up cross-reference bubbles",
+        "Cross-reference",
+        cleanUpCrossRefs,
+        "cleanup cross reference bubbles stale deleted"
+      );
+    }
     if (currentRootKind === "story") {
       addItem(
         "cmd-toggle-story-lane",
@@ -3398,38 +3588,40 @@ export default function PlannerPage({ user }: PlannerPageProps) {
       });
     });
 
-    const entityMatches = refs
-      .filter((ref) =>
-        includesQuery(`${ref.code} ${ref.label} ${ref.entityType} ${ref.tags.join(" ")} ${ref.notes} ${ref.contact}`)
-      )
-      .slice(0, 8);
-    entityMatches.forEach((ref) => {
-      items.push({
-        id: `entity:${ref.id}`,
-        label: `${ref.code} - ${ref.label}`,
-        hint: `${ref.entityType} · ${ref.nodeIds.length} links`,
-        action: () => {
-          setSidebarCollapsed(false);
-          setMobileSidebarSection("bubbles");
-          setMobileSidebarOpen(true);
-          selectRefForEditing(ref.id);
-        },
-      });
-    });
-
-    if (selectedNodeId) {
-      refs
-        .filter((ref) => !ref.nodeIds.includes(selectedNodeId))
-        .filter((ref) => includesQuery(`link ${ref.code} ${ref.label} ${ref.entityType} ${ref.tags.join(" ")}`))
-        .slice(0, 6)
-        .forEach((ref) => {
-          items.push({
-            id: `link:${ref.id}`,
-            label: `Link selected to ${ref.code} - ${ref.label}`,
-            hint: "Entity link",
-            action: () => linkCrossRefToNode(ref.id, selectedNodeId),
-          });
+    if (CROSS_REFERENCES_ENABLED && !BUBBLES_SIMPLIFIED_MODE) {
+      const entityMatches = refs
+        .filter((ref) =>
+          includesQuery(`${ref.code} ${ref.label} ${ref.entityType} ${ref.tags.join(" ")} ${ref.notes} ${ref.contact}`)
+        )
+        .slice(0, 8);
+      entityMatches.forEach((ref) => {
+        items.push({
+          id: `entity:${ref.id}`,
+          label: `${ref.code} - ${ref.label}`,
+          hint: `${ref.entityType} · ${ref.nodeIds.length} links`,
+          action: () => {
+            setSidebarCollapsed(false);
+            setMobileSidebarSection("bubbles");
+            setMobileSidebarOpen(true);
+            selectRefForEditing(ref.id);
+          },
         });
+      });
+
+      if (selectedNodeId) {
+        refs
+          .filter((ref) => !ref.nodeIds.includes(selectedNodeId))
+          .filter((ref) => includesQuery(`link ${ref.code} ${ref.label} ${ref.entityType} ${ref.tags.join(" ")}`))
+          .slice(0, 6)
+          .forEach((ref) => {
+            items.push({
+              id: `link:${ref.id}`,
+              label: `Link selected to ${ref.code} - ${ref.label}`,
+              hint: "Entity link",
+              action: () => linkCrossRefToNode(ref.id, selectedNodeId),
+            });
+          });
+      }
     }
 
     return items;
@@ -3620,7 +3812,8 @@ export default function PlannerPage({ user }: PlannerPageProps) {
   const sidebarIsCollapsed = !isMobileLayout && sidebarCollapsed;
   const showProjectSection = !isMobileLayout || mobileSidebarSection === "project";
   const showNodeSection = !isMobileLayout || mobileSidebarSection === "node";
-  const showBubblesSection = !isMobileLayout || mobileSidebarSection === "bubbles";
+  const showBubblesSection = CROSS_REFERENCES_ENABLED && !BUBBLES_SIMPLIFIED_MODE && (!isMobileLayout || mobileSidebarSection === "bubbles");
+  const showSimpleBubblesSection = CROSS_REFERENCES_ENABLED && BUBBLES_SIMPLIFIED_MODE && (!isMobileLayout || mobileSidebarSection === "bubbles");
 
   if (!db) {
     return (
@@ -3756,9 +3949,11 @@ export default function PlannerPage({ user }: PlannerPageProps) {
               <button onClick={organizeVisibleTree} disabled={busyAction || filteredTreeIds.length === 0}>
                 Clean up tree layout
               </button>
-              <button onClick={cleanUpCrossRefs} disabled={busyAction}>
-                Clean stale bubbles
-              </button>
+              {CROSS_REFERENCES_ENABLED && !BUBBLES_SIMPLIFIED_MODE ? (
+                <button onClick={cleanUpCrossRefs} disabled={busyAction}>
+                  Clean stale bubbles
+                </button>
+              ) : null}
             </div>
           ) : null}
         </div>
@@ -3777,12 +3972,14 @@ export default function PlannerPage({ user }: PlannerPageProps) {
             >
               Node
             </button>
-            <button
-              className={mobileSidebarSection === "bubbles" ? "active" : ""}
-              onClick={() => setMobileSidebarSection("bubbles")}
-            >
-              Bubbles
-            </button>
+            {CROSS_REFERENCES_ENABLED ? (
+              <button
+                className={mobileSidebarSection === "bubbles" ? "active" : ""}
+                onClick={() => setMobileSidebarSection("bubbles")}
+              >
+                Bubbles
+              </button>
+            ) : null}
           </div>
         ) : null}
 
@@ -3819,9 +4016,11 @@ export default function PlannerPage({ user }: PlannerPageProps) {
             <button onClick={organizeVisibleTree} disabled={busyAction || filteredTreeIds.length === 0}>
               Clean up tree layout
             </button>
-            <button onClick={cleanUpCrossRefs} disabled={busyAction}>
-              Clean stale bubbles
-            </button>
+            {CROSS_REFERENCES_ENABLED && !BUBBLES_SIMPLIFIED_MODE ? (
+              <button onClick={cleanUpCrossRefs} disabled={busyAction}>
+                Clean stale bubbles
+              </button>
+            ) : null}
           </div>
         </div>
 
@@ -4067,6 +4266,62 @@ export default function PlannerPage({ user }: PlannerPageProps) {
           ) : (
             <p className="planner-subtle">No node selected.</p>
           )}
+        </div>
+        ) : null}
+
+        {showSimpleBubblesSection ? (
+        <div className="planner-panel-block">
+          <h3>Bubbles</h3>
+          <p className="planner-subtle">
+            Local visual bubbles for each node. No cross-linking between nodes.
+          </p>
+          <div className="planner-row-label">
+            {selectedNode ? `Add bubble to: ${selectedNode.title}` : "Select a node first"}
+          </div>
+          <input
+            ref={newRefLabelInputRef}
+            value={newRefLabel}
+            onChange={(event) => setNewRefLabel(event.target.value)}
+            placeholder="Bubble name"
+          />
+          <div className="planner-inline-buttons">
+            <input
+              value={newRefCode}
+              onChange={(event) => setNewRefCode(event.target.value)}
+              placeholder="Code (optional)"
+              style={{ flex: 1 }}
+            />
+            <button
+              onClick={createCrossRef}
+              disabled={busyAction || !selectedNodeId || newRefLabel.trim().length === 0}
+            >
+              Add bubble
+            </button>
+          </div>
+          <div className="planner-row-label">Bubbles on selected node</div>
+          <div className="planner-chip-list">
+            {selectedNodeRefs.length === 0 || !selectedNodeId ? (
+              <span className="planner-subtle">No bubbles yet.</span>
+            ) : (
+              selectedNodeRefs.map((ref) => (
+                <div key={ref.id} className="chip with-action">
+                  <button
+                    onClick={() => setActivePortalRefId((prev) => (prev === ref.id ? null : ref.id))}
+                    title={ref.label}
+                  >
+                    {`${ref.code} — ${ref.label}`}
+                  </button>
+                  <button
+                    className="chip-action"
+                    onClick={() => void deletePortalByRefId(ref.id)}
+                    title="Delete bubble"
+                  >
+                    ×
+                  </button>
+                </div>
+              ))
+            )}
+          </div>
         </div>
         ) : null}
 
@@ -4705,7 +4960,7 @@ export default function PlannerPage({ user }: PlannerPageProps) {
             onDelete={handleContextDelete}
             onDuplicate={handleContextDuplicate}
             onRename={handleContextRename}
-            onAddCrossRef={handleContextAddCrossRef}
+            onAddCrossRef={CROSS_REFERENCES_ENABLED ? handleContextAddCrossRef : undefined}
             onChangeType={handleContextChangeType}
             onToggleTaskStatus={handleContextToggleTaskStatus}
           />
@@ -4769,7 +5024,7 @@ export default function PlannerPage({ user }: PlannerPageProps) {
                 onMouseLeave={(e) => { (e.currentTarget as HTMLButtonElement).style.background = "none"; }}
               >
                 <span style={{ fontSize: 15 }}>🗑</span>
-                {busyAction ? "Deleting…" : "Delete cross-reference"}
+                {busyAction ? "Deleting…" : "Delete bubble"}
               </button>
               <button
                 type="button"
