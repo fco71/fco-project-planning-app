@@ -1528,9 +1528,9 @@ export default function PlannerPage({ user }: PlannerPageProps) {
   const visiblePortals = useMemo((): Node[] => {
     if (!CROSS_REFERENCES_ENABLED) return [];
     const PORTAL_SIZE = isMobileLayout ? 48 : 40;
-    const PORTAL_GAP = isMobileLayout ? 58 : 52;
-    const PORTAL_VERTICAL_GAP = isMobileLayout ? 74 : 66;
-    const PORTAL_SIDE_GAP = isMobileLayout ? 84 : 78;
+    const PORTAL_GAP = isMobileLayout ? 54 : 50;
+    const PORTAL_VERTICAL_GAP = isMobileLayout ? 46 : 40;
+    const PORTAL_SIDE_GAP = isMobileLayout ? 60 : 54;
     const NODE_FALLBACK_WIDTH = isMobileLayout ? 280 : 260;
     const NODE_FALLBACK_HEIGHT = isMobileLayout ? 96 : 80;
 
@@ -1577,7 +1577,6 @@ export default function PlannerPage({ user }: PlannerPageProps) {
       anchorRefs.sort((a, b) => a.code.localeCompare(b.code) || a.label.localeCompare(b.label))
     );
 
-    const placedPortalRects: Array<{ x: number; y: number; width: number; height: number }> = [];
     const result: Node[] = [];
     const anchorOrder = Array.from(refsByAnchor.keys()).sort((a, b) => {
       const aBounds = boundsByNodeId.get(a);
@@ -1587,21 +1586,6 @@ export default function PlannerPage({ user }: PlannerPageProps) {
       if (aBounds.x !== bBounds.x) return aBounds.x - bBounds.x;
       return a.localeCompare(b);
     });
-
-    const collides = (
-      candidate: { x: number; y: number; width: number; height: number },
-      anchorNodeId: string
-    ): boolean => {
-      const candidateWithSpacing = inflateRect(candidate, 5);
-      const overlapsAnchor = rectsOverlap(candidateWithSpacing, inflateRect(boundsByNodeId.get(anchorNodeId)!, 8));
-      if (overlapsAnchor) return true;
-      const overlapsTreeNode = nodeBounds.some((rect) => {
-        if (rect.id === anchorNodeId) return false;
-        return rectsOverlap(candidateWithSpacing, inflateRect(rect, 6));
-      });
-      if (overlapsTreeNode) return true;
-      return placedPortalRects.some((rect) => rectsOverlap(candidateWithSpacing, inflateRect(rect, 6)));
-    };
 
     for (const anchorNodeId of anchorOrder) {
       const anchorRefs = refsByAnchor.get(anchorNodeId);
@@ -1622,47 +1606,30 @@ export default function PlannerPage({ user }: PlannerPageProps) {
           : anchorBounds.width + PORTAL_SIDE_GAP);
       let sideYBase = anchorBounds.y + anchorBounds.height / 2 - stackHeight / 2 + anchorNudge.y;
       sideYBase = clamp(sideYBase, minY, maxY - stackHeight - PORTAL_SIZE);
+      const anchorRect = {
+        x: anchorBounds.x,
+        y: anchorBounds.y,
+        width: anchorBounds.width,
+        height: anchorBounds.height,
+      };
 
       anchorRefs.forEach((ref, idx) => {
         const refNudge = getNudge(`${ref.id}:${anchorNodeId}`, 8, 8);
-        const stackCandidate = {
-          x: clamp(stackXBase + refNudge.x * 0.35, minX, maxX - PORTAL_SIZE),
-          y: clamp(stackYBase + idx * PORTAL_GAP + refNudge.y * 0.35, minY, maxY - PORTAL_SIZE),
-          width: PORTAL_SIZE,
-          height: PORTAL_SIZE,
-        };
-        const sideCandidate = {
-          x: clamp(sideXBase + refNudge.x * 0.3, minX, maxX - PORTAL_SIZE),
-          y: clamp(sideYBase + idx * PORTAL_GAP + refNudge.y * 0.3, minY, maxY - PORTAL_SIZE),
-          width: PORTAL_SIZE,
-          height: PORTAL_SIZE,
-        };
-
-        let targetRect = collides(stackCandidate, anchorNodeId) ? sideCandidate : stackCandidate;
-        if (collides(targetRect, anchorNodeId)) {
-          const angleSeed = Math.abs(refNudge.x * 37 + refNudge.y * 17 + idx * 23) % 360;
-          let resolvedRect = targetRect;
-          for (let step = 1; step <= 12; step += 1) {
-            const angle = ((angleSeed + step * 47) * Math.PI) / 180;
-            const radius = 16 + step * 12;
-            const probe = {
-              x: clamp(targetRect.x + Math.cos(angle) * radius, minX, maxX - PORTAL_SIZE),
-              y: clamp(targetRect.y + Math.sin(angle) * radius, minY, maxY - PORTAL_SIZE),
-              width: PORTAL_SIZE,
-              height: PORTAL_SIZE,
-            };
-            if (!collides(probe, anchorNodeId)) {
-              resolvedRect = probe;
-              break;
-            }
-          }
-          targetRect = resolvedRect;
+        let x = clamp(stackXBase + refNudge.x * 0.25, minX, maxX - PORTAL_SIZE);
+        let y = clamp(stackYBase + idx * PORTAL_GAP + refNudge.y * 0.25, minY, maxY - PORTAL_SIZE);
+        const overlapsAnchor = !(
+          x + PORTAL_SIZE < anchorRect.x ||
+          x > anchorRect.x + anchorRect.width ||
+          y + PORTAL_SIZE < anchorRect.y ||
+          y > anchorRect.y + anchorRect.height
+        );
+        if (overlapsAnchor) {
+          x = clamp(sideXBase + refNudge.x * 0.22, minX, maxX - PORTAL_SIZE);
+          y = clamp(sideYBase + idx * PORTAL_GAP + refNudge.y * 0.22, minY, maxY - PORTAL_SIZE);
         }
-
-        placedPortalRects.push(targetRect);
         result.push({
           id: `portal:${ref.id}`,
-          position: { x: targetRect.x, y: targetRect.y },
+          position: { x, y },
           type: "portal",
           className: "planner-portal-node",
           data: {
