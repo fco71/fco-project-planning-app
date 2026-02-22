@@ -9,6 +9,7 @@ import ReactFlow, {
   type Edge,
   type EdgeTypes,
   type Node,
+  type NodeChange,
   type NodeProps,
   type NodeTypes,
   type ReactFlowInstance,
@@ -1223,6 +1224,10 @@ export default function PlannerPage({ user }: PlannerPageProps) {
 
   // visiblePortals is computed after baseNodes so it reads live drag positions.
 
+  // ── ventovault-map pattern: baseTreeNodes has NO JSX ──────────────────────
+  // Plain data objects only. JSX labels are created later in flowNodes (viewNodes).
+  // This ensures baseTreeNodes does not produce new object references every render
+  // due to JSX instability, so the sync effect only fires on real data changes.
   const baseTreeNodes = useMemo(() => {
     return filteredTreeIds
       .map((id) => nodesById.get(id))
@@ -1247,105 +1252,51 @@ export default function PlannerPage({ user }: PlannerPageProps) {
         const showStoryBody = isStory || isStoryLaneBeat;
         const isExpandedStoryCard = expandedStoryNodeIds.has(node.id);
         const bodyText = (node.body || "").trim();
-        // Colors chosen for maximum at-a-glance hierarchy readability.
-        // Hue carries the type; luminance/saturation carries the importance.
         const baseBackground = isRoot
-          ? "rgba(82, 52, 6, 0.97)"         // Root: rich amber-brown — the anchor
+          ? "rgba(82, 52, 6, 0.97)"
           : hasStoryChildren
-            ? "rgba(58, 22, 108, 0.97)"     // Story container: deep violet — narrative hub
+            ? "rgba(58, 22, 108, 0.97)"
           : isProject
-            ? "rgba(10, 26, 80, 0.97)"      // Project: saturated navy blue
+            ? "rgba(10, 26, 80, 0.97)"
           : isStory
-            ? "rgba(6, 52, 42, 0.97)"       // Story: deep emerald green
-            : "rgba(20, 22, 36, 0.97)";     // Item: near-black slate — the workhorse
+            ? "rgba(6, 52, 42, 0.97)"
+            : "rgba(20, 22, 36, 0.97)";
         const background = node.color || baseBackground;
         return {
           id: node.id,
           position,
+          // Plain data — NO JSX. Label is created in flowNodes below.
           data: {
-            label: (
-              <div className={`planner-node-card${showStoryBody ? " story" : ""}`}>
-                <div className="planner-node-label">
-                  {childCount > 0 && (
-                    <button
-                      className="nodrag nopan planner-collapse-toggle"
-                      type="button"
-                      aria-label={isCollapsed ? "Expand children" : "Collapse children"}
-                      onClick={(e) => {
-                        e.stopPropagation();
-                        toggleNodeCollapse(node.id);
-                      }}
-                      onTouchStart={(e) => {
-                        e.stopPropagation();
-                      }}
-                      style={{
-                        marginRight: "6px",
-                        minWidth: isMobileLayout ? 30 : 24,
-                        minHeight: isMobileLayout ? 28 : 22,
-                        padding: isMobileLayout ? "4px 8px" : "2px 6px",
-                        border: "none",
-                        background: "rgba(255, 255, 255, 0.1)",
-                        color: "rgba(255, 255, 255, 0.8)",
-                        borderRadius: "4px",
-                        cursor: "pointer",
-                        fontSize: isMobileLayout ? "12px" : "10px",
-                        fontWeight: 700,
-                        touchAction: "manipulation",
-                        transition: "background 150ms ease",
-                      }}
-                      onMouseEnter={(e) => {
-                        (e.target as HTMLButtonElement).style.background = "rgba(255, 255, 255, 0.2)";
-                      }}
-                      onMouseLeave={(e) => {
-                        (e.target as HTMLButtonElement).style.background = "rgba(255, 255, 255, 0.1)";
-                      }}
-                    >
-                      {isCollapsed ? "▶" : "▼"}
-                    </button>
-                  )}
-                  <span className={isTaskDone ? "planner-node-title done" : "planner-node-title"}>{node.title}</span>
-                  {!isRoot ? <span className={`planner-kind-badge ${node.kind}`}>{node.kind}</span> : null}
-                  {!isRoot && (isTaskTodo || isTaskDone) ? (
-                    <span className={`planner-task-badge ${isTaskDone ? "done" : "todo"}`}>
-                      {isTaskDone ? "Done" : "Task"}
-                    </span>
-                  ) : null}
-                  {childCount > 0 ? <span className="planner-node-count">{childCount}</span> : null}
-                </div>
-                {showStoryBody ? (
-                  <>
-                    <div className={`planner-node-body-preview ${isExpandedStoryCard ? "expanded" : ""}`}>
-                      {bodyText || "No body text yet. Select this node and add text in the Body panel."}
-                    </div>
-                    <button
-                      className="planner-story-card-expand"
-                      onClick={(event) => {
-                        event.stopPropagation();
-                        toggleStoryCardExpand(node.id);
-                      }}
-                      type="button"
-                    >
-                      {isExpandedStoryCard ? "Collapse text" : "Expand text"}
-                    </button>
-                  </>
-                ) : null}
-              </div>
-            ),
+            nodeId: node.id,
+            title: node.title,
+            kind: node.kind,
+            childCount,
+            isCollapsed,
+            isRoot,
+            isSearchMatch,
+            isProject,
+            isStory,
+            hasStoryChildren,
+            isTaskTodo,
+            isTaskDone,
+            isStoryLaneBeat,
+            showStoryBody,
+            isExpandedStoryCard,
+            bodyText,
           },
           style: {
             border: isSearchMatch
               ? "2px solid rgba(34, 197, 94, 0.95)"
               : isRoot
-                ? "2px solid rgba(255, 200, 60, 0.95)"    // bright gold — highest emphasis
+                ? "2px solid rgba(255, 200, 60, 0.95)"
                 : hasStoryChildren
-                  ? "1.5px solid rgba(192, 132, 252, 0.85)" // bright violet — narrative container
+                  ? "1.5px solid rgba(192, 132, 252, 0.85)"
                 : isProject
-                  ? "1.5px solid rgba(99, 179, 255, 0.8)"   // sky blue — project level
+                  ? "1.5px solid rgba(99, 179, 255, 0.8)"
                 : isStory
-                  ? "1.5px solid rgba(52, 211, 153, 0.8)"   // bright emerald — story
-                : "1px solid rgba(100, 106, 140, 0.5)",     // muted slate — item
+                  ? "1.5px solid rgba(52, 211, 153, 0.8)"
+                : "1px solid rgba(100, 106, 140, 0.5)",
             borderRadius: isStoryLaneBeat ? 10 : 14,
-            // Slightly wider nodes on mobile to accommodate bigger font without wrapping.
             width: isStoryLaneBeat ? 300 : showStoryBody ? (isMobileLayout ? 300 : 280) : (isMobileLayout ? 280 : 260),
             minHeight: showStoryBody ? (isExpandedStoryCard ? 280 : 190) : undefined,
             padding: showStoryBody ? 12 : (isMobileLayout ? 12 : 10),
@@ -1381,8 +1332,6 @@ export default function PlannerPage({ user }: PlannerPageProps) {
     rootNodeId,
     searchMatchingIds,
     storyLaneMode,
-    toggleNodeCollapse,
-    toggleStoryCardExpand,
     treeLayout,
   ]);
 
@@ -1486,9 +1435,6 @@ export default function PlannerPage({ user }: PlannerPageProps) {
     return new Set(activeRef?.nodeIds || []);
   }, [activePortalRefId, refs]);
 
-  // Tree nodes only — portals are injected separately at render time so their
-  // positions can track displayNodes live (during drag) without going through
-  // the flowNodes → displayNodes pipeline (which would lag one render behind).
   // ── ventovault-map pattern ─────────────────────────────────────────────────
   // baseNodes is the single source of truth for tree node positions.
   // onNodesChange (RAF-batched) writes directly into baseNodes via applyNodeChanges.
@@ -1497,48 +1443,34 @@ export default function PlannerPage({ user }: PlannerPageProps) {
   const [baseNodes, setBaseNodes] = useState<Node[]>([]);
   const draggedNodeIdRef   = useRef<string | null>(null);
   const nodesChangeRafRef  = useRef<number | null>(null);
-  const pendingNodeChangesRef = useRef<Parameters<OnNodesChange>[0] | null>(null);
+  const pendingNodeChangesRef = useRef<NodeChange[] | null>(null);
 
-  // baseTreeNodes → baseNodes: sync styles/metadata whenever the Firestore-derived
-  // tree changes (node added/removed/renamed) but ONLY update positions for nodes
-  // that are NOT currently being dragged (ReactFlow owns their position during drag).
+  // Sync baseTreeNodes → baseNodes. Fires on every baseTreeNodes change to pick
+  // up metadata/style updates, BUT preserves live positions from baseNodes so
+  // drag positions are never overwritten. This is safe because baseTreeNodes no
+  // longer contains JSX — its reference only changes on real data changes.
   useEffect(() => {
     setBaseNodes((prev) => {
-      if (prev.length === 0) {
-        // First load — also initialise portalPosRef so portals render immediately.
-        portalPosRef.current = new Map(baseTreeNodes.map((n) => [n.id, n.position] as const));
-        setPortalPosTick((t) => t + 1);
-        return baseTreeNodes;
-      }
-      // Build a live-position map from current baseNodes (what ReactFlow sees).
+      if (prev.length === 0) return baseTreeNodes;
+      // Preserve live positions from current baseNodes (what ReactFlow sees).
       const livePos = new Map(prev.map((n) => [n.id, n.position] as const));
-      const next = baseTreeNodes.map((node) => {
+      return baseTreeNodes.map((node) => {
         const live = livePos.get(node.id);
         return live ? ({ ...node, position: live } as Node) : node;
       });
-      // If a node was added from Firestore, update portalPosRef for it.
-      let posChanged = false;
-      const updatedPos = new Map(portalPosRef.current);
-      for (const node of next) {
-        if (!updatedPos.has(node.id)) { updatedPos.set(node.id, node.position); posChanged = true; }
-      }
-      // Remove deleted nodes.
-      const nextIds = new Set(next.map((n) => n.id));
-      for (const id of updatedPos.keys()) {
-        if (!nextIds.has(id)) { updatedPos.delete(id); posChanged = true; }
-      }
-      if (posChanged) {
-        portalPosRef.current = updatedPos;
-        setPortalPosTick((t) => t + 1);
-      }
-      return next;
     });
   }, [baseTreeNodes]);
 
   // Batch onNodesChange events through RAF — identical to ventovault-map.
-  // Portals are stripped here because they are derived nodes not in baseNodes.
+  // Portals are stripped because they are derived nodes not in baseNodes.
+  // Type-safe: NodeAddChange/NodeResetChange use c.item.id, others use c.id.
   const handleNodesChange: OnNodesChange = useCallback((changes) => {
-    const treeChanges = changes.filter((c) => !c.id.startsWith("portal:"));
+    const treeChanges = changes.filter((c: NodeChange) => {
+      if (c.type === "add" || c.type === "reset") {
+        return !c.item.id.startsWith("portal:");
+      }
+      return !c.id.startsWith("portal:");
+    });
     if (treeChanges.length === 0) return;
     pendingNodeChangesRef.current = [
       ...(pendingNodeChangesRef.current ?? []),
@@ -1555,15 +1487,98 @@ export default function PlannerPage({ user }: PlannerPageProps) {
     });
   }, []);
 
-  // Styled tree nodes — positions come from baseNodes (live), styles from state flags.
+  // ── flowNodes (ventovault-map: viewNodes) ──────────────────────────────────
+  // Creates JSX labels from plain data in baseNodes + applies selection/hover styling.
+  // This is the equivalent of ventovault's viewNodes memo: JSX is created HERE,
+  // not in the base data, so baseNodes stays reference-stable for applyNodeChanges.
   const flowNodes = useMemo(() => {
     return baseNodes.map((node) => {
+      const d = node.data as {
+        nodeId: string; title: string; kind: NodeKind;
+        childCount: number; isCollapsed: boolean; isRoot: boolean;
+        isSearchMatch: boolean; isProject: boolean; isStory: boolean;
+        hasStoryChildren: boolean; isTaskTodo: boolean; isTaskDone: boolean;
+        isStoryLaneBeat: boolean; showStoryBody: boolean;
+        isExpandedStoryCard: boolean; bodyText: string;
+      };
       const isSelected = selectedNodeId === node.id;
       const isActivePortalTarget = activeLinkedNodeIds.has(node.id);
       const isHoverRelated = hoverNodeIds.has(node.id);
       const isDropTarget = node.id === dropTargetNodeId;
+
+      // Build JSX label from plain data (ventovault pattern: JSX created in viewNodes)
+      const labelContent = (
+        <div className={`planner-node-card${d.showStoryBody ? " story" : ""}`}>
+          <div className="planner-node-label">
+            {d.childCount > 0 && (
+              <button
+                className="nodrag nopan planner-collapse-toggle"
+                type="button"
+                aria-label={d.isCollapsed ? "Expand children" : "Collapse children"}
+                onClick={(e) => {
+                  e.stopPropagation();
+                  toggleNodeCollapse(d.nodeId);
+                }}
+                onTouchStart={(e) => {
+                  e.stopPropagation();
+                }}
+                style={{
+                  marginRight: "6px",
+                  minWidth: isMobileLayout ? 30 : 24,
+                  minHeight: isMobileLayout ? 28 : 22,
+                  padding: isMobileLayout ? "4px 8px" : "2px 6px",
+                  border: "none",
+                  background: "rgba(255, 255, 255, 0.1)",
+                  color: "rgba(255, 255, 255, 0.8)",
+                  borderRadius: "4px",
+                  cursor: "pointer",
+                  fontSize: isMobileLayout ? "12px" : "10px",
+                  fontWeight: 700,
+                  touchAction: "manipulation",
+                  transition: "background 150ms ease",
+                }}
+                onMouseEnter={(e) => {
+                  (e.target as HTMLButtonElement).style.background = "rgba(255, 255, 255, 0.2)";
+                }}
+                onMouseLeave={(e) => {
+                  (e.target as HTMLButtonElement).style.background = "rgba(255, 255, 255, 0.1)";
+                }}
+              >
+                {d.isCollapsed ? "▶" : "▼"}
+              </button>
+            )}
+            <span className={d.isTaskDone ? "planner-node-title done" : "planner-node-title"}>{d.title}</span>
+            {!d.isRoot ? <span className={`planner-kind-badge ${d.kind}`}>{d.kind}</span> : null}
+            {!d.isRoot && (d.isTaskTodo || d.isTaskDone) ? (
+              <span className={`planner-task-badge ${d.isTaskDone ? "done" : "todo"}`}>
+                {d.isTaskDone ? "Done" : "Task"}
+              </span>
+            ) : null}
+            {d.childCount > 0 ? <span className="planner-node-count">{d.childCount}</span> : null}
+          </div>
+          {d.showStoryBody ? (
+            <>
+              <div className={`planner-node-body-preview ${d.isExpandedStoryCard ? "expanded" : ""}`}>
+                {d.bodyText || "No body text yet. Select this node and add text in the Body panel."}
+              </div>
+              <button
+                className="planner-story-card-expand"
+                onClick={(event) => {
+                  event.stopPropagation();
+                  toggleStoryCardExpand(d.nodeId);
+                }}
+                type="button"
+              >
+                {d.isExpandedStoryCard ? "Collapse text" : "Expand text"}
+              </button>
+            </>
+          ) : null}
+        </div>
+      );
+
       return {
         ...node,
+        data: { ...node.data, label: labelContent },
         className: isDropTarget ? "drop-target-hover" : undefined,
         style: {
           ...(node.style || {}),
@@ -1588,7 +1603,7 @@ export default function PlannerPage({ user }: PlannerPageProps) {
         },
       } as Node;
     });
-  }, [activeLinkedNodeIds, baseNodes, dropTargetNodeId, hoverNodeIds, hoveredEdgeId, hoveredNodeId, selectedNodeId]);
+  }, [activeLinkedNodeIds, baseNodes, dropTargetNodeId, hoverNodeIds, hoveredEdgeId, hoveredNodeId, isMobileLayout, selectedNodeId, toggleNodeCollapse, toggleStoryCardExpand]);
 
   const flowEdges = useMemo(() => {
     return baseEdges.map((edge) => {
@@ -1610,9 +1625,8 @@ export default function PlannerPage({ user }: PlannerPageProps) {
   }, [baseEdges, hoverEdgeIds, hoveredEdgeId, hoveredNodeId]);
 
   // ── Portal bubble nodes ────────────────────────────────────────────────────
-  // Keep portalPosRef/portalPosTick for drag-stop snapshot (used by onNodeDragStop).
-  const portalPosRef = useRef<Map<string, { x: number; y: number }>>(new Map());
-  const [portalPosTick, setPortalPosTick] = useState(0);
+  // Portals read positions directly from baseNodes (which has live drag positions
+  // via applyNodeChanges). No portalPosRef, no portalPosTick — ventovault pattern.
 
   const visiblePortals = useMemo((): Node[] => {
     if (!CROSS_REFERENCES_ENABLED) return [];
@@ -1754,7 +1768,7 @@ export default function PlannerPage({ user }: PlannerPageProps) {
       });
     }
     return result;
-  }, [refs, filteredTreeIdSet, baseNodes, isMobileLayout, portalPosTick, activePortalRefId]);
+  }, [refs, filteredTreeIdSet, baseNodes, isMobileLayout, activePortalRefId]);
 
   // Final node array — styled tree nodes + portal orbs (ventovault-map: viewNodes).
   const reactFlowNodes = useMemo(
@@ -3156,17 +3170,6 @@ export default function PlannerPage({ user }: PlannerPageProps) {
       // Portal nodes are pinned (draggable: false) — skip silently.
       if (node.id.startsWith("portal:")) return;
 
-      // Snapshot final node positions into portalPosRef, then tick so visiblePortals
-      // recomputes once with the correct post-drag positions.
-      if (rfInstance) {
-        const updatedPos = new Map(portalPosRef.current);
-        rfInstance.getNodes().forEach((n) => {
-          if (!n.id.startsWith("portal:")) updatedPos.set(n.id, n.position);
-        });
-        portalPosRef.current = updatedPos;
-        setPortalPosTick((t) => t + 1);
-      }
-
       // Snapshot drop target from ref (written during drag without setState).
       draggedNodeIdRef.current = null;
       const capturedDropTarget = dropTargetIdRef.current;
@@ -3237,23 +3240,13 @@ export default function PlannerPage({ user }: PlannerPageProps) {
         setError(actionError instanceof Error ? actionError.message : "Could not save node position.");
       }
     },
-    [applyLocalNodePatch, db, filteredTreeIdSet, nodesById, pushHistory, rfInstance, rootNodeId, showSaveError, user.uid]
+    [applyLocalNodePatch, db, nodesById, pushHistory, rootNodeId, showSaveError, user.uid]
   );
 
   const onSelectionDragStop = useCallback(
     async (_: React.MouseEvent, draggedNodes: Node[]) => {
       isDraggingRef.current = false;
       if (!db) return;
-
-      // Snapshot final positions and tick portals to reposition after drag.
-      if (rfInstance) {
-        const updatedPos = new Map(portalPosRef.current);
-        rfInstance.getNodes().forEach((n) => {
-          if (!n.id.startsWith("portal:")) updatedPos.set(n.id, n.position);
-        });
-        portalPosRef.current = updatedPos;
-        setPortalPosTick((t) => t + 1);
-      }
 
       // No re-parenting on multi-select drag — clear drop-target state.
       draggedNodeIdRef.current = null;
@@ -3326,7 +3319,7 @@ export default function PlannerPage({ user }: PlannerPageProps) {
         setError(actionError instanceof Error ? actionError.message : "Could not save node positions.");
       }
     },
-    [db, nodesById, pushHistory, rfInstance, showSaveError, user.uid]
+    [db, nodesById, pushHistory, showSaveError, user.uid]
   );
 
   // Context menu handlers
