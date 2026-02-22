@@ -2,6 +2,8 @@ import React, { memo, useCallback, useEffect, useMemo, useRef, useState } from "
 import { useUndoRedo, firestoreDeleteField, type LocalOp, type FirestoreOp } from "../hooks/useUndoRedo";
 import ReactFlow, {
   Background,
+  Handle,
+  Position,
   SelectionMode,
   applyNodeChanges,
   type Edge,
@@ -389,33 +391,57 @@ function getMasterNodeFor(nodeId: string, rootNodeId: string | null, nodesById: 
 }
 
 // ── Portal bubble node ─────────────────────────────────────────────────────
-// One orb per cross-reference. Position follows its anchor node with soft motion.
-// No Handles — avoids ReactFlow 11 / React 19 useLayoutEffect conflict.
-// Right-click fires onContextMenu so the parent can show a delete menu.
+// Ventovault-style simple portal node: wrapper carries the orb styles and the
+// node body only renders text + hidden handles for stable edge anchoring.
 const PortalNode = memo(function PortalNode({
   data,
 }: NodeProps<{
   code: string;
   tooltip: string;
-  count: number;
   isActive: boolean;
-  onToggle: () => void;
-  onContextMenu: (e: React.MouseEvent) => void;
 }>) {
   return (
     <div
-      style={{ width: "100%", height: "100%", display: "flex", alignItems: "center", justifyContent: "center", position: "relative" }}
-      onContextMenu={(e) => { e.preventDefault(); e.stopPropagation(); data.onContextMenu(e); }}
+      style={{
+        width: "100%",
+        height: "100%",
+        display: "flex",
+        alignItems: "center",
+        justifyContent: "center",
+        position: "relative",
+      }}
     >
-      <button
-        type="button"
-        className={`planner-portal-inner${data.isActive ? " active" : ""}`}
-        onClick={(e) => { e.stopPropagation(); data.onToggle(); }}
-      >
-        <div className="planner-portal-label" data-tooltip={data.tooltip}>
-          {data.code}
-        </div>
-      </button>
+      <Handle
+        type="target"
+        position={Position.Top}
+        id="portal-target"
+        isConnectable={false}
+        style={{
+          width: 8,
+          height: 8,
+          opacity: 0,
+          border: "none",
+          background: "transparent",
+          pointerEvents: "none",
+        }}
+      />
+      <Handle
+        type="source"
+        position={Position.Bottom}
+        id="portal-source"
+        isConnectable={false}
+        style={{
+          width: 8,
+          height: 8,
+          opacity: 0,
+          border: "none",
+          background: "transparent",
+          pointerEvents: "none",
+        }}
+      />
+      <div className={`planner-portal-label${data.isActive ? " active" : ""}`} data-tooltip={data.tooltip}>
+        {data.code}
+      </div>
     </div>
   );
 });
@@ -498,7 +524,6 @@ export default function PlannerPage({ user }: PlannerPageProps) {
   const hoverRafRef = useRef<number | null>(null);
   const hoverPendingRef = useRef<{ nodeId: string | null; edgeId: string | null } | null>(null);
   const isDraggingRef = useRef(false);
-  const [isNodeDragging, setIsNodeDragging] = useState(false);
   const scheduleHoverUpdate = useCallback((nodeId: string | null, edgeId: string | null) => {
     if (isDraggingRef.current) return;
     hoverPendingRef.current = { nodeId, edgeId };
@@ -1529,9 +1554,9 @@ export default function PlannerPage({ user }: PlannerPageProps) {
   const visiblePortals = useMemo((): Node[] => {
     if (!CROSS_REFERENCES_ENABLED) return [];
     const PORTAL_SIZE = isMobileLayout ? 48 : 40;
-    const PORTAL_GAP = isMobileLayout ? 52 : 46;
-    const PORTAL_VERTICAL_GAP = isMobileLayout ? 20 : 16;
-    const PORTAL_FAN_X = isMobileLayout ? 12 : 10;
+    const PORTAL_GAP = isMobileLayout ? 54 : 50;
+    const PORTAL_VERTICAL_GAP = isMobileLayout ? 34 : 30;
+    const PORTAL_SIDE_GAP = isMobileLayout ? 56 : 52;
     const NODE_FALLBACK_WIDTH = isMobileLayout ? 280 : 260;
     const NODE_FALLBACK_HEIGHT = isMobileLayout ? 96 : 80;
 
@@ -1548,7 +1573,24 @@ export default function PlannerPage({ user }: PlannerPageProps) {
         height: Math.max(measuredHeight, minHeight, NODE_FALLBACK_HEIGHT),
       };
     });
+    if (nodeBounds.length === 0) return [];
     const boundsByNodeId = new Map(nodeBounds.map((entry) => [entry.id, entry] as const));
+    const sceneBounds = nodeBounds.reduce(
+      (acc, rect) => ({
+        minX: Math.min(acc.minX, rect.x),
+        maxX: Math.max(acc.maxX, rect.x + rect.width),
+        minY: Math.min(acc.minY, rect.y),
+        maxY: Math.max(acc.maxY, rect.y + rect.height),
+      }),
+      { minX: nodeBounds[0].x, maxX: nodeBounds[0].x + nodeBounds[0].width, minY: nodeBounds[0].y, maxY: nodeBounds[0].y + nodeBounds[0].height }
+    );
+    const sceneMidX = (sceneBounds.minX + sceneBounds.maxX) / 2;
+    const sceneMidY = (sceneBounds.minY + sceneBounds.maxY) / 2;
+    const minX = sceneBounds.minX - (isMobileLayout ? 100 : 120);
+    const maxX = sceneBounds.maxX + (isMobileLayout ? 100 : 140);
+    const minY = sceneBounds.minY - (isMobileLayout ? 80 : 70);
+    const maxY = sceneBounds.maxY + (isMobileLayout ? 100 : 80);
+
     const refsByAnchor = new Map<string, CrossRef[]>();
     for (const ref of refs) {
       const visibleNodeIds = ref.nodeIds.filter((nodeId) => filteredTreeIdSet.has(nodeId));
@@ -1576,78 +1618,84 @@ export default function PlannerPage({ user }: PlannerPageProps) {
       const anchorRefs = refsByAnchor.get(anchorNodeId);
       const anchorBounds = boundsByNodeId.get(anchorNodeId);
       if (!anchorRefs || anchorRefs.length === 0 || !anchorBounds) continue;
-      const anchorNudge = getNudge(anchorNodeId, 10, 6);
-      const orientation = getNudge(`${anchorNodeId}:portal-orientation`, 1, 1);
-      const placeBelow = orientation.y >= 0;
-      const leanRight = orientation.x >= 0;
+      const anchorNudge = getNudge(anchorNodeId, 12, 6);
       const stackHeight = (anchorRefs.length - 1) * PORTAL_GAP;
-      const stackXBase = anchorBounds.x + anchorBounds.width / 2 - PORTAL_SIZE / 2 + anchorNudge.x * 0.18;
-      const stackYBase = placeBelow
+      const stackXBase = anchorBounds.x + anchorBounds.width / 2 - PORTAL_SIZE / 2 + anchorNudge.x;
+      const placeBelow = anchorBounds.y + anchorBounds.height / 2 <= sceneMidY;
+      let stackYBase = placeBelow
         ? anchorBounds.y + anchorBounds.height + PORTAL_VERTICAL_GAP
         : anchorBounds.y - PORTAL_VERTICAL_GAP - stackHeight - PORTAL_SIZE;
+      stackYBase = clamp(stackYBase + anchorNudge.y, minY, maxY - stackHeight - PORTAL_SIZE);
+      const sideXBase =
+        anchorBounds.x +
+        (anchorBounds.x + anchorBounds.width / 2 >= sceneMidX
+          ? -(PORTAL_SIDE_GAP + PORTAL_SIZE)
+          : anchorBounds.width + PORTAL_SIDE_GAP);
+      let sideYBase = anchorBounds.y + anchorBounds.height / 2 - stackHeight / 2 + anchorNudge.y;
+      sideYBase = clamp(sideYBase, minY, maxY - stackHeight - PORTAL_SIZE);
+      const anchorRect = {
+        x: anchorBounds.x,
+        y: anchorBounds.y,
+        width: anchorBounds.width,
+        height: anchorBounds.height,
+      };
 
       anchorRefs.forEach((ref, idx) => {
-        const refNudge = getNudge(`${ref.id}:${anchorNodeId}`, 6, 6);
-        const fanX = leanRight ? idx * PORTAL_FAN_X : -idx * PORTAL_FAN_X;
-        const x = stackXBase + fanX + refNudge.x * 0.12;
-        const y = stackYBase + idx * PORTAL_GAP + refNudge.y * 0.12;
+        const refNudge = getNudge(`${ref.id}:${anchorNodeId}`, 8, 8);
+        let x = clamp(stackXBase + refNudge.x * 0.22, minX, maxX - PORTAL_SIZE);
+        let y = clamp(stackYBase + idx * PORTAL_GAP + refNudge.y * 0.22, minY, maxY - PORTAL_SIZE);
+        const overlapsAnchor = !(
+          x + PORTAL_SIZE < anchorRect.x ||
+          x > anchorRect.x + anchorRect.width ||
+          y + PORTAL_SIZE < anchorRect.y ||
+          y > anchorRect.y + anchorRect.height
+        );
+        if (overlapsAnchor) {
+          x = clamp(sideXBase + refNudge.x * 0.2, minX, maxX - PORTAL_SIZE);
+          y = clamp(sideYBase + idx * PORTAL_GAP + refNudge.y * 0.2, minY, maxY - PORTAL_SIZE);
+        }
+        const isActive = activePortalRefId === ref.id;
         result.push({
           id: `portal:${ref.id}`,
           position: { x, y },
           type: "portal",
-          className: isNodeDragging ? "planner-portal-node dragging" : "planner-portal-node",
+          className: "planner-portal-node",
           data: {
             code: ref.code,
             tooltip: ref.nodeIds.length > 1 ? `${ref.label}\n${ref.nodeIds.length} linked nodes` : ref.label,
-            count: ref.nodeIds.length,
-            isActive: false,
-            onToggle: () => {},
-            onContextMenu: () => {},
+            isActive,
           },
           draggable: false,
-          selectable: false,
-          // Keep bubbles above dragged cards so they don't appear to disappear mid-drag.
-          zIndex: 2000,
+          selectable: true,
+          zIndex: 10,
           style: {
             width: PORTAL_SIZE,
             height: PORTAL_SIZE,
             borderRadius: 999,
-            background: "transparent",
-            border: "none",
+            border: isActive ? "2px solid rgba(251,191,36,0.95)" : "2px solid rgba(64,182,255,0.95)",
+            background: isActive ? "rgba(48,30,4,0.88)" : "rgba(12,36,72,0.82)",
+            color: isActive ? "rgba(255,230,130,0.98)" : "rgba(200,235,255,0.95)",
+            fontSize: PORTAL_SIZE >= 48 ? 11 : 10,
+            fontWeight: 900,
+            display: "flex",
+            alignItems: "center",
+            justifyContent: "center",
+            boxShadow: "0 10px 24px rgba(0, 0, 0, 0.50)",
+            opacity: 1,
+            visibility: "visible",
+            pointerEvents: "all",
             padding: 0,
           },
         } as Node);
       });
     }
     return result;
-  }, [refs, filteredTreeIdSet, baseNodes, isMobileLayout, portalPosTick, isNodeDragging]);
-
-  // Inject active state and callbacks — kept separate so toggling activePortalRefId
-  // doesn't re-run the position computation above.
-  const livePortalNodes = useMemo((): Node[] => {
-    return visiblePortals.map((pNode) => {
-      // ID format: "portal:<refId>"
-      const refId = pNode.id.split(":")[1];
-      const isActive = activePortalRefId === refId;
-      return {
-        ...pNode,
-        data: {
-          ...pNode.data,
-          isActive,
-          onToggle: () => setActivePortalRefId((prev) => prev === refId ? null : refId),
-          onContextMenu: (e: React.MouseEvent) => {
-            e.preventDefault();
-            setPortalContextMenu({ x: e.clientX, y: e.clientY, refId });
-          },
-        },
-      } as Node;
-    });
-  }, [visiblePortals, activePortalRefId]);
+  }, [refs, filteredTreeIdSet, baseNodes, isMobileLayout, portalPosTick, activePortalRefId]);
 
   // Final node array — styled tree nodes + portal orbs (ventovault-map: viewNodes).
   const reactFlowNodes = useMemo(
-    () => [...flowNodes, ...livePortalNodes],
-    [flowNodes, livePortalNodes]
+    () => [...flowNodes, ...visiblePortals],
+    [flowNodes, visiblePortals]
   );
 
   // Save warning helper (successful autosaves are silent).
@@ -2952,7 +3000,6 @@ export default function PlannerPage({ user }: PlannerPageProps) {
   const onNodeDragStop = useCallback(
     async (_: React.MouseEvent, node: Node) => {
       isDraggingRef.current = false;
-      setIsNodeDragging(false);
       if (!db) return;
 
       // Portal nodes are pinned (draggable: false) — skip silently.
@@ -3045,7 +3092,6 @@ export default function PlannerPage({ user }: PlannerPageProps) {
   const onSelectionDragStop = useCallback(
     async (_: React.MouseEvent, draggedNodes: Node[]) => {
       isDraggingRef.current = false;
-      setIsNodeDragging(false);
       if (!db) return;
 
       // Snapshot final positions and tick portals to reposition after drag.
@@ -4790,6 +4836,7 @@ export default function PlannerPage({ user }: PlannerPageProps) {
           edgeTypes={edgeTypes}
           fitView
           fitViewOptions={{ padding: isMobileLayout ? 0.12 : 0.3, maxZoom: isMobileLayout ? 0.85 : 1 }}
+          onlyRenderVisibleElements={false}
           nodesConnectable={false}
           selectionOnDrag={!isMobileLayout}
           selectionMode={isMobileLayout ? SelectionMode.Full : SelectionMode.Partial}
@@ -4834,10 +4881,7 @@ export default function PlannerPage({ user }: PlannerPageProps) {
           onEdgeMouseEnter={(_, edge) => scheduleHoverUpdate(hoveredNodeId, edge.id)}
           onEdgeMouseLeave={() => scheduleHoverUpdate(hoveredNodeId, null)}
           onNodeDragStart={(_, node) => {
-            if (!node.id.startsWith("portal:")) {
-              isDraggingRef.current = true;
-              setIsNodeDragging(true);
-            }
+            if (!node.id.startsWith("portal:")) isDraggingRef.current = true;
           }}
           onNodeDrag={onNodeDrag}
           onNodeDragStop={onNodeDragStop}
