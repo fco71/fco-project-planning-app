@@ -481,6 +481,16 @@ button {
   overflow-wrap: anywhere;
 }
 
+.planner-bubble-target-path {
+  opacity: 0.85;
+}
+
+.planner-path-tail {
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
 .planner-chip-list {
   display: flex;
   flex-wrap: wrap;
@@ -702,6 +712,17 @@ button {
   overflow-wrap: anywhere;
 }
 
+.planner-mobile-sheet-path-tail {
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.planner-mobile-bubble-sheet {
+  border-color: rgba(64, 182, 255, 0.42);
+  box-shadow: 0 22px 48px rgba(2, 6, 23, 0.7);
+}
+
 .planner-mobile-sheet.compact {
   max-height: 58vh;
 }
@@ -762,6 +783,38 @@ button {
 
 .planner-mobile-sheet-compact-grid button {
   min-height: 40px;
+}
+
+.planner-mobile-sheet .planner-mobile-quick-bubble-row {
+  grid-template-columns: minmax(0, 1fr) auto;
+  align-items: center;
+}
+
+.planner-mobile-sheet .planner-mobile-quick-bubble-row button {
+  min-width: 104px;
+}
+
+.planner-mobile-bubble-input-row {
+  grid-template-columns: minmax(0, 1fr) auto;
+  align-items: center;
+}
+
+.planner-mobile-bubble-input-row button {
+  min-width: 88px;
+}
+
+.planner-mobile-bubble-aux-row {
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+}
+
+.planner-mobile-bubble-meta-row {
+  grid-template-columns: auto minmax(0, 1fr);
+  align-items: end;
+}
+
+.planner-mobile-bubble-edit-row {
+  grid-template-columns: auto minmax(0, 1fr) minmax(0, 1fr);
+  align-items: center;
 }
 
 .planner-mobile-sheet-grid button,
@@ -1025,16 +1078,15 @@ button {
   overflow: visible;
 }
 
-/* Code label inside the orb */
+/* Name token label inside the orb */
 .planner-portal-label {
-  font-size: 10px;
-  font-weight: 900;
-  letter-spacing: 0.4px;
+  font-size: 10.5px;
+  font-weight: 800;
+  letter-spacing: 0;
   line-height: 1;
-  text-transform: uppercase;
   pointer-events: none;
   position: relative;
-  font-family: "SF Mono", "Fira Code", "Fira Mono", "Roboto Mono", monospace;
+  font-family: "Sora", "Avenir Next", "Helvetica Neue", "Inter", sans-serif;
 }
 
 /* Tooltip: slides up on hover — shows full label + linked nodes */
@@ -1352,6 +1404,22 @@ button {
     grid-template-columns: 1fr;
   }
 
+  .planner-shell.mobile .planner-mobile-bubble-input-row {
+    grid-template-columns: minmax(0, 1fr) auto;
+  }
+
+  .planner-shell.mobile .planner-mobile-bubble-aux-row {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+
+  .planner-shell.mobile .planner-mobile-bubble-meta-row {
+    grid-template-columns: auto minmax(0, 1fr);
+  }
+
+  .planner-shell.mobile .planner-mobile-bubble-edit-row {
+    grid-template-columns: auto minmax(0, 1fr) minmax(0, 1fr);
+  }
+
   /* On small phones: toolbar lives at the bottom above the home indicator */
   .planner-mobile-toolbar {
     grid-template-columns: repeat(3, minmax(0, 1fr));
@@ -1383,6 +1451,10 @@ button {
   .planner-mobile-sheet-actions,
   .planner-mobile-sheet-story {
     grid-template-columns: 1fr;
+  }
+
+  .planner-shell.mobile .planner-mobile-sheet .planner-mobile-quick-bubble-row {
+    grid-template-columns: minmax(0, 1fr) auto;
   }
 }
 
