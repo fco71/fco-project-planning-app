@@ -506,6 +506,8 @@ export default function PlannerPage({ user }: PlannerPageProps) {
   const [refs, setRefs] = useState<CrossRef[]>([]);
   const [currentRootId, setCurrentRootId] = useState<string | null>(null);
   const [selectedNodeId, setSelectedNodeId] = useState<string | null>(null);
+  const [bubbleTargetNodeId, setBubbleTargetNodeId] = useState<string | null>(null);
+  const [bubbleTargetLocked, setBubbleTargetLocked] = useState(false);
   const [pendingSelectedNodeId, setPendingSelectedNodeId] = useState<string | null>(null);
   const [sidebarCollapsed, setSidebarCollapsed] = useState(false);
   const [isMobileLayout, setIsMobileLayout] = useState(() =>
@@ -514,6 +516,7 @@ export default function PlannerPage({ user }: PlannerPageProps) {
   const [mobileSidebarOpen, setMobileSidebarOpen] = useState(false);
   const [mobileSidebarSection, setMobileSidebarSection] = useState<"project" | "node" | "bubbles">("project");
   const [mobileQuickEditorOpen, setMobileQuickEditorOpen] = useState(false);
+  const [mobileQuickEditorMode, setMobileQuickEditorMode] = useState<"compact" | "full">("compact");
   const [searchQuery, setSearchQuery] = useState("");
   const searchInputRef = useRef<HTMLInputElement>(null);
   const renameInputRef = useRef<HTMLInputElement>(null);
@@ -952,14 +955,29 @@ export default function PlannerPage({ user }: PlannerPageProps) {
   }, [nodesById, pendingSelectedNodeId]);
 
   useEffect(() => {
+    // On mobile, keep selection explicit (don't silently snap back to root),
+    // so sidebar actions always stay node-scoped to what the user tapped.
+    if (isMobileLayout) return;
     if (!selectedNodeId && currentRootId) {
       setSelectedNodeId(currentRootId);
     }
-  }, [selectedNodeId, currentRootId]);
+  }, [selectedNodeId, currentRootId, isMobileLayout]);
+
+  useEffect(() => {
+    if (!selectedNodeId) return;
+    if (bubbleTargetLocked) return;
+    setBubbleTargetNodeId(selectedNodeId);
+  }, [bubbleTargetLocked, selectedNodeId]);
 
   const selectedNode = useMemo(
     () => (selectedNodeId ? nodesById.get(selectedNodeId) || null : null),
     [selectedNodeId, nodesById]
+  );
+
+  const effectiveBubbleTargetId = bubbleTargetNodeId || selectedNodeId || null;
+  const bubbleTargetNode = useMemo(
+    () => (effectiveBubbleTargetId ? nodesById.get(effectiveBubbleTargetId) || null : null),
+    [effectiveBubbleTargetId, nodesById]
   );
 
   const applyLocalNodePatch = useCallback(
@@ -1250,20 +1268,29 @@ export default function PlannerPage({ user }: PlannerPageProps) {
                 <div className="planner-node-label">
                   {childCount > 0 && (
                     <button
+                      className="nodrag nopan planner-collapse-toggle"
+                      type="button"
+                      aria-label={isCollapsed ? "Expand children" : "Collapse children"}
                       onClick={(e) => {
                         e.stopPropagation();
                         toggleNodeCollapse(node.id);
                       }}
+                      onTouchStart={(e) => {
+                        e.stopPropagation();
+                      }}
                       style={{
                         marginRight: "6px",
-                        padding: "2px 6px",
+                        minWidth: isMobileLayout ? 30 : 24,
+                        minHeight: isMobileLayout ? 28 : 22,
+                        padding: isMobileLayout ? "4px 8px" : "2px 6px",
                         border: "none",
                         background: "rgba(255, 255, 255, 0.1)",
                         color: "rgba(255, 255, 255, 0.8)",
                         borderRadius: "4px",
                         cursor: "pointer",
-                        fontSize: "10px",
+                        fontSize: isMobileLayout ? "12px" : "10px",
                         fontWeight: 700,
+                        touchAction: "manipulation",
                         transition: "background 150ms ease",
                       }}
                       onMouseEnter={(e) => {
@@ -1779,6 +1806,11 @@ export default function PlannerPage({ user }: PlannerPageProps) {
       .filter((node): node is TreeNode => !!node);
   }, [childrenByParent, nodesById, selectedNodeId]);
 
+  const selectedNodeCollapsed = useMemo(
+    () => (selectedNodeId ? collapsedNodeIds.has(selectedNodeId) : false),
+    [collapsedNodeIds, selectedNodeId]
+  );
+
   const selectedNodeHasStoryChildren = useMemo(() => {
     if (!selectedNodeId) return false;
     return (childrenByParent.get(selectedNodeId) || []).some((childId) => nodesById.get(childId)?.kind === "story");
@@ -1788,6 +1820,11 @@ export default function PlannerPage({ user }: PlannerPageProps) {
     if (!selectedNodeId) return [] as CrossRef[];
     return refs.filter((ref) => ref.nodeIds.includes(selectedNodeId));
   }, [refs, selectedNodeId]);
+
+  const bubbleTargetRefs = useMemo(() => {
+    if (!effectiveBubbleTargetId) return [] as CrossRef[];
+    return refs.filter((ref) => ref.nodeIds.includes(effectiveBubbleTargetId));
+  }, [effectiveBubbleTargetId, refs]);
 
   const selectedNodeRefIds = useMemo(() => new Set(selectedNodeRefs.map((ref) => ref.id)), [selectedNodeRefs]);
 
@@ -1840,19 +1877,19 @@ export default function PlannerPage({ user }: PlannerPageProps) {
   }, [refCategoryFilter, refScopeFilter, refSearchQuery, refs, visibleTreeIdSet]);
 
   const newRefSuggestions = useMemo(() => {
-    if (!selectedNodeId) return [] as CrossRef[];
+    if (!effectiveBubbleTargetId) return [] as CrossRef[];
     const labelQuery = newRefLabel.trim().toLowerCase();
     const codeQuery = normalizeCode(newRefCode.trim());
     if (!labelQuery && !newRefCode.trim()) return [] as CrossRef[];
     return refs
-      .filter((ref) => !ref.nodeIds.includes(selectedNodeId))
+      .filter((ref) => !ref.nodeIds.includes(effectiveBubbleTargetId))
       .filter((ref) => {
         const labelMatches = labelQuery ? ref.label.toLowerCase().includes(labelQuery) : false;
         const codeMatches = newRefCode.trim().length > 0 ? ref.code.includes(codeQuery) : false;
         return labelMatches || codeMatches;
       })
       .slice(0, 6);
-  }, [newRefCode, newRefLabel, refs, selectedNodeId]);
+  }, [effectiveBubbleTargetId, newRefCode, newRefLabel, refs]);
 
   const nextAutoBubbleCode = useMemo(() => nextBubbleCode(refs.map((ref) => ref.code)), [refs]);
   const effectiveNewBubbleCode = useMemo(
@@ -1925,6 +1962,15 @@ export default function PlannerPage({ user }: PlannerPageProps) {
       .filter((node): node is TreeNode => !!node)
       .sort((a, b) => a.title.localeCompare(b.title));
   }, [activePortalRef, nodesById]);
+
+  const bubbleTargetOptions = useMemo(() => {
+    return nodes
+      .map((node) => ({
+        id: node.id,
+        path: buildNodePath(node.id, nodesById),
+      }))
+      .sort((a, b) => a.path.localeCompare(b.path));
+  }, [nodes, nodesById]);
 
   const recentEntityRefs = useMemo(() => {
     return [...refs].sort((a, b) => b.updatedAtMs - a.updatedAtMs).slice(0, 6);
@@ -2570,8 +2616,9 @@ export default function PlannerPage({ user }: PlannerPageProps) {
     [newRefCode, nextAutoBubbleCode]
   );
 
-  const createCrossRef = useCallback(async () => {
-    if (!db || !selectedNodeId) return;
+  const createCrossRef = useCallback(async (targetNodeIdOverride?: string) => {
+    const targetNodeId = targetNodeIdOverride ?? effectiveBubbleTargetId;
+    if (!db || !targetNodeId) return;
     const label = newRefLabel.trim();
     if (!label) return;
     const code = newRefCode.trim()
@@ -2583,13 +2630,13 @@ export default function PlannerPage({ user }: PlannerPageProps) {
       setError(null);
       try {
         const newDoc = doc(collection(db, "users", user.uid, "crossRefs"));
-        const anchorPosition = resolveNodePosition(selectedNodeId);
-        const portalPosition = buildDefaultPortalPosition(selectedNodeId, newDoc.id);
+        const anchorPosition = resolveNodePosition(targetNodeId);
+        const portalPosition = buildDefaultPortalPosition(targetNodeId, newDoc.id);
         await setDoc(doc(db, "users", user.uid, "crossRefs", newDoc.id), {
           label,
           code,
-          nodeIds: [selectedNodeId],
-          anchorNodeId: selectedNodeId,
+          nodeIds: [targetNodeId],
+          anchorNodeId: targetNodeId,
           color,
           ...(portalPosition ? { portalX: portalPosition.x, portalY: portalPosition.y } : {}),
           portalAnchorX: anchorPosition.x,
@@ -2622,15 +2669,15 @@ export default function PlannerPage({ user }: PlannerPageProps) {
     setError(null);
     try {
       if (existingExact) {
-        const nextNodeIds = existingExact.nodeIds.includes(selectedNodeId)
+        const nextNodeIds = existingExact.nodeIds.includes(targetNodeId)
           ? existingExact.nodeIds
-          : [...existingExact.nodeIds, selectedNodeId];
-        const nextAnchorNodeId = chooseAnchorNodeId(nextNodeIds, existingExact.anchorNodeId, selectedNodeId);
+          : [...existingExact.nodeIds, targetNodeId];
+        const nextAnchorNodeId = chooseAnchorNodeId(nextNodeIds, existingExact.anchorNodeId, targetNodeId);
         const nextAnchorPosition = nextAnchorNodeId ? resolveNodePosition(nextAnchorNodeId) : null;
         const nextPortalPosition =
           resolvePortalFollowPosition(existingExact, nextAnchorPosition, existingExact.id);
         await updateDoc(doc(db, "users", user.uid, "crossRefs", existingExact.id), {
-          nodeIds: arrayUnion(selectedNodeId),
+          nodeIds: arrayUnion(targetNodeId),
           anchorNodeId: nextAnchorNodeId ?? deleteField(),
           ...(nextPortalPosition ? { portalX: nextPortalPosition.x, portalY: nextPortalPosition.y } : {}),
           ...(nextAnchorPosition ? { portalAnchorX: nextAnchorPosition.x, portalAnchorY: nextAnchorPosition.y } : {}),
@@ -2650,13 +2697,13 @@ export default function PlannerPage({ user }: PlannerPageProps) {
         setActivePortalRefId(existingExact.id);
       } else {
         const newDoc = doc(collection(db, "users", user.uid, "crossRefs"));
-        const anchorPosition = resolveNodePosition(selectedNodeId);
-        const portalPosition = buildDefaultPortalPosition(selectedNodeId, newDoc.id);
+        const anchorPosition = resolveNodePosition(targetNodeId);
+        const portalPosition = buildDefaultPortalPosition(targetNodeId, newDoc.id);
         await setDoc(doc(db, "users", user.uid, "crossRefs", newDoc.id), {
           label,
           code,
-          nodeIds: [selectedNodeId],
-          anchorNodeId: selectedNodeId,
+          nodeIds: [targetNodeId],
+          anchorNodeId: targetNodeId,
           color,
           ...(portalPosition ? { portalX: portalPosition.x, portalY: portalPosition.y } : {}),
           portalAnchorX: anchorPosition.x,
@@ -2673,8 +2720,8 @@ export default function PlannerPage({ user }: PlannerPageProps) {
           id: newDoc.id,
           label,
           code,
-          nodeIds: [selectedNodeId],
-          anchorNodeId: selectedNodeId,
+          nodeIds: [targetNodeId],
+          anchorNodeId: targetNodeId,
           color,
           portalX: portalPosition?.x ?? null,
           portalY: portalPosition?.y ?? null,
@@ -2704,7 +2751,7 @@ export default function PlannerPage({ user }: PlannerPageProps) {
     } finally {
       setBusyAction(false);
     }
-  }, [buildDefaultPortalPosition, hydrateRefEditor, newRefCode, newRefColor, newRefLabel, newRefType, nextAutoBubbleCode, refs, resolveNodePosition, selectedNodeId, user.uid]);
+  }, [buildDefaultPortalPosition, effectiveBubbleTargetId, hydrateRefEditor, newRefCode, newRefColor, newRefLabel, newRefType, nextAutoBubbleCode, refs, resolveNodePosition, user.uid]);
 
   const duplicateCrossRef = useCallback(
     async (refId: string) => {
@@ -3493,6 +3540,7 @@ export default function PlannerPage({ user }: PlannerPageProps) {
       if (!CROSS_REFERENCES_ENABLED) return;
       const anchor = nodesById.get(nodeId);
       setSelectedNodeId(nodeId);
+      setBubbleTargetNodeId(nodeId);
       setActivePortalRefId(null);
       if (anchor) {
         setNewRefLabel((previous) => (previous.trim().length > 0 ? previous : `${anchor.title} Bubble`));
@@ -4070,7 +4118,7 @@ export default function PlannerPage({ user }: PlannerPageProps) {
 
         {showProjectSection ? (
           <>
-        <div id="cross-ref-bubbles-panel" className="planner-panel-block">
+        <div id="project-overview-panel" className="planner-panel-block">
           <h2>{profileName || "Main Node"}</h2>
           <p className="planner-subtle">{user.email}</p>
           <p className="planner-subtle">
@@ -4252,18 +4300,21 @@ export default function PlannerPage({ user }: PlannerPageProps) {
                   ))
                 )}
               </div>
+              {selectedNodeChildren.length > 0 ? (
+                <button
+                  onClick={() => toggleNodeCollapse(selectedNode.id)}
+                  type="button"
+                >
+                  {selectedNodeCollapsed ? "Expand children" : "Collapse children"}
+                </button>
+              ) : null}
               {CROSS_REFERENCES_ENABLED ? (
                 <>
                   <div className="planner-row-label">Bubbles</div>
                   <div className="planner-inline-buttons">
                     <button
                       onClick={() => {
-                        setMobileSidebarSection("bubbles");
-                        setMobileSidebarOpen(true);
-                        if (!newRefLabel.trim()) setNewRefLabel(`${selectedNode.title} Bubble`);
-                        window.setTimeout(() => {
-                          newRefLabelInputRef.current?.focus();
-                        }, 20);
+                        void handleContextAddCrossRef(selectedNode.id);
                       }}
                     >
                       Add bubble to this node
@@ -4379,9 +4430,66 @@ export default function PlannerPage({ user }: PlannerPageProps) {
           <p className="planner-subtle">
             Local visual bubbles for each node. No cross-linking between nodes.
           </p>
-          <div className="planner-row-label">
-            {selectedNode ? `Add bubble to: ${selectedNode.title}` : "Select a node first"}
+          <div className="planner-row-label">Bubble target</div>
+          <div className="planner-chip-list">
+            {bubbleTargetNode ? (
+              <button
+                className="chip"
+                onClick={() => {
+                  setSelectedNodeId(bubbleTargetNode.id);
+                  setActivePortalRefId(null);
+                }}
+                title={buildNodePath(bubbleTargetNode.id, nodesById)}
+              >
+                {bubbleTargetNode.title}
+              </button>
+            ) : (
+              <span className="planner-subtle">Tap a node, then add a bubble.</span>
+            )}
           </div>
+          <div className="planner-inline-buttons">
+            <button
+              onClick={() => {
+                setBubbleTargetLocked((prev) => !prev);
+                if (!bubbleTargetLocked && selectedNodeId && !bubbleTargetNodeId) {
+                  setBubbleTargetNodeId(selectedNodeId);
+                }
+              }}
+              type="button"
+            >
+              {bubbleTargetLocked ? "Unpin target" : "Pin target"}
+            </button>
+            <button
+              onClick={() => {
+                if (!selectedNodeId) return;
+                setBubbleTargetNodeId(selectedNodeId);
+                setActivePortalRefId(null);
+              }}
+              disabled={!selectedNodeId}
+              type="button"
+            >
+              Use selected node
+            </button>
+          </div>
+          <div className="planner-row-label">
+            {bubbleTargetNode ? `Add bubble to: ${bubbleTargetNode.title}` : "Select target node first"}
+          </div>
+          <select
+            value={effectiveBubbleTargetId || ""}
+            onChange={(event) => {
+              const nextId = event.target.value || null;
+              setBubbleTargetNodeId(nextId);
+              setSelectedNodeId(nextId);
+              setActivePortalRefId(null);
+            }}
+          >
+            <option value="">Choose target node...</option>
+            {bubbleTargetOptions.map((entry) => (
+              <option key={`bubble-target:${entry.id}`} value={entry.id}>
+                {entry.path}
+              </option>
+            ))}
+          </select>
           <input
             ref={newRefLabelInputRef}
             value={newRefLabel}
@@ -4394,6 +4502,12 @@ export default function PlannerPage({ user }: PlannerPageProps) {
             }}
             placeholder="Bubble name"
           />
+          <button
+            onClick={createCrossRef}
+            disabled={busyAction || !effectiveBubbleTargetId || newRefLabel.trim().length === 0}
+          >
+            {effectiveBubbleTargetId ? "Add Bubble to Target Node" : "Select Node to Add Bubble"}
+          </button>
           <div className="planner-inline-buttons">
             <label style={{ display: "grid", gap: 4, alignItems: "center" }}>
               <span className="planner-subtle" style={{ fontSize: 11 }}>Color</span>
@@ -4415,12 +4529,6 @@ export default function PlannerPage({ user }: PlannerPageProps) {
                 New bubble code: <strong>{effectiveNewBubbleCode}</strong>
               </span>
             </div>
-            <button
-              onClick={createCrossRef}
-              disabled={busyAction || !selectedNodeId || newRefLabel.trim().length === 0}
-            >
-              Add bubble
-            </button>
           </div>
           {bubblePrefixSuggestions.length > 0 ? (
             <>
@@ -4443,12 +4551,14 @@ export default function PlannerPage({ user }: PlannerPageProps) {
               </div>
             </>
           ) : null}
-          <div className="planner-row-label">Bubbles on selected node</div>
+          <div className="planner-row-label">
+            {bubbleTargetNode ? `Bubbles on ${bubbleTargetNode.title}` : "Bubbles on target node"}
+          </div>
           <div className="planner-chip-list">
-            {selectedNodeRefs.length === 0 || !selectedNodeId ? (
+            {bubbleTargetRefs.length === 0 || !effectiveBubbleTargetId ? (
               <span className="planner-subtle">No bubbles yet.</span>
             ) : (
-              selectedNodeRefs.map((ref) => (
+              bubbleTargetRefs.map((ref) => (
                 <div key={ref.id} className="chip with-action">
                   <button
                     onClick={() => setActivePortalRefId((prev) => (prev === ref.id ? null : ref.id))}
@@ -4851,24 +4961,24 @@ export default function PlannerPage({ user }: PlannerPageProps) {
 
       {isMobileLayout && mobileQuickEditorOpen ? (
         <section
-          className="planner-mobile-sheet"
+          className={`planner-mobile-sheet ${mobileQuickEditorMode === "compact" ? "compact" : "full"}`}
           role="dialog"
           aria-label="Quick node editor"
-          onTouchStart={(e) => { sheetTouchStartY.current = e.touches[0]?.clientY ?? null; }}
-          onTouchEnd={(e) => {
-            const startY = sheetTouchStartY.current;
-            if (startY === null) return;
-            const endY = e.changedTouches[0]?.clientY ?? startY;
-            sheetTouchStartY.current = null;
-            // Swipe down ≥ 60px → dismiss
-            if (endY - startY > 60) setMobileQuickEditorOpen(false);
-          }}
         >
           <div
             className="planner-mobile-sheet-handle"
             onClick={() => setMobileQuickEditorOpen(false)}
             role="button"
             aria-label="Close"
+            onTouchStart={(e) => { sheetTouchStartY.current = e.touches[0]?.clientY ?? null; }}
+            onTouchEnd={(e) => {
+              const startY = sheetTouchStartY.current;
+              if (startY === null) return;
+              const endY = e.changedTouches[0]?.clientY ?? startY;
+              sheetTouchStartY.current = null;
+              // Swipe down on handle ≥ 60px → dismiss.
+              if (endY - startY > 60) setMobileQuickEditorOpen(false);
+            }}
           />
           {selectedNode ? (
             <>
@@ -4877,6 +4987,24 @@ export default function PlannerPage({ user }: PlannerPageProps) {
                 <span>{selectedNode.kind}</span>
               </div>
               <div className="planner-mobile-sheet-path">{buildNodePath(selectedNode.id, nodesById)}</div>
+              <div className="planner-mobile-sheet-mode-toggle" role="tablist" aria-label="Editor detail level">
+                <button
+                  type="button"
+                  className={mobileQuickEditorMode === "compact" ? "active" : ""}
+                  onClick={() => setMobileQuickEditorMode("compact")}
+                  aria-selected={mobileQuickEditorMode === "compact"}
+                >
+                  Compact
+                </button>
+                <button
+                  type="button"
+                  className={mobileQuickEditorMode === "full" ? "active" : ""}
+                  onClick={() => setMobileQuickEditorMode("full")}
+                  aria-selected={mobileQuickEditorMode === "full"}
+                >
+                  Full
+                </button>
+              </div>
               <input
                 value={renameTitle}
                 onChange={(event) => setRenameTitle(event.target.value)}
@@ -4888,78 +5016,123 @@ export default function PlannerPage({ user }: PlannerPageProps) {
                 }}
                 placeholder="Rename node..."
               />
-              <textarea
-                value={bodyDraft}
-                onChange={(event) => setBodyDraft(event.target.value)}
-                placeholder={selectedNode.kind === "story" ? "Scene/story body..." : "Node notes..."}
-                rows={selectedNode.kind === "story" ? 6 : 4}
-              />
-              <button onClick={saveSelectedBody} disabled={busyAction || bodyDraft.trim() === (selectedNode.body || "").trim()}>
-                Save Body
+              <button onClick={renameSelected} disabled={busyAction || renameTitle.trim().length === 0}>
+                Save Name
               </button>
-              {CROSS_REFERENCES_ENABLED ? (
+              {mobileQuickEditorMode === "compact" ? (
                 <>
-                  <div className="planner-row-label">Quick bubble on this node</div>
-                  <input
-                    value={newRefLabel}
-                    onChange={(event) => setNewRefLabel(event.target.value)}
-                    onKeyDown={(event) => {
-                      if (event.key !== "Enter") return;
-                      event.preventDefault();
-                      if (busyAction || !selectedNodeId || newRefLabel.trim().length === 0) return;
-                      void createCrossRef();
-                    }}
-                    placeholder="Bubble name"
-                  />
-                  <div className="planner-inline-buttons">
-                    <input
-                      value={newRefCode}
-                      onChange={(event) => setNewRefCode(event.target.value)}
-                      placeholder={`Code (auto ${nextAutoBubbleCode})`}
-                      style={{ flex: 1 }}
-                    />
-                    <input
-                      type="color"
-                      value={newRefColor}
-                      onChange={(event) => setNewRefColor(event.target.value)}
-                      style={{ width: 54, height: 34, padding: "4px 6px" }}
-                    />
-                    <button
-                      onClick={createCrossRef}
-                      disabled={busyAction || !selectedNodeId || newRefLabel.trim().length === 0}
-                    >
-                      Add Bubble
-                    </button>
-                  </div>
-                  {bubblePrefixSuggestions.length > 0 ? (
-                    <div className="planner-chip-list">
-                      {bubblePrefixSuggestions.slice(0, 3).map((ref) => (
-                        <button
-                          key={`mobile-template:${ref.id}`}
-                          className="chip"
-                          onClick={() => applyBubbleSuggestion(ref)}
-                          title={`Use style from ${ref.code} — ${ref.label}`}
-                          style={{
-                            borderColor: rgbaFromHex(ref.color, 0.9, "rgba(64,182,255,0.88)"),
-                            boxShadow: `0 0 0 1px ${rgbaFromHex(ref.color, 0.25, "rgba(64,182,255,0.2)")}`,
-                          }}
-                        >
-                          {`${ref.code} · ${ref.label}`}
-                        </button>
-                      ))}
+                  <div className="planner-mobile-sheet-compact-summary">
+                    <div className="planner-row-label">Body preview</div>
+                    <div className="planner-subtle">
+                      {(selectedNode.body || "").trim().length > 0
+                        ? ((selectedNode.body || "").trim().length > 120
+                          ? `${(selectedNode.body || "").trim().slice(0, 120)}...`
+                          : (selectedNode.body || "").trim())
+                        : "No body text yet."}
                     </div>
-                  ) : null}
-                  <button
-                    onClick={() => {
-                      setMobileSidebarSection("bubbles");
-                      setMobileSidebarOpen(true);
-                      setMobileQuickEditorOpen(false);
-                    }}
-                  >
-                    Open Bubble Panel
-                  </button>
+                    {CROSS_REFERENCES_ENABLED ? (
+                      <div className="planner-subtle">
+                        {selectedNodeRefs.length} bubble{selectedNodeRefs.length === 1 ? "" : "s"} on this node
+                      </div>
+                    ) : null}
+                  </div>
+                  <div className="planner-mobile-sheet-grid planner-mobile-sheet-compact-grid">
+                    <button
+                      type="button"
+                      onClick={() => setMobileQuickEditorMode("full")}
+                    >
+                      Expand Editor
+                    </button>
+                    {CROSS_REFERENCES_ENABLED ? (
+                      <button
+                        type="button"
+                        onClick={() => {
+                          setMobileQuickEditorOpen(false);
+                          void handleContextAddCrossRef(selectedNode.id);
+                        }}
+                      >
+                        Open Bubble Panel
+                      </button>
+                    ) : null}
+                  </div>
                 </>
-              ) : null}
+              ) : (
+                <>
+                  <textarea
+                    value={bodyDraft}
+                    onChange={(event) => setBodyDraft(event.target.value)}
+                    placeholder={selectedNode.kind === "story" ? "Scene/story body..." : "Node notes..."}
+                    rows={selectedNode.kind === "story" ? 6 : 4}
+                  />
+                  <button onClick={saveSelectedBody} disabled={busyAction || bodyDraft.trim() === (selectedNode.body || "").trim()}>
+                    Save Body
+                  </button>
+                  {CROSS_REFERENCES_ENABLED ? (
+                    <>
+                      <div className="planner-row-label">Quick bubble on this node</div>
+                      <input
+                        value={newRefLabel}
+                        onChange={(event) => setNewRefLabel(event.target.value)}
+                        onKeyDown={(event) => {
+                          if (event.key !== "Enter") return;
+                          event.preventDefault();
+                          if (busyAction || !selectedNodeId || newRefLabel.trim().length === 0) return;
+                          void createCrossRef(selectedNode.id);
+                        }}
+                        placeholder="Bubble name"
+                      />
+                      <div className="planner-inline-buttons">
+                        <input
+                          value={newRefCode}
+                          onChange={(event) => setNewRefCode(event.target.value)}
+                          placeholder={`Code (auto ${nextAutoBubbleCode})`}
+                          style={{ flex: 1 }}
+                        />
+                        <input
+                          type="color"
+                          value={newRefColor}
+                          onChange={(event) => setNewRefColor(event.target.value)}
+                          style={{ width: 54, height: 34, padding: "4px 6px" }}
+                        />
+                        <button
+                          onClick={() => {
+                            void createCrossRef(selectedNode.id);
+                          }}
+                          disabled={busyAction || !selectedNodeId || newRefLabel.trim().length === 0}
+                        >
+                          Add Bubble
+                        </button>
+                      </div>
+                      {bubblePrefixSuggestions.length > 0 ? (
+                        <div className="planner-chip-list">
+                          {bubblePrefixSuggestions.slice(0, 3).map((ref) => (
+                            <button
+                              key={`mobile-template:${ref.id}`}
+                              className="chip"
+                              onClick={() => applyBubbleSuggestion(ref)}
+                              title={`Use style from ${ref.code} — ${ref.label}`}
+                              style={{
+                                borderColor: rgbaFromHex(ref.color, 0.9, "rgba(64,182,255,0.88)"),
+                                boxShadow: `0 0 0 1px ${rgbaFromHex(ref.color, 0.25, "rgba(64,182,255,0.2)")}`,
+                              }}
+                            >
+                              {`${ref.code} · ${ref.label}`}
+                            </button>
+                          ))}
+                        </div>
+                      ) : null}
+                      <button
+                        onClick={() => {
+                          setMobileQuickEditorOpen(false);
+                          void handleContextAddCrossRef(selectedNode.id);
+                        }}
+                      >
+                        Open Bubble Panel
+                      </button>
+                    </>
+                  ) : null}
+                </>
+              )}
               <div className="planner-mobile-sheet-grid">
                 <button
                   onClick={() => {
@@ -4979,6 +5152,12 @@ export default function PlannerPage({ user }: PlannerPageProps) {
                   disabled={busyAction || selectedNode.kind === "root"}
                 >
                   {selectedNode.kind === "root" ? "Root" : `Set ${nextNodeKind(selectedNode.kind)}`}
+                </button>
+                <button
+                  onClick={() => toggleNodeCollapse(selectedNode.id)}
+                  disabled={selectedNodeChildren.length === 0}
+                >
+                  {selectedNodeCollapsed ? "Expand kids" : "Collapse kids"}
                 </button>
                 <button
                   onClick={() => {
@@ -5015,6 +5194,7 @@ export default function PlannerPage({ user }: PlannerPageProps) {
                   onClick={() => {
                     setMobileSidebarSection("node");
                     setMobileSidebarOpen(true);
+                    setMobileQuickEditorOpen(false);
                   }}
                 >
                   Open Full Node Panel
@@ -5033,7 +5213,7 @@ export default function PlannerPage({ user }: PlannerPageProps) {
           <div className="planner-mobile-toolbar">
             <button
               onClick={() => {
-                setMobileSidebarSection("project");
+                setMobileSidebarSection(selectedNodeId ? "node" : "project");
                 setMobileSidebarOpen(true);
                 setMobileQuickEditorOpen(false);
               }}
@@ -5043,6 +5223,7 @@ export default function PlannerPage({ user }: PlannerPageProps) {
             <button
               onClick={() => {
                 setMobileSidebarOpen(false);
+                setMobileQuickEditorMode("compact");
                 setMobileQuickEditorOpen(true);
               }}
               disabled={!selectedNode}
@@ -5148,6 +5329,7 @@ export default function PlannerPage({ user }: PlannerPageProps) {
               setSelectedNodeId(node.id);
               setActivePortalRefId(null);
               setMobileSidebarOpen(false);
+              setMobileQuickEditorMode("compact");
               setMobileQuickEditorOpen(true);
               return;
             }

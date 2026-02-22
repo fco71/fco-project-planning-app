@@ -152,7 +152,7 @@ export function NodeContextMenu({
         {onAddCrossRef ? (
           <MenuItem
             icon="🔗"
-            label="Add Bubble"
+            label="Add / Manage Bubbles"
             onClick={() => handleAction(() => onAddCrossRef(nodeId))}
           />
         ) : null}
