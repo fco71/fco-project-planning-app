@@ -964,12 +964,17 @@ button {
 
 /* Ventovault-style hover halo for bubble wrappers */
 .react-flow__node.planner-portal-node {
-  transition: box-shadow 150ms ease, transform 150ms ease;
+  transition: box-shadow 150ms ease;
 }
 
 .react-flow__node.planner-portal-node:hover {
   box-shadow: 0 0 0 4px rgba(64, 182, 255, 0.3), 0 16px 30px rgba(0, 0, 0, 0.55) !important;
-  transform: translateY(-2px);
+}
+
+.react-flow__node.planner-portal-node.dragging,
+.react-flow__node.planner-portal-node.dragging:hover {
+  box-shadow: none !important;
+  transition: none !important;
 }
 
 /* ReactFlow node wrapper for portal type — transparent shell */
@@ -979,6 +984,10 @@ button {
   box-shadow: none !important;
   padding: 0 !important;
   border-radius: 999px;
+  will-change: transform;
+  transform: translateZ(0);
+  backface-visibility: hidden;
+  -webkit-backface-visibility: hidden;
   /* No transform transition — ReactFlow positions this element via
      transform:translate(x,y) every frame. A CSS transition on transform
      causes visible lag as portals trail behind their parent node during drag. */
@@ -998,16 +1007,25 @@ button {
   cursor: pointer;
   padding: 0;
   box-shadow: 0 10px 24px rgba(0, 0, 0, 0.50);
-  transition: box-shadow 150ms ease, transform 150ms ease, border-color 150ms ease;
+  transition: box-shadow 150ms ease, border-color 150ms ease;
   position: relative;
+  transform: translateZ(0);
+  backface-visibility: hidden;
+  -webkit-backface-visibility: hidden;
 }
 
 .planner-portal-inner:hover {
-  transform: translateY(-2px);
   border-color: rgba(120, 210, 255, 0.98);
   box-shadow:
     0 0 0 4px rgba(64, 182, 255, 0.30),
     0 14px 28px rgba(0, 0, 0, 0.60);
+}
+
+.react-flow__node.planner-portal-node.dragging .planner-portal-inner,
+.react-flow__node.planner-portal-node.dragging .planner-portal-inner:hover {
+  box-shadow: none;
+  border-color: rgba(64, 182, 255, 0.8);
+  transition: none !important;
 }
 
 .planner-portal-inner.active {
@@ -1083,6 +1101,11 @@ button {
 .react-flow__node:focus-within .planner-portal-label::before {
   opacity: 1;
   transform: translateX(-50%) translateY(0);
+}
+
+.react-flow__node.planner-portal-node.dragging .planner-portal-label::after,
+.react-flow__node.planner-portal-node.dragging .planner-portal-label::before {
+  display: none;
 }
 
 /* iOS-style red count badge — top-right of the orb */

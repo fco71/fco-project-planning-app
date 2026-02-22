@@ -498,6 +498,7 @@ export default function PlannerPage({ user }: PlannerPageProps) {
   const hoverRafRef = useRef<number | null>(null);
   const hoverPendingRef = useRef<{ nodeId: string | null; edgeId: string | null } | null>(null);
   const isDraggingRef = useRef(false);
+  const [isNodeDragging, setIsNodeDragging] = useState(false);
   const scheduleHoverUpdate = useCallback((nodeId: string | null, edgeId: string | null) => {
     if (isDraggingRef.current) return;
     hoverPendingRef.current = { nodeId, edgeId };
@@ -1528,9 +1529,9 @@ export default function PlannerPage({ user }: PlannerPageProps) {
   const visiblePortals = useMemo((): Node[] => {
     if (!CROSS_REFERENCES_ENABLED) return [];
     const PORTAL_SIZE = isMobileLayout ? 48 : 40;
-    const PORTAL_GAP = isMobileLayout ? 54 : 50;
-    const PORTAL_VERTICAL_GAP = isMobileLayout ? 46 : 40;
-    const PORTAL_SIDE_GAP = isMobileLayout ? 60 : 54;
+    const PORTAL_GAP = isMobileLayout ? 52 : 46;
+    const PORTAL_VERTICAL_GAP = isMobileLayout ? 20 : 16;
+    const PORTAL_FAN_X = isMobileLayout ? 12 : 10;
     const NODE_FALLBACK_WIDTH = isMobileLayout ? 280 : 260;
     const NODE_FALLBACK_HEIGHT = isMobileLayout ? 96 : 80;
 
@@ -1548,22 +1549,6 @@ export default function PlannerPage({ user }: PlannerPageProps) {
       };
     });
     const boundsByNodeId = new Map(nodeBounds.map((entry) => [entry.id, entry] as const));
-    const sceneBounds = nodeBounds.reduce(
-      (acc, rect) => ({
-        minX: Math.min(acc.minX, rect.x),
-        maxX: Math.max(acc.maxX, rect.x + rect.width),
-        minY: Math.min(acc.minY, rect.y),
-        maxY: Math.max(acc.maxY, rect.y + rect.height),
-      }),
-      { minX: -200, maxX: 200, minY: -200, maxY: 200 }
-    );
-    const sceneMidX = (sceneBounds.minX + sceneBounds.maxX) / 2;
-    const sceneMidY = (sceneBounds.minY + sceneBounds.maxY) / 2;
-    const minX = sceneBounds.minX - (isMobileLayout ? 120 : 160);
-    const maxX = sceneBounds.maxX + (isMobileLayout ? 120 : 180);
-    const minY = sceneBounds.minY - (isMobileLayout ? 100 : 80);
-    const maxY = sceneBounds.maxY + (isMobileLayout ? 120 : 100);
-
     const refsByAnchor = new Map<string, CrossRef[]>();
     for (const ref of refs) {
       const visibleNodeIds = ref.nodeIds.filter((nodeId) => filteredTreeIdSet.has(nodeId));
@@ -1591,47 +1576,26 @@ export default function PlannerPage({ user }: PlannerPageProps) {
       const anchorRefs = refsByAnchor.get(anchorNodeId);
       const anchorBounds = boundsByNodeId.get(anchorNodeId);
       if (!anchorRefs || anchorRefs.length === 0 || !anchorBounds) continue;
-      const anchorNudge = getNudge(anchorNodeId, 12, 6);
+      const anchorNudge = getNudge(anchorNodeId, 10, 6);
+      const orientation = getNudge(`${anchorNodeId}:portal-orientation`, 1, 1);
+      const placeBelow = orientation.y >= 0;
+      const leanRight = orientation.x >= 0;
       const stackHeight = (anchorRefs.length - 1) * PORTAL_GAP;
-      const stackXBase = anchorBounds.x + anchorBounds.width / 2 - PORTAL_SIZE / 2 + anchorNudge.x;
-      const placeBelow = anchorBounds.y + anchorBounds.height / 2 <= sceneMidY;
-      let stackYBase = placeBelow
+      const stackXBase = anchorBounds.x + anchorBounds.width / 2 - PORTAL_SIZE / 2 + anchorNudge.x * 0.18;
+      const stackYBase = placeBelow
         ? anchorBounds.y + anchorBounds.height + PORTAL_VERTICAL_GAP
         : anchorBounds.y - PORTAL_VERTICAL_GAP - stackHeight - PORTAL_SIZE;
-      stackYBase = clamp(stackYBase + anchorNudge.y, minY, maxY - stackHeight - PORTAL_SIZE);
-      const sideXBase =
-        anchorBounds.x +
-        (anchorBounds.x + anchorBounds.width / 2 >= sceneMidX
-          ? -(PORTAL_SIDE_GAP + PORTAL_SIZE)
-          : anchorBounds.width + PORTAL_SIDE_GAP);
-      let sideYBase = anchorBounds.y + anchorBounds.height / 2 - stackHeight / 2 + anchorNudge.y;
-      sideYBase = clamp(sideYBase, minY, maxY - stackHeight - PORTAL_SIZE);
-      const anchorRect = {
-        x: anchorBounds.x,
-        y: anchorBounds.y,
-        width: anchorBounds.width,
-        height: anchorBounds.height,
-      };
 
       anchorRefs.forEach((ref, idx) => {
-        const refNudge = getNudge(`${ref.id}:${anchorNodeId}`, 8, 8);
-        let x = clamp(stackXBase + refNudge.x * 0.25, minX, maxX - PORTAL_SIZE);
-        let y = clamp(stackYBase + idx * PORTAL_GAP + refNudge.y * 0.25, minY, maxY - PORTAL_SIZE);
-        const overlapsAnchor = !(
-          x + PORTAL_SIZE < anchorRect.x ||
-          x > anchorRect.x + anchorRect.width ||
-          y + PORTAL_SIZE < anchorRect.y ||
-          y > anchorRect.y + anchorRect.height
-        );
-        if (overlapsAnchor) {
-          x = clamp(sideXBase + refNudge.x * 0.22, minX, maxX - PORTAL_SIZE);
-          y = clamp(sideYBase + idx * PORTAL_GAP + refNudge.y * 0.22, minY, maxY - PORTAL_SIZE);
-        }
+        const refNudge = getNudge(`${ref.id}:${anchorNodeId}`, 6, 6);
+        const fanX = leanRight ? idx * PORTAL_FAN_X : -idx * PORTAL_FAN_X;
+        const x = stackXBase + fanX + refNudge.x * 0.12;
+        const y = stackYBase + idx * PORTAL_GAP + refNudge.y * 0.12;
         result.push({
           id: `portal:${ref.id}`,
           position: { x, y },
           type: "portal",
-          className: "planner-portal-node",
+          className: isNodeDragging ? "planner-portal-node dragging" : "planner-portal-node",
           data: {
             code: ref.code,
             tooltip: ref.nodeIds.length > 1 ? `${ref.label}\n${ref.nodeIds.length} linked nodes` : ref.label,
@@ -1642,7 +1606,8 @@ export default function PlannerPage({ user }: PlannerPageProps) {
           },
           draggable: false,
           selectable: false,
-          zIndex: 10,
+          // Keep bubbles above dragged cards so they don't appear to disappear mid-drag.
+          zIndex: 2000,
           style: {
             width: PORTAL_SIZE,
             height: PORTAL_SIZE,
@@ -1655,7 +1620,7 @@ export default function PlannerPage({ user }: PlannerPageProps) {
       });
     }
     return result;
-  }, [refs, filteredTreeIdSet, baseNodes, isMobileLayout, portalPosTick]);
+  }, [refs, filteredTreeIdSet, baseNodes, isMobileLayout, portalPosTick, isNodeDragging]);
 
   // Inject active state and callbacks — kept separate so toggling activePortalRefId
   // doesn't re-run the position computation above.
@@ -2986,12 +2951,12 @@ export default function PlannerPage({ user }: PlannerPageProps) {
 
   const onNodeDragStop = useCallback(
     async (_: React.MouseEvent, node: Node) => {
+      isDraggingRef.current = false;
+      setIsNodeDragging(false);
       if (!db) return;
 
       // Portal nodes are pinned (draggable: false) — skip silently.
       if (node.id.startsWith("portal:")) return;
-
-      isDraggingRef.current = false;
 
       // Snapshot final node positions into portalPosRef, then tick so visiblePortals
       // recomputes once with the correct post-drag positions.
@@ -3074,13 +3039,14 @@ export default function PlannerPage({ user }: PlannerPageProps) {
         setError(actionError instanceof Error ? actionError.message : "Could not save node position.");
       }
     },
-    [applyLocalNodePatch, filteredTreeIdSet, nodesById, pushHistory, rfInstance, rootNodeId, showSaveError, user.uid]
+    [applyLocalNodePatch, db, filteredTreeIdSet, nodesById, pushHistory, rfInstance, rootNodeId, showSaveError, user.uid]
   );
 
   const onSelectionDragStop = useCallback(
     async (_: React.MouseEvent, draggedNodes: Node[]) => {
-      if (!db) return;
       isDraggingRef.current = false;
+      setIsNodeDragging(false);
+      if (!db) return;
 
       // Snapshot final positions and tick portals to reposition after drag.
       if (rfInstance) {
@@ -3163,7 +3129,7 @@ export default function PlannerPage({ user }: PlannerPageProps) {
         setError(actionError instanceof Error ? actionError.message : "Could not save node positions.");
       }
     },
-    [nodesById, pushHistory, rfInstance, showSaveError, user.uid]
+    [db, nodesById, pushHistory, rfInstance, showSaveError, user.uid]
   );
 
   // Context menu handlers
@@ -4868,7 +4834,10 @@ export default function PlannerPage({ user }: PlannerPageProps) {
           onEdgeMouseEnter={(_, edge) => scheduleHoverUpdate(hoveredNodeId, edge.id)}
           onEdgeMouseLeave={() => scheduleHoverUpdate(hoveredNodeId, null)}
           onNodeDragStart={(_, node) => {
-            if (!node.id.startsWith("portal:")) isDraggingRef.current = true;
+            if (!node.id.startsWith("portal:")) {
+              isDraggingRef.current = true;
+              setIsNodeDragging(true);
+            }
           }}
           onNodeDrag={onNodeDrag}
           onNodeDragStop={onNodeDragStop}
