@@ -319,6 +319,7 @@ button {
 }
 
 .planner-sidebar-toggle {
+  margin-left: auto;
   padding: 6px 10px;
   border: 1px solid rgba(255, 255, 255, 0.16);
   background: rgba(255, 255, 255, 0.07);

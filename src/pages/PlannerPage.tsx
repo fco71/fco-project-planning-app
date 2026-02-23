@@ -2039,6 +2039,16 @@ export default function PlannerPage({ user }: PlannerPageProps) {
     () => (newRefCode.trim() ? normalizeCode(newRefCode) : nextAutoBubbleCode),
     [newRefCode, nextAutoBubbleCode]
   );
+  const bubbleTemplateFromCode = useMemo(() => {
+    const typedCode = newRefCode.trim();
+    if (!typedCode) return null;
+    const normalized = normalizeCode(typedCode);
+    return refs.find((ref) => ref.code === normalized) || null;
+  }, [newRefCode, refs]);
+  const canCreateBubbleFromInput = useMemo(
+    () => newRefLabel.trim().length > 0 || !!bubbleTemplateFromCode,
+    [bubbleTemplateFromCode, newRefLabel]
+  );
 
   const bubblePrefixSuggestions = useMemo(() => {
     const queryText = newRefLabel.trim().toLowerCase();
@@ -2850,12 +2860,19 @@ export default function PlannerPage({ user }: PlannerPageProps) {
     const targetNodeId =
       typeof targetNodeIdOverride === "string" ? targetNodeIdOverride : effectiveBubbleTargetId;
     if (!db || !targetNodeId || typeof targetNodeId !== "string") return;
-    const label = newRefLabel.trim();
+    const typedCode = newRefCode.trim() ? normalizeCode(newRefCode) : "";
+    const templateByCode = typedCode ? refs.find((ref) => ref.code === typedCode) || null : null;
+    const label = templateByCode ? templateByCode.label.trim() : newRefLabel.trim();
     if (!label) return;
-    const code = newRefCode.trim()
-      ? normalizeCode(newRefCode)
+    const code = typedCode
+      ? (BUBBLES_SIMPLIFIED_MODE && templateByCode ? nextAutoBubbleCode : typedCode)
       : (BUBBLES_SIMPLIFIED_MODE ? nextAutoBubbleCode : initialsFromLabel(label));
-    const color = normalizeHexColor(newRefColor) || DEFAULT_BUBBLE_COLOR;
+    const color = normalizeHexColor(templateByCode?.color) || normalizeHexColor(newRefColor) || DEFAULT_BUBBLE_COLOR;
+    const entityType = templateByCode?.entityType ?? newRefType;
+    const tags = templateByCode ? [...templateByCode.tags] : [];
+    const notes = templateByCode?.notes ?? "";
+    const contact = templateByCode?.contact ?? "";
+    const links = templateByCode ? [...templateByCode.links] : [];
     if (BUBBLES_SIMPLIFIED_MODE) {
       setBusyAction(true);
       setError(null);
@@ -2872,11 +2889,11 @@ export default function PlannerPage({ user }: PlannerPageProps) {
           ...(portalPosition ? { portalX: portalPosition.x, portalY: portalPosition.y } : {}),
           portalAnchorX: anchorPosition.x,
           portalAnchorY: anchorPosition.y,
-          entityType: "entity",
-          tags: [],
-          notes: "",
-          contact: "",
-          links: [],
+          entityType,
+          tags,
+          notes,
+          contact,
+          links,
           createdAt: serverTimestamp(),
           updatedAt: serverTimestamp(),
         } satisfies CrossRefDoc & { createdAt: unknown; updatedAt: unknown });
@@ -2884,7 +2901,7 @@ export default function PlannerPage({ user }: PlannerPageProps) {
         setNewRefLabel("");
         setNewRefCode(nextBubbleCode([code, ...refs.map((entry) => entry.code)]));
         setNewRefColor(color);
-        setNewRefType("entity");
+        setNewRefType(entityType);
       } catch (actionError: unknown) {
         setError(actionError instanceof Error ? actionError.message : "Could not create bubble.");
       } finally {
@@ -2939,11 +2956,11 @@ export default function PlannerPage({ user }: PlannerPageProps) {
           ...(portalPosition ? { portalX: portalPosition.x, portalY: portalPosition.y } : {}),
           portalAnchorX: anchorPosition.x,
           portalAnchorY: anchorPosition.y,
-          entityType: newRefType,
-          tags: [],
-          notes: "",
-          contact: "",
-          links: [],
+          entityType,
+          tags,
+          notes,
+          contact,
+          links,
           createdAt: serverTimestamp(),
           updatedAt: serverTimestamp(),
         } satisfies CrossRefDoc & { createdAt: unknown; updatedAt: unknown });
@@ -2960,11 +2977,11 @@ export default function PlannerPage({ user }: PlannerPageProps) {
           portalAnchorY: anchorPosition.y,
           portalOffsetX: null,
           portalOffsetY: null,
-          entityType: newRefType,
-          tags: [],
-          notes: "",
-          contact: "",
-          links: [],
+          entityType,
+          tags,
+          notes,
+          contact,
+          links,
           createdAtMs: 0,
           updatedAtMs: 0,
         };
@@ -4410,19 +4427,6 @@ export default function PlannerPage({ user }: PlannerPageProps) {
         className={`planner-sidebar ${sidebarIsCollapsed ? "collapsed" : ""} ${isMobileLayout ? (mobileSidebarOpen ? "mobile-open" : "mobile-hidden") : ""}`}
       >
         <div className="planner-sidebar-header">
-          <button
-            onClick={() => {
-              if (isMobileLayout) {
-                setMobileSidebarOpen(false);
-                return;
-              }
-              setSidebarCollapsed(!sidebarCollapsed);
-            }}
-            className="planner-sidebar-toggle"
-            aria-label={isMobileLayout ? "Close controls" : sidebarIsCollapsed ? "Expand sidebar" : "Collapse sidebar"}
-          >
-            {isMobileLayout ? "✕" : sidebarIsCollapsed ? "→" : "←"}
-          </button>
           {!sidebarIsCollapsed && (
             <div className="planner-undo-redo-btns">
               <button
@@ -4445,6 +4449,19 @@ export default function PlannerPage({ user }: PlannerPageProps) {
               </button>
             </div>
           )}
+          <button
+            onClick={() => {
+              if (isMobileLayout) {
+                setMobileSidebarOpen(false);
+                return;
+              }
+              setSidebarCollapsed(!sidebarCollapsed);
+            }}
+            className="planner-sidebar-toggle"
+            aria-label={isMobileLayout ? "Close controls" : sidebarIsCollapsed ? "Expand sidebar" : "Collapse sidebar"}
+          >
+            {isMobileLayout ? "✕" : sidebarIsCollapsed ? "→" : "←"}
+          </button>
         </div>
 
         {sidebarIsCollapsed ? (
@@ -4951,7 +4968,7 @@ export default function PlannerPage({ user }: PlannerPageProps) {
                       onKeyDown={(event) => {
                         if (event.key !== "Enter") return;
                         event.preventDefault();
-                        if (busyAction || !effectiveBubbleTargetId || newRefLabel.trim().length === 0) return;
+                        if (busyAction || !effectiveBubbleTargetId || !canCreateBubbleFromInput) return;
                         void createCrossRef();
                       }}
                       placeholder="Bubble name"
@@ -4960,7 +4977,7 @@ export default function PlannerPage({ user }: PlannerPageProps) {
                       onClick={() => {
                         void createCrossRef();
                       }}
-                      disabled={busyAction || !effectiveBubbleTargetId || newRefLabel.trim().length === 0}
+                      disabled={busyAction || !effectiveBubbleTargetId || !canCreateBubbleFromInput}
                     >
                       Add
                     </button>
@@ -5035,7 +5052,7 @@ export default function PlannerPage({ user }: PlannerPageProps) {
                 onKeyDown={(event) => {
                   if (event.key !== "Enter") return;
                   event.preventDefault();
-                  if (busyAction || !effectiveBubbleTargetId || newRefLabel.trim().length === 0) return;
+                  if (busyAction || !effectiveBubbleTargetId || !canCreateBubbleFromInput) return;
                   void createCrossRef();
                 }}
                 placeholder="Bubble name"
@@ -5044,7 +5061,7 @@ export default function PlannerPage({ user }: PlannerPageProps) {
                 onClick={() => {
                   void createCrossRef();
                 }}
-                disabled={busyAction || !effectiveBubbleTargetId || newRefLabel.trim().length === 0}
+                disabled={busyAction || !effectiveBubbleTargetId || !canCreateBubbleFromInput}
               >
                 {effectiveBubbleTargetId ? "Add Bubble to Selected Node" : "Select Node to Add Bubble"}
               </button>
@@ -5194,7 +5211,7 @@ export default function PlannerPage({ user }: PlannerPageProps) {
             onClick={() => {
               void createCrossRef();
             }}
-            disabled={busyAction || !selectedNodeId || newRefLabel.trim().length === 0}
+            disabled={busyAction || !selectedNodeId || !canCreateBubbleFromInput}
           >
             Create and attach to selected
           </button>
@@ -5602,7 +5619,7 @@ export default function PlannerPage({ user }: PlannerPageProps) {
                           onKeyDown={(event) => {
                             if (event.key !== "Enter") return;
                             event.preventDefault();
-                            if (busyAction || newRefLabel.trim().length === 0) return;
+                            if (busyAction || !canCreateBubbleFromInput) return;
                             void createCrossRef(selectedNode.id);
                           }}
                           placeholder="Bubble name"
@@ -5612,7 +5629,7 @@ export default function PlannerPage({ user }: PlannerPageProps) {
                           onClick={() => {
                             void createCrossRef(selectedNode.id);
                           }}
-                          disabled={busyAction || newRefLabel.trim().length === 0}
+                          disabled={busyAction || !canCreateBubbleFromInput}
                         >
                           Add bubble
                         </button>
@@ -5659,7 +5676,7 @@ export default function PlannerPage({ user }: PlannerPageProps) {
                         onKeyDown={(event) => {
                           if (event.key !== "Enter") return;
                           event.preventDefault();
-                          if (busyAction || !selectedNodeId || newRefLabel.trim().length === 0) return;
+                          if (busyAction || !selectedNodeId || !canCreateBubbleFromInput) return;
                           void createCrossRef(selectedNode.id);
                         }}
                         placeholder="Bubble name"
@@ -5681,7 +5698,7 @@ export default function PlannerPage({ user }: PlannerPageProps) {
                           onClick={() => {
                             void createCrossRef(selectedNode.id);
                           }}
-                          disabled={busyAction || !selectedNodeId || newRefLabel.trim().length === 0}
+                          disabled={busyAction || !selectedNodeId || !canCreateBubbleFromInput}
                         >
                           Add Bubble
                         </button>
@@ -5829,7 +5846,7 @@ export default function PlannerPage({ user }: PlannerPageProps) {
                   onKeyDown={(event) => {
                     if (event.key !== "Enter") return;
                     event.preventDefault();
-                    if (busyAction || newRefLabel.trim().length === 0) return;
+                    if (busyAction || !canCreateBubbleFromInput) return;
                     void createCrossRef(selectedNode.id).then(() => {
                       focusMobileQuickBubbleInput(30);
                     });
@@ -5843,7 +5860,7 @@ export default function PlannerPage({ user }: PlannerPageProps) {
                       focusMobileQuickBubbleInput(30);
                     });
                   }}
-                  disabled={busyAction || newRefLabel.trim().length === 0}
+                  disabled={busyAction || !canCreateBubbleFromInput}
                 >
                   Add
                 </button>
