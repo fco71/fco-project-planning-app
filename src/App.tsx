@@ -19,7 +19,6 @@ export default function App() {
       <header className="app-header">
         <div className="app-header-title">
           <h1>FCO Planning App</h1>
-          <p>Editable planning trees with cross-reference bubbles.</p>
         </div>
         <button
           onClick={() => {
