@@ -539,6 +539,7 @@ export default function PlannerPage({ user }: PlannerPageProps) {
   const [mobileSidebarSection, setMobileSidebarSection] = useState<"project" | "node" | "bubbles">("project");
   const [mobileQuickEditorOpen, setMobileQuickEditorOpen] = useState(false);
   const [mobileQuickBubbleOpen, setMobileQuickBubbleOpen] = useState(false);
+  const [mobileToolbarOpen, setMobileToolbarOpen] = useState(false);
   const [mobileQuickEditorMode, setMobileQuickEditorMode] = useState<"compact" | "full">("compact");
   const [mobileQuickBubbleEditName, setMobileQuickBubbleEditName] = useState("");
   const [searchQuery, setSearchQuery] = useState("");
@@ -768,6 +769,7 @@ export default function PlannerPage({ user }: PlannerPageProps) {
     setMobileSidebarOpen(false);
     setMobileQuickEditorOpen(false);
     setMobileQuickBubbleOpen(false);
+    setMobileToolbarOpen(false);
   }, [isMobileLayout]);
 
   useEffect(() => {
@@ -783,6 +785,7 @@ export default function PlannerPage({ user }: PlannerPageProps) {
     if (!mobileSidebarOpen) return;
     setMobileQuickEditorOpen(false);
     setMobileQuickBubbleOpen(false);
+    setMobileToolbarOpen(false);
   }, [mobileSidebarOpen]);
 
   useEffect(() => {
@@ -790,6 +793,12 @@ export default function PlannerPage({ user }: PlannerPageProps) {
     setMobileQuickEditorOpen(false);
     setMobileQuickBubbleOpen(false);
   }, [selectedNodeId]);
+
+  useEffect(() => {
+    if (!isMobileLayout) return;
+    if (!mobileSidebarOpen && !mobileQuickEditorOpen && !mobileQuickBubbleOpen) return;
+    setMobileToolbarOpen(false);
+  }, [isMobileLayout, mobileQuickBubbleOpen, mobileQuickEditorOpen, mobileSidebarOpen]);
 
   useEffect(() => {
     if (!db) {
@@ -5655,67 +5664,96 @@ export default function PlannerPage({ user }: PlannerPageProps) {
 
       <main className="planner-canvas">
         {isMobileLayout ? (
-          <div className="planner-mobile-toolbar">
+          <>
             <button
-              onClick={() => {
-                setMobileSidebarSection(selectedNodeId ? "node" : "project");
-                setMobileSidebarOpen(true);
-                setMobileQuickEditorOpen(false);
-                setMobileQuickBubbleOpen(false);
-              }}
+              type="button"
+              className="planner-mobile-toolbar-launcher"
+              aria-label={mobileToolbarOpen ? "Hide controls" : "Show controls"}
+              onClick={() => setMobileToolbarOpen((previous) => !previous)}
             >
-              ☰ Menu
+              {mobileToolbarOpen ? "×" : "☰"}
             </button>
-            <button
-              onClick={() => {
-                setMobileSidebarOpen(false);
-                setMobileQuickEditorMode("compact");
-                setMobileQuickEditorOpen(true);
-                setMobileQuickBubbleOpen(false);
-              }}
-              disabled={!selectedNode}
-            >
-              Edit
-            </button>
-            {CROSS_REFERENCES_ENABLED ? (
-              <button
-                onClick={() => {
-                  if (!selectedNodeId) return;
-                  setActivePortalRefId(null);
-                  openMobileQuickBubble(selectedNodeId, true);
-                }}
-                disabled={!selectedNodeId}
-              >
-                ◯ Bubble
-              </button>
+            {mobileToolbarOpen ? (
+              <div className="planner-mobile-toolbar">
+                <button
+                  onClick={() => {
+                    setMobileSidebarSection(selectedNodeId ? "node" : "project");
+                    setMobileSidebarOpen(true);
+                    setMobileQuickEditorOpen(false);
+                    setMobileQuickBubbleOpen(false);
+                    setMobileToolbarOpen(false);
+                  }}
+                >
+                  ☰ Menu
+                </button>
+                <button
+                  onClick={() => {
+                    setMobileSidebarOpen(false);
+                    setMobileQuickEditorMode("compact");
+                    setMobileQuickEditorOpen(true);
+                    setMobileQuickBubbleOpen(false);
+                    setMobileToolbarOpen(false);
+                  }}
+                  disabled={!selectedNode}
+                >
+                  Edit
+                </button>
+                {CROSS_REFERENCES_ENABLED ? (
+                  <button
+                    onClick={() => {
+                      if (!selectedNodeId) return;
+                      setActivePortalRefId(null);
+                      openMobileQuickBubble(selectedNodeId, true);
+                      setMobileToolbarOpen(false);
+                    }}
+                    disabled={!selectedNodeId}
+                  >
+                    ◯ Bubble
+                  </button>
+                ) : null}
+                <button
+                  onClick={() => {
+                    if (!selectedNodeId) return;
+                    void handleContextAddChild(selectedNodeId);
+                    setMobileToolbarOpen(false);
+                  }}
+                  disabled={!selectedNodeId}
+                >
+                  ＋ Child
+                </button>
+                <button
+                  onClick={() => {
+                    if (!selectedNodeId || !selectedNode || selectedNode.kind === "root") return;
+                    const current = selectedNode.taskStatus || "none";
+                    const nextStatus: TaskStatus = current === "done" ? "todo" : "done";
+                    void setNodeTaskStatus(selectedNodeId, nextStatus);
+                    setMobileToolbarOpen(false);
+                  }}
+                  disabled={!selectedNode || selectedNode.kind === "root"}
+                >
+                  {selectedNode?.taskStatus === "done" ? "↩ Todo" : "✓ Done"}
+                </button>
+                <button
+                  onClick={() => {
+                    goGrandmotherView();
+                    setMobileToolbarOpen(false);
+                  }}
+                  disabled={!rootNodeId}
+                >
+                  ⌂ Home
+                </button>
+                <button
+                  onClick={() => {
+                    goUpOneView();
+                    setMobileToolbarOpen(false);
+                  }}
+                  disabled={!currentRootNode?.parentId}
+                >
+                  ↑ Up
+                </button>
+              </div>
             ) : null}
-            <button
-              onClick={() => {
-                if (!selectedNodeId) return;
-                void handleContextAddChild(selectedNodeId);
-              }}
-              disabled={!selectedNodeId}
-            >
-              ＋ Child
-            </button>
-            <button
-              onClick={() => {
-                if (!selectedNodeId || !selectedNode || selectedNode.kind === "root") return;
-                const current = selectedNode.taskStatus || "none";
-                const nextStatus: TaskStatus = current === "done" ? "todo" : "done";
-                void setNodeTaskStatus(selectedNodeId, nextStatus);
-              }}
-              disabled={!selectedNode || selectedNode.kind === "root"}
-            >
-              {selectedNode?.taskStatus === "done" ? "↩ Todo" : "✓ Done"}
-            </button>
-            <button onClick={goGrandmotherView} disabled={!rootNodeId}>
-              ⌂ Home
-            </button>
-            <button onClick={goUpOneView} disabled={!currentRootNode?.parentId}>
-              ↑ Up
-            </button>
-          </div>
+          </>
         ) : null}
 
         <ReactFlow
@@ -5744,13 +5782,17 @@ export default function PlannerPage({ user }: PlannerPageProps) {
               const refId = node.id.split(":")[1];
               setActivePortalRefId((prev) => (prev === refId ? null : refId));
               if (isMobileLayout) {
+                setMobileToolbarOpen(false);
                 openBubblesPanel(false);
               }
               return;
             }
             setSelectedNodeId(node.id);
             setActivePortalRefId(null);
-            if (isMobileLayout) setMobileSidebarOpen(false);
+            if (isMobileLayout) {
+              setMobileSidebarOpen(false);
+              setMobileToolbarOpen(false);
+            }
           }}
           onNodeDoubleClick={(_, node) => {
             if (isMobileLayout) return;
@@ -5789,6 +5831,7 @@ export default function PlannerPage({ user }: PlannerPageProps) {
               setMobileQuickBubbleOpen(false);
               setMobileQuickEditorMode("compact");
               setMobileQuickEditorOpen(true);
+              setMobileToolbarOpen(false);
               return;
             }
             setSelectedNodeId(node.id);
@@ -5807,6 +5850,7 @@ export default function PlannerPage({ user }: PlannerPageProps) {
               setSelectedNodeId(null);
               setMobileQuickEditorOpen(false);
               setMobileQuickBubbleOpen(false);
+              setMobileToolbarOpen(false);
             }
           }}
           minZoom={0.3}

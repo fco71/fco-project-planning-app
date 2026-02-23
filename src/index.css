@@ -856,6 +856,33 @@ button {
   gap: 6px;
 }
 
+.planner-mobile-toolbar-launcher {
+  position: absolute;
+  right: calc(10px + env(safe-area-inset-right));
+  bottom: calc(10px + env(safe-area-inset-bottom));
+  z-index: 10005;
+  width: 46px;
+  height: 46px;
+  border-radius: 999px;
+  border: 1px solid rgba(255, 255, 255, 0.24);
+  background: rgba(10, 14, 22, 0.94);
+  color: rgba(245, 248, 255, 0.95);
+  font-size: 22px;
+  line-height: 1;
+  font-weight: 700;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  backdrop-filter: blur(12px);
+  -webkit-backdrop-filter: blur(12px);
+  touch-action: manipulation;
+  -webkit-tap-highlight-color: transparent;
+}
+
+.planner-mobile-toolbar-launcher:active {
+  background: rgba(255, 255, 255, 0.14);
+}
+
 .planner-mobile-toolbar {
   position: absolute;
   /* Default: bottom bar — works for most phones */
