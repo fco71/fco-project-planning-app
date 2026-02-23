@@ -251,6 +251,25 @@ function bubbleDisplayToken(label: string, fallbackCode: string): string {
   return normalizeCode(initials).slice(0, 2);
 }
 
+function crossRefToFirestoreSetData(ref: CrossRef): Record<string, unknown> {
+  return {
+    label: ref.label,
+    code: ref.code,
+    nodeIds: [...ref.nodeIds],
+    ...(ref.anchorNodeId ? { anchorNodeId: ref.anchorNodeId } : {}),
+    ...(ref.color ? { color: ref.color } : {}),
+    ...(typeof ref.portalX === "number" ? { portalX: ref.portalX } : {}),
+    ...(typeof ref.portalY === "number" ? { portalY: ref.portalY } : {}),
+    ...(typeof ref.portalAnchorX === "number" ? { portalAnchorX: ref.portalAnchorX } : {}),
+    ...(typeof ref.portalAnchorY === "number" ? { portalAnchorY: ref.portalAnchorY } : {}),
+    entityType: ref.entityType,
+    tags: [...ref.tags],
+    notes: ref.notes,
+    contact: ref.contact,
+    links: [...ref.links],
+  };
+}
+
 function asStringArray(value: unknown): string[] {
   if (!Array.isArray(value)) return [];
   return value.filter((item): item is string => typeof item === "string").map((item) => item.trim()).filter(Boolean);
@@ -1233,12 +1252,22 @@ export default function PlannerPage({ user }: PlannerPageProps) {
 
       const placeBranch = (parentId: string, parentX: number, parentY: number) => {
         const isCollapsed = collapsedNodeIds.has(parentId);
+        const parentNode = nodesById.get(parentId);
         const children = isCollapsed
           ? []
           : (childrenByParent.get(parentId) || []).filter((child) => filteredIdSet.has(child));
-        children.forEach((childId, index) => {
-          const x = parentX + branchXGap;
-          const y = parentY + branchYGap + index * branchYGap;
+        let storyChainIndex = 0;
+        let branchIndex = 0;
+        children.forEach((childId) => {
+          const childNode = nodesById.get(childId);
+          const isStoryChain = parentNode?.kind === "story" && childNode?.kind === "story";
+          const x = isStoryChain ? parentX + laneXGap * (storyChainIndex + 1) : parentX + branchXGap;
+          const y = isStoryChain ? parentY : parentY + branchYGap + branchIndex * branchYGap;
+          if (isStoryChain) {
+            storyChainIndex += 1;
+          } else {
+            branchIndex += 1;
+          }
           if (!map.has(childId)) map.set(childId, { x, y });
           placeBranch(childId, x, y);
         });
@@ -2417,54 +2446,118 @@ export default function PlannerPage({ user }: PlannerPageProps) {
     [applyLocalNodePatch, nodesById, pushHistory, user.uid]
   );
 
-  const organizeVisibleTree = useCallback(async () => {
-    if (!db || filteredTreeIds.length === 0) return;
-    const plannedPositions = filteredTreeIds
-      .map((id) => {
-        const position = treeLayout.get(id);
-        if (!position) return null;
-        return { id, position };
-      })
-      .filter((entry): entry is { id: string; position: { x: number; y: number } } => !!entry);
+  const organizeNodesByIds = useCallback(
+    async (targetIds: string[], historyLabel: string) => {
+      if (!db || targetIds.length === 0) return;
+      const plannedPositions = targetIds
+        .map((id) => {
+          const position = treeLayout.get(id);
+          if (!position) return null;
+          return { id, position };
+        })
+        .filter((entry): entry is { id: string; position: { x: number; y: number } } => !!entry);
 
-    if (plannedPositions.length === 0) return;
+      if (plannedPositions.length === 0) return;
 
-    const nextPositions = new Map(plannedPositions.map((entry) => [entry.id, entry.position] as const));
-    setBusyAction(true);
-    setError(null);
-    setNodes((prevNodes) =>
-      prevNodes.map((entry) => {
-        const next = nextPositions.get(entry.id);
-        if (!next) return entry;
-        return { ...entry, x: next.x, y: next.y };
-      })
-    );
+      const movedEntries = plannedPositions
+        .map((entry) => {
+          const previous = nodesById.get(entry.id);
+          if (!previous) return null;
+          const oldX = typeof previous.x === "number" ? previous.x : 0;
+          const oldY = typeof previous.y === "number" ? previous.y : 0;
+          if (oldX === entry.position.x && oldY === entry.position.y) return null;
+          return {
+            id: entry.id,
+            title: previous.title || entry.id,
+            oldX,
+            oldY,
+            newX: entry.position.x,
+            newY: entry.position.y,
+          };
+        })
+        .filter(
+          (entry): entry is { id: string; title: string; oldX: number; oldY: number; newX: number; newY: number } =>
+            !!entry
+        );
 
-    try {
-      let batch = writeBatch(db);
-      let operations = 0;
-      for (const entry of plannedPositions) {
-        batch.update(doc(db, "users", user.uid, "nodes", entry.id), {
-          x: entry.position.x,
-          y: entry.position.y,
-          updatedAt: serverTimestamp(),
-        });
-        operations += 1;
-        if (operations >= 450) {
-          await batch.commit();
-          batch = writeBatch(db);
-          operations = 0;
+      if (movedEntries.length === 0) return;
+
+      pushHistory({
+        id: crypto.randomUUID(),
+        label: historyLabel,
+        forwardLocal: movedEntries.map((entry) => ({
+          target: "nodes" as const,
+          op: "patch" as const,
+          nodeId: entry.id,
+          patch: { x: entry.newX, y: entry.newY },
+        })),
+        forwardFirestore: movedEntries.map((entry) => ({
+          kind: "updateNode" as const,
+          nodeId: entry.id,
+          data: { x: entry.newX, y: entry.newY },
+        })),
+        inverseLocal: movedEntries.map((entry) => ({
+          target: "nodes" as const,
+          op: "patch" as const,
+          nodeId: entry.id,
+          patch: { x: entry.oldX, y: entry.oldY },
+        })),
+        inverseFirestore: movedEntries.map((entry) => ({
+          kind: "updateNode" as const,
+          nodeId: entry.id,
+          data: { x: entry.oldX, y: entry.oldY },
+        })),
+      });
+
+      const nextPositions = new Map(plannedPositions.map((entry) => [entry.id, entry.position] as const));
+      setBusyAction(true);
+      setError(null);
+      setNodes((prevNodes) =>
+        prevNodes.map((entry) => {
+          const next = nextPositions.get(entry.id);
+          if (!next) return entry;
+          return { ...entry, x: next.x, y: next.y };
+        })
+      );
+
+      try {
+        let batch = writeBatch(db);
+        let operations = 0;
+        for (const entry of plannedPositions) {
+          batch.update(doc(db, "users", user.uid, "nodes", entry.id), {
+            x: entry.position.x,
+            y: entry.position.y,
+            updatedAt: serverTimestamp(),
+          });
+          operations += 1;
+          if (operations >= 450) {
+            await batch.commit();
+            batch = writeBatch(db);
+            operations = 0;
+          }
         }
+        if (operations > 0) {
+          await batch.commit();
+        }
+      } catch (actionError: unknown) {
+        setError(actionError instanceof Error ? actionError.message : "Could not organize node layout.");
+      } finally {
+        setBusyAction(false);
       }
-      if (operations > 0) {
-        await batch.commit();
-      }
-    } catch (actionError: unknown) {
-      setError(actionError instanceof Error ? actionError.message : "Could not organize node layout.");
-    } finally {
-      setBusyAction(false);
-    }
-  }, [filteredTreeIds, treeLayout, user.uid]);
+    },
+    [nodesById, pushHistory, treeLayout, user.uid]
+  );
+
+  const organizeVisibleTree = useCallback(async () => {
+    await organizeNodesByIds(filteredTreeIds, "Clean up visible tree layout");
+  }, [filteredTreeIds, organizeNodesByIds]);
+
+  const organizeSelectedBranch = useCallback(async () => {
+    if (!selectedNodeId) return;
+    const branchIds = collectDescendants(selectedNodeId, childrenByParent).filter((id) => filteredTreeIdSet.has(id));
+    const selectedTitle = nodesById.get(selectedNodeId)?.title || "Selected";
+    await organizeNodesByIds(branchIds, `Clean up "${selectedTitle}" branch`);
+  }, [childrenByParent, filteredTreeIdSet, nodesById, organizeNodesByIds, selectedNodeId]);
 
   const cleanUpCrossRefs = useCallback(async () => {
     if (!db) return;
@@ -2579,16 +2672,31 @@ export default function PlannerPage({ user }: PlannerPageProps) {
       if (remaining.length === 0) {
         fwdLocalRefs.push({ target: "refs", op: "remove", refIds: [ref.id] });
         fwdFirestoreRefs.push({ kind: "deleteRef", refId: ref.id });
+        invLocalRefs.push({
+          target: "refs",
+          op: "add",
+          ref: {
+            ...ref,
+            nodeIds: [...ref.nodeIds],
+            tags: [...ref.tags],
+            links: [...ref.links],
+          },
+        });
+        invFirestoreRefs.push({
+          kind: "setRef",
+          refId: ref.id,
+          data: crossRefToFirestoreSetData(ref),
+        });
       } else {
         const nextAnchorNodeId = chooseAnchorNodeId(remaining, ref.anchorNodeId);
         const nextAnchorPosition = nextAnchorNodeId ? resolveNodePosition(nextAnchorNodeId) : null;
         const nextPortalPosition = resolvePortalFollowPosition(ref, nextAnchorPosition, `${ref.id}:delete-selected`);
         fwdLocalRefs.push({ target: "refs", op: "patch", refId: ref.id, patch: { nodeIds: remaining, anchorNodeId: nextAnchorNodeId, portalX: nextPortalPosition.x, portalY: nextPortalPosition.y } });
         fwdFirestoreRefs.push({ kind: "updateRef", refId: ref.id, data: { nodeIds: remaining, anchorNodeId: nextAnchorNodeId ?? firestoreDeleteField(), portalX: nextPortalPosition.x, portalY: nextPortalPosition.y, portalAnchorX: nextAnchorPosition?.x ?? firestoreDeleteField(), portalAnchorY: nextAnchorPosition?.y ?? firestoreDeleteField() } });
+        // inverse: restore the ref to its original state
+        invLocalRefs.push({ target: "refs", op: "patch", refId: ref.id, patch: { nodeIds: ref.nodeIds, anchorNodeId: ref.anchorNodeId, portalX: ref.portalX, portalY: ref.portalY } });
+        invFirestoreRefs.push({ kind: "updateRef", refId: ref.id, data: { nodeIds: ref.nodeIds, anchorNodeId: ref.anchorNodeId ?? firestoreDeleteField(), portalX: ref.portalX, portalY: ref.portalY, portalAnchorX: ref.portalAnchorX ?? firestoreDeleteField(), portalAnchorY: ref.portalAnchorY ?? firestoreDeleteField() } });
       }
-      // inverse: restore the ref to its original state
-      invLocalRefs.push({ target: "refs", op: "patch", refId: ref.id, patch: { nodeIds: ref.nodeIds, anchorNodeId: ref.anchorNodeId, portalX: ref.portalX, portalY: ref.portalY } });
-      invFirestoreRefs.push({ kind: "updateRef", refId: ref.id, data: { nodeIds: ref.nodeIds, anchorNodeId: ref.anchorNodeId ?? firestoreDeleteField(), portalX: ref.portalX, portalY: ref.portalY, portalAnchorX: ref.portalAnchorX ?? firestoreDeleteField(), portalAnchorY: ref.portalAnchorY ?? firestoreDeleteField() } });
     });
 
     const deletedTitle = nodesById.get(selectedNodeId)?.title ?? selectedNodeId;
@@ -2598,8 +2706,7 @@ export default function PlannerPage({ user }: PlannerPageProps) {
       forwardLocal:    [...fwdLocalNodes, ...fwdLocalRefs],
       forwardFirestore:[...fwdFirestoreNodes, ...fwdFirestoreRefs],
       inverseLocal:    [
-        { target: "nodes", op: "add", node: deletedNodes[0] ?? {} as TreeNode },
-        ...deletedNodes.slice(1).map((n): LocalOp => ({ target: "nodes", op: "add", node: n })),
+        ...deletedNodes.map((n): LocalOp => ({ target: "nodes", op: "add", node: n })),
         ...invLocalRefs,
       ],
       inverseFirestore:[
@@ -3104,9 +3211,25 @@ export default function PlannerPage({ user }: PlannerPageProps) {
 
   const deleteCrossRefBubble = useCallback(async () => {
     if (!db || !editRefId) return;
+    const existing = refs.find((entry) => entry.id === editRefId);
+    if (!existing) return;
+    const snapshot: CrossRef = {
+      ...existing,
+      nodeIds: [...existing.nodeIds],
+      tags: [...existing.tags],
+      links: [...existing.links],
+    };
+    pushHistory({
+      id: crypto.randomUUID(),
+      label: `Delete bubble "${existing.label}"`,
+      forwardLocal: [{ target: "refs", op: "remove", refIds: [existing.id] }],
+      forwardFirestore: [{ kind: "deleteRef", refId: existing.id }],
+      inverseLocal: [{ target: "refs", op: "add", ref: snapshot }],
+      inverseFirestore: [{ kind: "setRef", refId: existing.id, data: crossRefToFirestoreSetData(snapshot) }],
+    });
     setBusyAction(true);
     setError(null);
-    const idToDelete = editRefId;
+    const idToDelete = existing.id;
     // Optimistically remove from local state immediately so the orb
     // disappears at once rather than waiting for the Firestore snapshot.
     setRefs((prev) => prev.filter((r) => r.id !== idToDelete));
@@ -3122,11 +3245,27 @@ export default function PlannerPage({ user }: PlannerPageProps) {
     } finally {
       setBusyAction(false);
     }
-  }, [activePortalRefId, editRefId, hydrateRefEditor, user.uid]);
+  }, [activePortalRefId, editRefId, hydrateRefEditor, pushHistory, refs, user.uid]);
 
   /** Delete a cross-reference directly by its ID (used by portal right-click context menu). */
   const deletePortalByRefId = useCallback(async (refId: string) => {
     if (!db || !refId) return;
+    const existing = refs.find((entry) => entry.id === refId);
+    if (!existing) return;
+    const snapshot: CrossRef = {
+      ...existing,
+      nodeIds: [...existing.nodeIds],
+      tags: [...existing.tags],
+      links: [...existing.links],
+    };
+    pushHistory({
+      id: crypto.randomUUID(),
+      label: `Delete bubble "${existing.label}"`,
+      forwardLocal: [{ target: "refs", op: "remove", refIds: [existing.id] }],
+      forwardFirestore: [{ kind: "deleteRef", refId: existing.id }],
+      inverseLocal: [{ target: "refs", op: "add", ref: snapshot }],
+      inverseFirestore: [{ kind: "setRef", refId: existing.id, data: crossRefToFirestoreSetData(snapshot) }],
+    });
     setBusyAction(true);
     setError(null);
     setPortalContextMenu(null);
@@ -3144,7 +3283,7 @@ export default function PlannerPage({ user }: PlannerPageProps) {
     } finally {
       setBusyAction(false);
     }
-  }, [activePortalRefId, editRefId, hydrateRefEditor, user.uid]);
+  }, [activePortalRefId, editRefId, hydrateRefEditor, pushHistory, refs, user.uid]);
 
   // Dismiss the portal context menu when the user clicks outside of it.
   useEffect(() => {
@@ -3314,34 +3453,98 @@ export default function PlannerPage({ user }: PlannerPageProps) {
       dropTargetIdRef.current = null;
       setDropTargetNodeId(null);
 
+      const prevNode = nodesById.get(node.id);
+      if (!prevNode) return;
+      const oldX = typeof prevNode.x === "number" ? prevNode.x : 0;
+      const oldY = typeof prevNode.y === "number" ? prevNode.y : 0;
+      const newX = node.position.x;
+      const newY = node.position.y;
+      const deltaX = newX - oldX;
+      const deltaY = newY - oldY;
+      const shouldMoveCollapsedDescendants =
+        collapsedNodeIds.has(node.id) && (deltaX !== 0 || deltaY !== 0);
+      const descendantMoves = shouldMoveCollapsedDescendants
+        ? collectDescendants(node.id, childrenByParent)
+            .slice(1)
+            .map((descendantId) => {
+              const descendant = nodesById.get(descendantId);
+              if (!descendant) return null;
+              const descendantOldX = typeof descendant.x === "number" ? descendant.x : 0;
+              const descendantOldY = typeof descendant.y === "number" ? descendant.y : 0;
+              return {
+                id: descendantId,
+                oldX: descendantOldX,
+                oldY: descendantOldY,
+                newX: descendantOldX + deltaX,
+                newY: descendantOldY + deltaY,
+              };
+            })
+            .filter((entry): entry is { id: string; oldX: number; oldY: number; newX: number; newY: number } => !!entry)
+        : [];
+
       // ── Re-parent branch ─────────────────────────────────────────────────
       if (capturedDropTarget) {
-        const prevNode = nodesById.get(node.id);
         // Guard: don't re-parent the root node.
         if (prevNode && prevNode.id !== rootNodeId) {
           const oldParentId = prevNode.parentId;
           const newParentId = capturedDropTarget;
-          const oldX = prevNode.x ?? node.position.x;
-          const oldY = prevNode.y ?? node.position.y;
-          const newX = node.position.x;
-          const newY = node.position.y;
           const newParentTitle = nodesById.get(newParentId)?.title ?? newParentId;
+          const forwardLocal: LocalOp[] = [
+            { target: "nodes", op: "patch", nodeId: node.id, patch: { parentId: newParentId, x: newX, y: newY } },
+            ...descendantMoves.map(
+              (entry): LocalOp => ({ target: "nodes", op: "patch", nodeId: entry.id, patch: { x: entry.newX, y: entry.newY } })
+            ),
+          ];
+          const inverseLocal: LocalOp[] = [
+            { target: "nodes", op: "patch", nodeId: node.id, patch: { parentId: oldParentId, x: oldX, y: oldY } },
+            ...descendantMoves.map(
+              (entry): LocalOp => ({ target: "nodes", op: "patch", nodeId: entry.id, patch: { x: entry.oldX, y: entry.oldY } })
+            ),
+          ];
+          const forwardFirestore: FirestoreOp[] = [
+            { kind: "updateNode", nodeId: node.id, data: { parentId: newParentId, x: newX, y: newY } },
+            ...descendantMoves.map(
+              (entry): FirestoreOp => ({ kind: "updateNode", nodeId: entry.id, data: { x: entry.newX, y: entry.newY } })
+            ),
+          ];
+          const inverseFirestore: FirestoreOp[] = [
+            { kind: "updateNode", nodeId: node.id, data: { parentId: oldParentId, x: oldX, y: oldY } },
+            ...descendantMoves.map(
+              (entry): FirestoreOp => ({ kind: "updateNode", nodeId: entry.id, data: { x: entry.oldX, y: entry.oldY } })
+            ),
+          ];
           pushHistory({
             id: crypto.randomUUID(),
             label: `Re-parent "${prevNode.title}" → "${newParentTitle}"`,
-            forwardLocal:    [{ target: "nodes", op: "patch", nodeId: node.id, patch: { parentId: newParentId, x: newX, y: newY } }],
-            forwardFirestore:[{ kind: "updateNode", nodeId: node.id, data: { parentId: newParentId, x: newX, y: newY } }],
-            inverseLocal:    [{ target: "nodes", op: "patch", nodeId: node.id, patch: { parentId: oldParentId, x: oldX, y: oldY } }],
-            inverseFirestore:[{ kind: "updateNode", nodeId: node.id, data: { parentId: oldParentId, x: oldX, y: oldY } }],
+            forwardLocal,
+            forwardFirestore,
+            inverseLocal,
+            inverseFirestore,
           });
-          applyLocalNodePatch(node.id, { parentId: newParentId, x: newX, y: newY });
+          setNodes((previous) =>
+            previous.map((entry) => {
+              if (entry.id === node.id) return { ...entry, parentId: newParentId, x: newX, y: newY };
+              const descendantMove = descendantMoves.find((move) => move.id === entry.id);
+              if (!descendantMove) return entry;
+              return { ...entry, x: descendantMove.newX, y: descendantMove.newY };
+            })
+          );
           try {
-            await updateDoc(doc(db, "users", user.uid, "nodes", node.id), {
+            const batch = writeBatch(db);
+            batch.update(doc(db, "users", user.uid, "nodes", node.id), {
               parentId: newParentId,
               x: newX,
               y: newY,
               updatedAt: serverTimestamp(),
             });
+            descendantMoves.forEach((entry) => {
+              batch.update(doc(db, "users", user.uid, "nodes", entry.id), {
+                x: entry.newX,
+                y: entry.newY,
+                updatedAt: serverTimestamp(),
+              });
+            });
+            await batch.commit();
           } catch (actionError: unknown) {
             showSaveError();
             setError(actionError instanceof Error ? actionError.message : "Could not re-parent node.");
@@ -3351,34 +3554,65 @@ export default function PlannerPage({ user }: PlannerPageProps) {
       }
 
       // ── Position-only save ───────────────────────────────────────────────
-      const prevNode = nodesById.get(node.id);
-      const prevX = prevNode?.x ?? node.position.x;
-      const prevY = prevNode?.y ?? node.position.y;
-      if (prevX !== node.position.x || prevY !== node.position.y) {
+      const movedEntries = [
+        { id: node.id, title: prevNode.title || node.id, oldX, oldY, newX, newY },
+        ...descendantMoves.map((entry) => ({
+          id: entry.id,
+          title: nodesById.get(entry.id)?.title || entry.id,
+          oldX: entry.oldX,
+          oldY: entry.oldY,
+          newX: entry.newX,
+          newY: entry.newY,
+        })),
+      ].filter((entry) => entry.oldX !== entry.newX || entry.oldY !== entry.newY);
+      if (movedEntries.length > 0) {
         pushHistory({
           id: crypto.randomUUID(),
-          label: `Move "${prevNode?.title ?? node.id}"`,
-          forwardLocal:    [{ target: "nodes", op: "patch", nodeId: node.id, patch: { x: node.position.x, y: node.position.y } }],
-          forwardFirestore:[{ kind: "updateNode", nodeId: node.id, data: { x: node.position.x, y: node.position.y } }],
-          inverseLocal:    [{ target: "nodes", op: "patch", nodeId: node.id, patch: { x: prevX, y: prevY } }],
-          inverseFirestore:[{ kind: "updateNode", nodeId: node.id, data: { x: prevX, y: prevY } }],
+          label:
+            movedEntries.length === 1
+              ? `Move "${movedEntries[0].title}"`
+              : `Move "${prevNode.title || node.id}" subtree`,
+          forwardLocal: movedEntries.map(
+            (entry): LocalOp => ({ target: "nodes", op: "patch", nodeId: entry.id, patch: { x: entry.newX, y: entry.newY } })
+          ),
+          forwardFirestore: movedEntries.map(
+            (entry): FirestoreOp => ({ kind: "updateNode", nodeId: entry.id, data: { x: entry.newX, y: entry.newY } })
+          ),
+          inverseLocal: movedEntries.map(
+            (entry): LocalOp => ({ target: "nodes", op: "patch", nodeId: entry.id, patch: { x: entry.oldX, y: entry.oldY } })
+          ),
+          inverseFirestore: movedEntries.map(
+            (entry): FirestoreOp => ({ kind: "updateNode", nodeId: entry.id, data: { x: entry.oldX, y: entry.oldY } })
+          ),
         });
       }
-      setNodes((previous) =>
-        previous.map((entry) => (entry.id === node.id ? { ...entry, x: node.position.x, y: node.position.y } : entry))
-      );
+      const movedMap = new Map(movedEntries.map((entry) => [entry.id, { x: entry.newX, y: entry.newY }] as const));
+      if (movedMap.size > 0) {
+        setNodes((previous) =>
+          previous.map((entry) => {
+            const next = movedMap.get(entry.id);
+            return next ? { ...entry, x: next.x, y: next.y } : entry;
+          })
+        );
+      }
       try {
-        await updateDoc(doc(db, "users", user.uid, "nodes", node.id), {
-          x: node.position.x,
-          y: node.position.y,
-          updatedAt: serverTimestamp(),
-        });
+        if (movedEntries.length > 0) {
+          const batch = writeBatch(db);
+          movedEntries.forEach((entry) => {
+            batch.update(doc(db, "users", user.uid, "nodes", entry.id), {
+              x: entry.newX,
+              y: entry.newY,
+              updatedAt: serverTimestamp(),
+            });
+          });
+          await batch.commit();
+        }
       } catch (actionError: unknown) {
         showSaveError();
         setError(actionError instanceof Error ? actionError.message : "Could not save node position.");
       }
     },
-    [applyLocalNodePatch, db, nodesById, pushHistory, rootNodeId, showSaveError, user.uid]
+    [childrenByParent, collapsedNodeIds, db, nodesById, pushHistory, rootNodeId, showSaveError, user.uid]
   );
 
   const onSelectionDragStop = useCallback(
@@ -3394,41 +3628,88 @@ export default function PlannerPage({ user }: PlannerPageProps) {
       const movedTreeNodes = draggedNodes.filter((n) => !n.id.startsWith("portal:"));
       if (movedTreeNodes.length === 0) return;
       const movedTreePositions = new Map(movedTreeNodes.map((entry) => [entry.id, entry.position] as const));
-
-      // Build a single undo entry covering all moved tree nodes (skip nodes that haven't actually moved).
-      const movedWithDelta = movedTreeNodes.filter((entry) => {
-        const prev = nodesById.get(entry.id);
-        return prev && (prev.x !== entry.position.x || prev.y !== entry.position.y);
-      });
-      if (movedWithDelta.length > 0) {
-        pushHistory({
-          id: crypto.randomUUID(),
-          label: movedWithDelta.length === 1
-            ? `Move "${nodesById.get(movedWithDelta[0].id)?.title ?? movedWithDelta[0].id}"`
-            : `Move ${movedWithDelta.length} nodes`,
-          forwardLocal: movedWithDelta.map((entry) => ({
-            target: "nodes" as const, op: "patch" as const, nodeId: entry.id,
-            patch: { x: entry.position.x, y: entry.position.y },
-          })),
-          forwardFirestore: movedWithDelta.map((entry) => ({
-            kind: "updateNode" as const, nodeId: entry.id,
-            data: { x: entry.position.x, y: entry.position.y },
-          })),
-          inverseLocal: movedWithDelta.map((entry) => {
-            const prev = nodesById.get(entry.id)!;
-            return { target: "nodes" as const, op: "patch" as const, nodeId: entry.id, patch: { x: prev.x, y: prev.y } };
-          }),
-          inverseFirestore: movedWithDelta.map((entry) => {
-            const prev = nodesById.get(entry.id)!;
-            return { kind: "updateNode" as const, nodeId: entry.id, data: { x: prev.x, y: prev.y } };
-          }),
+      const extraCollapsedPositions = new Map<string, { x: number; y: number }>();
+      movedTreeNodes.forEach((entry) => {
+        if (!collapsedNodeIds.has(entry.id)) return;
+        const previous = nodesById.get(entry.id);
+        if (!previous) return;
+        const previousX = typeof previous.x === "number" ? previous.x : entry.position.x;
+        const previousY = typeof previous.y === "number" ? previous.y : entry.position.y;
+        const deltaX = entry.position.x - previousX;
+        const deltaY = entry.position.y - previousY;
+        if (deltaX === 0 && deltaY === 0) return;
+        const descendants = collectDescendants(entry.id, childrenByParent).slice(1);
+        descendants.forEach((descendantId) => {
+          if (movedTreePositions.has(descendantId) || extraCollapsedPositions.has(descendantId)) return;
+          const descendant = nodesById.get(descendantId);
+          if (!descendant) return;
+          const descendantX = typeof descendant.x === "number" ? descendant.x : 0;
+          const descendantY = typeof descendant.y === "number" ? descendant.y : 0;
+          extraCollapsedPositions.set(descendantId, { x: descendantX + deltaX, y: descendantY + deltaY });
         });
-      }
+      });
+      const allMovedPositions = new Map([...movedTreePositions, ...extraCollapsedPositions]);
+      const movedEntries = Array.from(allMovedPositions.entries())
+        .map(([id, position]) => {
+          const previous = nodesById.get(id);
+          if (!previous) return null;
+          const oldX = typeof previous.x === "number" ? previous.x : 0;
+          const oldY = typeof previous.y === "number" ? previous.y : 0;
+          if (oldX === position.x && oldY === position.y) return null;
+          return {
+            id,
+            title: previous.title || id,
+            oldX,
+            oldY,
+            newX: position.x,
+            newY: position.y,
+          };
+        })
+        .filter(
+          (entry): entry is { id: string; title: string; oldX: number; oldY: number; newX: number; newY: number } =>
+            !!entry
+        );
+      if (movedEntries.length === 0) return;
 
-      if (movedTreePositions.size > 0) {
+      pushHistory({
+        id: crypto.randomUUID(),
+        label: movedEntries.length === 1 ? `Move "${movedEntries[0].title}"` : `Move ${movedEntries.length} nodes`,
+        forwardLocal: movedEntries.map(
+          (entry): LocalOp => ({
+            target: "nodes",
+            op: "patch",
+            nodeId: entry.id,
+            patch: { x: entry.newX, y: entry.newY },
+          })
+        ),
+        forwardFirestore: movedEntries.map(
+          (entry): FirestoreOp => ({
+            kind: "updateNode",
+            nodeId: entry.id,
+            data: { x: entry.newX, y: entry.newY },
+          })
+        ),
+        inverseLocal: movedEntries.map(
+          (entry): LocalOp => ({
+            target: "nodes",
+            op: "patch",
+            nodeId: entry.id,
+            patch: { x: entry.oldX, y: entry.oldY },
+          })
+        ),
+        inverseFirestore: movedEntries.map(
+          (entry): FirestoreOp => ({
+            kind: "updateNode",
+            nodeId: entry.id,
+            data: { x: entry.oldX, y: entry.oldY },
+          })
+        ),
+      });
+
+      if (allMovedPositions.size > 0) {
         setNodes((previous) =>
           previous.map((entry) => {
-            const next = movedTreePositions.get(entry.id);
+            const next = allMovedPositions.get(entry.id);
             return next ? { ...entry, x: next.x, y: next.y } : entry;
           })
         );
@@ -3436,10 +3717,10 @@ export default function PlannerPage({ user }: PlannerPageProps) {
       try {
         let batch = writeBatch(db);
         let count = 0;
-        for (const entry of movedTreeNodes) {
+        for (const entry of movedEntries) {
           batch.update(doc(db, "users", user.uid, "nodes", entry.id), {
-            x: entry.position.x,
-            y: entry.position.y,
+            x: entry.newX,
+            y: entry.newY,
             updatedAt: serverTimestamp(),
           });
           count += 1;
@@ -3457,7 +3738,7 @@ export default function PlannerPage({ user }: PlannerPageProps) {
         setError(actionError instanceof Error ? actionError.message : "Could not save node positions.");
       }
     },
-    [db, nodesById, pushHistory, showSaveError, user.uid]
+    [childrenByParent, collapsedNodeIds, db, nodesById, pushHistory, showSaveError, user.uid]
   );
 
   // Context menu handlers
@@ -3506,11 +3787,14 @@ export default function PlannerPage({ user }: PlannerPageProps) {
       if (!db) return;
       const baseNode = nodesById.get(nodeId);
       if (!baseNode || baseNode.kind !== "story") return;
-      const parentId = baseNode.parentId;
-      if (!parentId) return;
       const basePosition = resolveNodePosition(nodeId);
-      const siblingIds = (childrenByParent.get(parentId) || []).filter((id) => id !== nodeId);
-      const maxSiblingY = siblingIds.reduce((maxY, siblingId) => Math.max(maxY, resolveNodePosition(siblingId).y), basePosition.y);
+      const directStoryChildren = (childrenByParent.get(nodeId) || [])
+        .map((id) => nodesById.get(id))
+        .filter((entry): entry is TreeNode => !!entry && entry.kind === "story");
+      const maxBeatX = directStoryChildren.reduce(
+        (maxX, storyChild) => Math.max(maxX, resolveNodePosition(storyChild.id).x),
+        basePosition.x
+      );
 
       const newDoc = doc(collection(db, "users", user.uid, "nodes"));
       setBusyAction(true);
@@ -3518,10 +3802,11 @@ export default function PlannerPage({ user }: PlannerPageProps) {
       try {
         await setDoc(doc(db, "users", user.uid, "nodes", newDoc.id), {
           title: "New Story Beat",
-          parentId,
+          // Story sibling behaves as a beat-chain link: selected beat -> new beat.
+          parentId: nodeId,
           kind: "story",
-          x: basePosition.x,
-          y: maxSiblingY + 110,
+          x: maxBeatX + 320,
+          y: basePosition.y,
           createdAt: serverTimestamp(),
           updatedAt: serverTimestamp(),
         } satisfies TreeNodeDoc & { createdAt: unknown; updatedAt: unknown });
@@ -3559,15 +3844,30 @@ export default function PlannerPage({ user }: PlannerPageProps) {
         if (keep.length === 0) {
           fwdLocalRefs.push({ target: "refs", op: "remove", refIds: [ref.id] });
           fwdFirestoreRefs.push({ kind: "deleteRef", refId: ref.id });
+          invLocalRefs.push({
+            target: "refs",
+            op: "add",
+            ref: {
+              ...ref,
+              nodeIds: [...ref.nodeIds],
+              tags: [...ref.tags],
+              links: [...ref.links],
+            },
+          });
+          invFirestoreRefs.push({
+            kind: "setRef",
+            refId: ref.id,
+            data: crossRefToFirestoreSetData(ref),
+          });
         } else {
           const nextAnchorNodeId = chooseAnchorNodeId(keep, ref.anchorNodeId);
           const nextAnchorPosition = nextAnchorNodeId ? resolveNodePosition(nextAnchorNodeId) : null;
           const nextPortalPosition = resolvePortalFollowPosition(ref, nextAnchorPosition, `${ref.id}:context-delete`);
           fwdLocalRefs.push({ target: "refs", op: "patch", refId: ref.id, patch: { nodeIds: keep, anchorNodeId: nextAnchorNodeId, portalX: nextPortalPosition.x, portalY: nextPortalPosition.y } });
           fwdFirestoreRefs.push({ kind: "updateRef", refId: ref.id, data: { nodeIds: keep, anchorNodeId: nextAnchorNodeId ?? firestoreDeleteField(), portalX: nextPortalPosition.x, portalY: nextPortalPosition.y, portalAnchorX: nextAnchorPosition?.x ?? firestoreDeleteField(), portalAnchorY: nextAnchorPosition?.y ?? firestoreDeleteField() } });
+          invLocalRefs.push({ target: "refs", op: "patch", refId: ref.id, patch: { nodeIds: ref.nodeIds, anchorNodeId: ref.anchorNodeId, portalX: ref.portalX, portalY: ref.portalY } });
+          invFirestoreRefs.push({ kind: "updateRef", refId: ref.id, data: { nodeIds: ref.nodeIds, anchorNodeId: ref.anchorNodeId ?? firestoreDeleteField(), portalX: ref.portalX, portalY: ref.portalY, portalAnchorX: ref.portalAnchorX ?? firestoreDeleteField(), portalAnchorY: ref.portalAnchorY ?? firestoreDeleteField() } });
         }
-        invLocalRefs.push({ target: "refs", op: "patch", refId: ref.id, patch: { nodeIds: ref.nodeIds, anchorNodeId: ref.anchorNodeId, portalX: ref.portalX, portalY: ref.portalY } });
-        invFirestoreRefs.push({ kind: "updateRef", refId: ref.id, data: { nodeIds: ref.nodeIds, anchorNodeId: ref.anchorNodeId ?? firestoreDeleteField(), portalX: ref.portalX, portalY: ref.portalY, portalAnchorX: ref.portalAnchorX ?? firestoreDeleteField(), portalAnchorY: ref.portalAnchorY ?? firestoreDeleteField() } });
       });
 
       const deletedTitle = nodesById.get(nodeId)?.title ?? nodeId;
@@ -3784,6 +4084,13 @@ export default function PlannerPage({ user }: PlannerPageProps) {
     }
     if (selectedNodeId) {
       addItem("cmd-open-master", "Open selected as master", "Navigation", openSelectedAsMaster, "open selected master");
+      addItem(
+        "cmd-organize-selected-branch",
+        "Clean up selected branch layout",
+        "Layout",
+        organizeSelectedBranch,
+        "cleanup organize selected branch subtree layout tidy"
+      );
       const selected = nodesById.get(selectedNodeId);
       if (selected?.kind === "story") {
         addItem(
@@ -3903,6 +4210,7 @@ export default function PlannerPage({ user }: PlannerPageProps) {
     openBubblesPanel,
     openSelectedAsMaster,
     openSelectedAsStoryLane,
+    organizeSelectedBranch,
     organizeVisibleTree,
     paletteQuery,
     refs,
@@ -4016,8 +4324,12 @@ export default function PlannerPage({ user }: PlannerPageProps) {
       // Delete/Backspace - Delete node
       if ((e.key === 'Delete' || e.key === 'Backspace') && !e.shiftKey && !cmdOrCtrl) {
         e.preventDefault();
+        if (activePortalRefId) {
+          void deletePortalByRefId(activePortalRefId);
+          return;
+        }
         if (selectedNodeId) {
-          handleContextDelete(selectedNodeId);
+          void handleContextDelete(selectedNodeId);
         }
         return;
       }
@@ -4053,6 +4365,8 @@ export default function PlannerPage({ user }: PlannerPageProps) {
     return () => document.removeEventListener('keydown', handleKeyDown);
   }, [
     contextMenu,
+    activePortalRefId,
+    deletePortalByRefId,
     handleContextAddChild,
     handleContextDelete,
     handleContextDuplicate,
@@ -4210,7 +4524,10 @@ export default function PlannerPage({ user }: PlannerPageProps) {
           {!isMobileLayout ? (
             <div className="planner-top-actions">
               <button onClick={organizeVisibleTree} disabled={busyAction || filteredTreeIds.length === 0}>
-                Clean up tree layout
+                Clean up visible tree
+              </button>
+              <button onClick={organizeSelectedBranch} disabled={busyAction || !selectedNodeId}>
+                Clean up selected branch
               </button>
               {CROSS_REFERENCES_ENABLED && !BUBBLES_SIMPLIFIED_MODE ? (
                 <button onClick={cleanUpCrossRefs} disabled={busyAction}>
@@ -4277,7 +4594,10 @@ export default function PlannerPage({ user }: PlannerPageProps) {
           <div className="planner-row-label">Quick maintenance</div>
           <div className="planner-inline-buttons">
             <button onClick={organizeVisibleTree} disabled={busyAction || filteredTreeIds.length === 0}>
-              Clean up tree layout
+              Clean up visible tree
+            </button>
+            <button onClick={organizeSelectedBranch} disabled={busyAction || !selectedNodeId}>
+              Clean up selected branch
             </button>
             {CROSS_REFERENCES_ENABLED && !BUBBLES_SIMPLIFIED_MODE ? (
               <button onClick={cleanUpCrossRefs} disabled={busyAction}>
@@ -4318,6 +4638,11 @@ export default function PlannerPage({ user }: PlannerPageProps) {
             <>
               <div className="planner-row-label">Path</div>
               <div className="planner-path">{buildNodePath(selectedNode.id, nodesById)}</div>
+              <div className="planner-inline-buttons">
+                <button onClick={organizeSelectedBranch} disabled={busyAction}>
+                  Clean up this branch
+                </button>
+              </div>
               <div className="planner-row-label">Type</div>
               <div className="planner-inline-buttons">
                 <button
@@ -5780,11 +6105,17 @@ export default function PlannerPage({ user }: PlannerPageProps) {
             // Portal orb tap: toggle active state and (on mobile) open Bubbles panel.
             if (node.id.startsWith("portal:")) {
               const refId = node.id.split(":")[1];
-              setActivePortalRefId((prev) => (prev === refId ? null : refId));
-              if (isMobileLayout) {
-                setMobileToolbarOpen(false);
+              const nextSelected = activePortalRefId === refId ? null : refId;
+              setActivePortalRefId(nextSelected);
+              if (nextSelected) {
+                selectRefForEditing(refId);
                 openBubblesPanel(false);
+                window.setTimeout(() => {
+                  const section = document.getElementById("cross-ref-bubbles-panel");
+                  section?.scrollIntoView({ block: "start", behavior: "smooth" });
+                }, 20);
               }
+              if (isMobileLayout) setMobileToolbarOpen(false);
               return;
             }
             setSelectedNodeId(node.id);
@@ -5845,6 +6176,7 @@ export default function PlannerPage({ user }: PlannerPageProps) {
           onPaneClick={() => {
             setContextMenu(null);
             setPortalContextMenu(null);
+            setActivePortalRefId(null);
             // On mobile, tapping the canvas background deselects and closes the sheet.
             if (isMobileLayout) {
               setSelectedNodeId(null);
