@@ -2285,8 +2285,30 @@ export default function PlannerPage({ user }: PlannerPageProps) {
     if (!nodeId) return;
     const url = buildProjectPageUrl(nodeId);
     if (!url) return;
-    window.open(url, "_blank", "noopener,noreferrer");
+    window.open(url, "_blank");
   }, [buildProjectPageUrl, currentRootId, rootNodeId]);
+
+  const copySelectedProjectPageLink = useCallback(async () => {
+    if (!selectedNodeId) return;
+    const url = buildProjectPageUrl(selectedNodeId);
+    if (!url) return;
+    try {
+      if (typeof navigator !== "undefined" && navigator.clipboard?.writeText) {
+        await navigator.clipboard.writeText(url);
+        return;
+      }
+      throw new Error("Clipboard API unavailable");
+    } catch {
+      setError("Could not copy selected project link automatically.");
+    }
+  }, [buildProjectPageUrl, selectedNodeId]);
+
+  const openSelectedProjectPageInNewTab = useCallback(() => {
+    if (!selectedNodeId) return;
+    const url = buildProjectPageUrl(selectedNodeId);
+    if (!url) return;
+    window.open(url, "_blank");
+  }, [buildProjectPageUrl, selectedNodeId]);
 
   const goGrandmotherView = useCallback(() => {
     if (!rootNodeId) return;
@@ -4685,6 +4707,9 @@ export default function PlannerPage({ user }: PlannerPageProps) {
           <p className="planner-subtle">
             Current view: <strong>{currentRootPath || "No selection"}</strong>
           </p>
+          {currentRootId && rootNodeId && currentRootId !== rootNodeId ? (
+            <p className="planner-subtle">Isolated view active. Use “Back to main workspace” to return.</p>
+          ) : null}
           <div className="planner-row-label">Project pages</div>
           {projectPages.length === 0 ? (
             <p className="planner-subtle">No top-level project pages yet.</p>
@@ -4728,14 +4753,22 @@ export default function PlannerPage({ user }: PlannerPageProps) {
             </button>
           </div>
           <div className="planner-inline-buttons">
-            <button onClick={goGrandmotherView} disabled={!rootNodeId} title="Jump to your root project view">
-              Top view (root)
+            <button onClick={openSelectedProjectPageInNewTab} disabled={!selectedNodeId}>
+              Open selected as isolated tab
+            </button>
+            <button onClick={() => { void copySelectedProjectPageLink(); }} disabled={!selectedNodeId}>
+              Copy selected isolated link
+            </button>
+          </div>
+          <div className="planner-inline-buttons">
+            <button onClick={goGrandmotherView} disabled={!rootNodeId} title="Return to your full workspace root">
+              Back to main workspace
             </button>
             <button onClick={goUpOneView} disabled={!currentRootNode?.parentId} title="Move one level up from the current view">
               Parent view
             </button>
           </div>
-          <p className="planner-subtle">Top view jumps to your root project. Parent view moves one level up.</p>
+          <p className="planner-subtle">Back to main workspace returns to the root. Parent view moves one level up.</p>
           <button onClick={openSelectedAsMaster} disabled={!selectedNodeId}>
             Open selected as master
           </button>
