@@ -635,6 +635,7 @@ export default function PlannerPage({ user }: PlannerPageProps) {
   const [collapsedHydrated, setCollapsedHydrated] = useState(false);
   const syncedCollapsedKeyRef = useRef("");
   const lastFocusKeyRef = useRef("");
+  const initialPageParamHydratedRef = useRef(false);
 
   // ── Undo / Redo ──────────────────────────────────────────────────────────
   const {
@@ -986,7 +987,17 @@ export default function PlannerPage({ user }: PlannerPageProps) {
   }, [ensureWorkspace, user.displayName, user.email, user.uid]);
 
   useEffect(() => {
-    if (!rootNodeId) return;
+    if (!rootNodeId || loading) return;
+    if (!initialPageParamHydratedRef.current) {
+      initialPageParamHydratedRef.current = true;
+      if (typeof window !== "undefined") {
+        const pageParam = new URLSearchParams(window.location.search).get("page");
+        if (pageParam && nodesById.has(pageParam)) {
+          setCurrentRootId(pageParam);
+          return;
+        }
+      }
+    }
     if (!currentRootId) {
       setCurrentRootId(rootNodeId);
       return;
@@ -995,7 +1006,23 @@ export default function PlannerPage({ user }: PlannerPageProps) {
     if (!nodesById.has(currentRootId) && nodesById.has(rootNodeId)) {
       setCurrentRootId(rootNodeId);
     }
-  }, [currentRootId, nodesById, rootNodeId]);
+  }, [currentRootId, loading, nodesById, rootNodeId]);
+
+  useEffect(() => {
+    if (typeof window === "undefined") return;
+    if (!rootNodeId || !currentRootId) return;
+    const url = new URL(window.location.href);
+    if (currentRootId === rootNodeId) {
+      url.searchParams.delete("page");
+    } else {
+      url.searchParams.set("page", currentRootId);
+    }
+    const next = `${url.pathname}${url.search}${url.hash}`;
+    const current = `${window.location.pathname}${window.location.search}${window.location.hash}`;
+    if (next !== current) {
+      window.history.replaceState({}, "", next);
+    }
+  }, [currentRootId, rootNodeId]);
 
   useEffect(() => {
     if (selectedNodeId && !nodesById.has(selectedNodeId)) {
@@ -1946,6 +1973,18 @@ export default function PlannerPage({ user }: PlannerPageProps) {
     () => (currentRootId ? buildNodePath(currentRootId, nodesById) : ""),
     [currentRootId, nodesById]
   );
+  const projectPages = useMemo(() => {
+    if (!rootNodeId) return [] as TreeNode[];
+    return (childrenByParent.get(rootNodeId) || [])
+      .map((id) => nodesById.get(id))
+      .filter((node): node is TreeNode => !!node && node.kind === "project")
+      .sort((a, b) => a.title.localeCompare(b.title));
+  }, [childrenByParent, nodesById, rootNodeId]);
+  const activeProjectPageIndex = useMemo(
+    () => (currentRootId ? projectPages.findIndex((project) => project.id === currentRootId) : -1),
+    [currentRootId, projectPages]
+  );
+  const activeProjectPageId = activeProjectPageIndex >= 0 ? projectPages[activeProjectPageIndex].id : "";
 
   const selectedNodeChildren = useMemo(() => {
     if (!selectedNodeId) return [] as TreeNode[];
@@ -2189,6 +2228,66 @@ export default function PlannerPage({ user }: PlannerPageProps) {
     [resolveNodePosition]
   );
 
+  const openProjectPage = useCallback((nodeId: string) => {
+    if (!nodesById.has(nodeId)) return;
+    setCurrentRootId(nodeId);
+    setSelectedNodeId(nodeId);
+    setStoryLaneMode(false);
+    setActivePortalRefId(null);
+  }, [nodesById]);
+
+  const goPrevProjectPage = useCallback(() => {
+    if (projectPages.length === 0) return;
+    const fallback = activeProjectPageIndex < 0 ? 0 : activeProjectPageIndex;
+    const previousIndex = (fallback - 1 + projectPages.length) % projectPages.length;
+    openProjectPage(projectPages[previousIndex].id);
+  }, [activeProjectPageIndex, openProjectPage, projectPages]);
+
+  const goNextProjectPage = useCallback(() => {
+    if (projectPages.length === 0) return;
+    const fallback = activeProjectPageIndex < 0 ? 0 : activeProjectPageIndex;
+    const nextIndex = (fallback + 1) % projectPages.length;
+    openProjectPage(projectPages[nextIndex].id);
+  }, [activeProjectPageIndex, openProjectPage, projectPages]);
+
+  const buildProjectPageUrl = useCallback(
+    (nodeId: string) => {
+      if (typeof window === "undefined") return "";
+      const url = new URL(window.location.href);
+      if (rootNodeId && nodeId === rootNodeId) {
+        url.searchParams.delete("page");
+      } else {
+        url.searchParams.set("page", nodeId);
+      }
+      return `${url.origin}${url.pathname}${url.search}${url.hash}`;
+    },
+    [rootNodeId]
+  );
+
+  const copyCurrentProjectPageLink = useCallback(async () => {
+    const nodeId = currentRootId || rootNodeId;
+    if (!nodeId) return;
+    const url = buildProjectPageUrl(nodeId);
+    if (!url) return;
+    try {
+      if (typeof navigator !== "undefined" && navigator.clipboard?.writeText) {
+        await navigator.clipboard.writeText(url);
+        return;
+      }
+      throw new Error("Clipboard API unavailable");
+    } catch {
+      setError("Could not copy link automatically. You can still open it in a new tab.");
+    }
+  }, [buildProjectPageUrl, currentRootId, rootNodeId]);
+
+  const openCurrentProjectPageInNewTab = useCallback(() => {
+    const nodeId = currentRootId || rootNodeId;
+    if (!nodeId) return;
+    const url = buildProjectPageUrl(nodeId);
+    if (!url) return;
+    window.open(url, "_blank", "noopener,noreferrer");
+  }, [buildProjectPageUrl, currentRootId, rootNodeId]);
+
   const goGrandmotherView = useCallback(() => {
     if (!rootNodeId) return;
     setCurrentRootId(rootNodeId);
@@ -2205,10 +2304,8 @@ export default function PlannerPage({ user }: PlannerPageProps) {
 
   const openSelectedAsMaster = useCallback(() => {
     if (!selectedNodeId) return;
-    setCurrentRootId(selectedNodeId);
-    setStoryLaneMode(false);
-    setActivePortalRefId(null);
-  }, [selectedNodeId]);
+    openProjectPage(selectedNodeId);
+  }, [openProjectPage, selectedNodeId]);
 
   const openSelectedAsStoryLane = useCallback(() => {
     if (!selectedNodeId) return;
@@ -4020,14 +4117,17 @@ export default function PlannerPage({ user }: PlannerPageProps) {
   }, []);
 
   const handleContextChangeType = useCallback(
-    async (nodeId: string) => {
+    async (nodeId: string, targetKind?: NodeKind) => {
       if (!db) return;
       const node = nodesById.get(nodeId);
       if (!node || node.kind === "root") return;
 
-      // Cycle between project, item, and story.
       const previousKind = node.kind;
-      const newKind = nextNodeKind(previousKind);
+      const newKind =
+        targetKind && targetKind !== "root"
+          ? targetKind
+          : nextNodeKind(previousKind);
+      if (newKind === previousKind) return;
 
       pushHistory({
         id: crypto.randomUUID(),
@@ -4540,9 +4640,6 @@ export default function PlannerPage({ user }: PlannerPageProps) {
           </button>
           {!isMobileLayout ? (
             <div className="planner-top-actions">
-              <button onClick={organizeVisibleTree} disabled={busyAction || filteredTreeIds.length === 0}>
-                Clean up visible tree
-              </button>
               <button onClick={organizeSelectedBranch} disabled={busyAction || !selectedNodeId}>
                 Clean up selected branch
               </button>
@@ -4588,6 +4685,48 @@ export default function PlannerPage({ user }: PlannerPageProps) {
           <p className="planner-subtle">
             Current view: <strong>{currentRootPath || "No selection"}</strong>
           </p>
+          <div className="planner-row-label">Project pages</div>
+          {projectPages.length === 0 ? (
+            <p className="planner-subtle">No top-level project pages yet.</p>
+          ) : (
+            <>
+              <div className="planner-inline-buttons">
+                <button onClick={goPrevProjectPage} disabled={projectPages.length < 2}>
+                  Previous project
+                </button>
+                <button onClick={goNextProjectPage} disabled={projectPages.length < 2}>
+                  Next project
+                </button>
+              </div>
+              <select
+                value={activeProjectPageId}
+                onChange={(event) => {
+                  if (!event.target.value) return;
+                  openProjectPage(event.target.value);
+                }}
+              >
+                {activeProjectPageId === "" ? <option value="">Select a project page</option> : null}
+                {projectPages.map((project, index) => (
+                  <option key={project.id} value={project.id}>
+                    {`${index + 1}. ${project.title}`}
+                  </option>
+                ))}
+              </select>
+              <div className="planner-inline-buttons">
+                <button onClick={openCurrentProjectPageInNewTab} disabled={!currentRootId && !rootNodeId}>
+                  Open current project in new tab
+                </button>
+                <button onClick={() => { void copyCurrentProjectPageLink(); }} disabled={!currentRootId && !rootNodeId}>
+                  Copy project link
+                </button>
+              </div>
+              <p className="planner-subtle">
+                {activeProjectPageIndex >= 0
+                  ? `Page ${activeProjectPageIndex + 1} of ${projectPages.length} — URL keeps this page.`
+                  : "You are outside top-level project pages. Pick one above to normalize."}
+              </p>
+            </>
+          )}
           <div className="planner-inline-buttons">
             <button onClick={goGrandmotherView} disabled={!rootNodeId} title="Jump to your root project view">
               Top view (root)

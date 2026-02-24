@@ -18,7 +18,7 @@ type ContextMenuProps = {
   onDuplicate: (nodeId: string) => void;
   onRename: (nodeId: string) => void;
   onAddCrossRef?: (nodeId: string) => void;
-  onChangeType: (nodeId: string) => void;
+  onChangeType: (nodeId: string, nextKind?: NodeKind) => void;
   onToggleTaskStatus: (nodeId: string) => void;
 };
 
@@ -93,11 +93,15 @@ export function NodeContextMenu({
     onClose();
   };
 
-  const nextKind = nodeKind === "project" ? "item" : nodeKind === "item" ? "story" : "project";
   const taskAction = taskStatus === "done" ? "Mark Task Todo" : "Mark Task Done";
   const addLabel = nodeKind === "story" ? "Add Story Sibling" : "Add Child Node";
   const addAction = nodeKind === "story" ? onAddStorySibling : onAddChild;
   const addIcon = nodeKind === "story" ? "↳" : "+";
+  const typeTargets: Array<{ kind: Exclude<NodeKind, "root">; label: string; icon: string }> = [
+    { kind: "project", label: "Project", icon: "▣" },
+    { kind: "item", label: "Item", icon: "◦" },
+    { kind: "story", label: "Story", icon: "✦" },
+  ];
 
   return (
     <div
@@ -156,13 +160,22 @@ export function NodeContextMenu({
             onClick={() => handleAction(() => onAddCrossRef(nodeId))}
           />
         ) : null}
-        <MenuItem
-          icon="⚙"
-          label={`Change Type to ${nextKind}`}
-          onClick={() => handleAction(() => onChangeType(nodeId))}
-          disabled={nodeKind === "root"}
-          title={nodeKind === "root" ? "Root node type cannot be changed" : undefined}
-        />
+        {typeTargets.map((typeTarget) => (
+          <MenuItem
+            key={`type:${typeTarget.kind}`}
+            icon={typeTarget.icon}
+            label={nodeKind === typeTarget.kind ? `Type: ${typeTarget.label}` : `Set as ${typeTarget.label}`}
+            onClick={() => handleAction(() => onChangeType(nodeId, typeTarget.kind))}
+            disabled={nodeKind === "root" || nodeKind === typeTarget.kind}
+            title={
+              nodeKind === "root"
+                ? "Root node type cannot be changed"
+                : nodeKind === typeTarget.kind
+                  ? `Already ${typeTarget.label.toLowerCase()}`
+                  : undefined
+            }
+          />
+        ))}
         <MenuItem
           icon="☑"
           label={taskAction}
