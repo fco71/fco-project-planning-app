@@ -4712,14 +4712,6 @@ export default function PlannerPage({ user }: PlannerPageProps) {
                   </option>
                 ))}
               </select>
-              <div className="planner-inline-buttons">
-                <button onClick={openCurrentProjectPageInNewTab} disabled={!currentRootId && !rootNodeId}>
-                  Open current project in new tab
-                </button>
-                <button onClick={() => { void copyCurrentProjectPageLink(); }} disabled={!currentRootId && !rootNodeId}>
-                  Copy project link
-                </button>
-              </div>
               <p className="planner-subtle">
                 {activeProjectPageIndex >= 0
                   ? `Page ${activeProjectPageIndex + 1} of ${projectPages.length} — URL keeps this page.`
@@ -4727,6 +4719,14 @@ export default function PlannerPage({ user }: PlannerPageProps) {
               </p>
             </>
           )}
+          <div className="planner-inline-buttons">
+            <button onClick={openCurrentProjectPageInNewTab} disabled={!currentRootId && !rootNodeId}>
+              Open current view in new tab
+            </button>
+            <button onClick={() => { void copyCurrentProjectPageLink(); }} disabled={!currentRootId && !rootNodeId}>
+              Copy current view link
+            </button>
+          </div>
           <div className="planner-inline-buttons">
             <button onClick={goGrandmotherView} disabled={!rootNodeId} title="Jump to your root project view">
               Top view (root)
