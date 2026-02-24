@@ -2250,66 +2250,6 @@ export default function PlannerPage({ user }: PlannerPageProps) {
     openProjectPage(projectPages[nextIndex].id);
   }, [activeProjectPageIndex, openProjectPage, projectPages]);
 
-  const buildProjectPageUrl = useCallback(
-    (nodeId: string) => {
-      if (typeof window === "undefined") return "";
-      const url = new URL(window.location.href);
-      if (rootNodeId && nodeId === rootNodeId) {
-        url.searchParams.delete("page");
-      } else {
-        url.searchParams.set("page", nodeId);
-      }
-      return `${url.origin}${url.pathname}${url.search}${url.hash}`;
-    },
-    [rootNodeId]
-  );
-
-  const copyCurrentProjectPageLink = useCallback(async () => {
-    const nodeId = currentRootId || rootNodeId;
-    if (!nodeId) return;
-    const url = buildProjectPageUrl(nodeId);
-    if (!url) return;
-    try {
-      if (typeof navigator !== "undefined" && navigator.clipboard?.writeText) {
-        await navigator.clipboard.writeText(url);
-        return;
-      }
-      throw new Error("Clipboard API unavailable");
-    } catch {
-      setError("Could not copy link automatically. You can still open it in a new tab.");
-    }
-  }, [buildProjectPageUrl, currentRootId, rootNodeId]);
-
-  const openCurrentProjectPageInNewTab = useCallback(() => {
-    const nodeId = currentRootId || rootNodeId;
-    if (!nodeId) return;
-    const url = buildProjectPageUrl(nodeId);
-    if (!url) return;
-    window.open(url, "_blank");
-  }, [buildProjectPageUrl, currentRootId, rootNodeId]);
-
-  const copySelectedProjectPageLink = useCallback(async () => {
-    if (!selectedNodeId) return;
-    const url = buildProjectPageUrl(selectedNodeId);
-    if (!url) return;
-    try {
-      if (typeof navigator !== "undefined" && navigator.clipboard?.writeText) {
-        await navigator.clipboard.writeText(url);
-        return;
-      }
-      throw new Error("Clipboard API unavailable");
-    } catch {
-      setError("Could not copy selected project link automatically.");
-    }
-  }, [buildProjectPageUrl, selectedNodeId]);
-
-  const openSelectedProjectPageInNewTab = useCallback(() => {
-    if (!selectedNodeId) return;
-    const url = buildProjectPageUrl(selectedNodeId);
-    if (!url) return;
-    window.open(url, "_blank");
-  }, [buildProjectPageUrl, selectedNodeId]);
-
   const goGrandmotherView = useCallback(() => {
     if (!rootNodeId) return;
     setCurrentRootId(rootNodeId);
@@ -4744,22 +4684,6 @@ export default function PlannerPage({ user }: PlannerPageProps) {
               </p>
             </>
           )}
-          <div className="planner-inline-buttons">
-            <button onClick={openCurrentProjectPageInNewTab} disabled={!currentRootId && !rootNodeId}>
-              Open current view in new tab
-            </button>
-            <button onClick={() => { void copyCurrentProjectPageLink(); }} disabled={!currentRootId && !rootNodeId}>
-              Copy current view link
-            </button>
-          </div>
-          <div className="planner-inline-buttons">
-            <button onClick={openSelectedProjectPageInNewTab} disabled={!selectedNodeId}>
-              Open selected as isolated tab
-            </button>
-            <button onClick={() => { void copySelectedProjectPageLink(); }} disabled={!selectedNodeId}>
-              Copy selected isolated link
-            </button>
-          </div>
           <div className="planner-inline-buttons">
             <button onClick={goGrandmotherView} disabled={!rootNodeId} title="Return to your full workspace root">
               Back to main workspace
