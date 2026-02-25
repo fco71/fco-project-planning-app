@@ -633,7 +633,7 @@ export default function PlannerPage({ user }: PlannerPageProps) {
   const dropTargetIdRef = useRef<string | null>(null);
   const [contextMenu, setContextMenu] = useState<{ x: number; y: number; nodeId: string } | null>(null);
   const [saveStatus, setSaveStatus] = useState<"idle" | "error">("idle");
-  const saveTimeoutRef = useRef<NodeJS.Timeout | null>(null);
+  const saveTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const [busyAction, setBusyAction] = useState(false);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
@@ -827,7 +827,8 @@ export default function PlannerPage({ user }: PlannerPageProps) {
   }, [isMobileLayout, mobileQuickBubbleOpen, mobileQuickEditorOpen, mobileSidebarOpen]);
 
   useEffect(() => {
-    if (!db) {
+    const firestore = db;
+    if (!firestore) {
       setLoading(false);
       setError("Firestore is not available. Check Firebase configuration.");
       return;
@@ -853,7 +854,7 @@ export default function PlannerPage({ user }: PlannerPageProps) {
         if (cancelled) return;
 
         unsubProfile = onSnapshot(
-          doc(db, "users", user.uid),
+          doc(firestore, "users", user.uid),
           (snapshot) => {
             const data = snapshot.data();
             const nextProfileName =
@@ -889,7 +890,7 @@ export default function PlannerPage({ user }: PlannerPageProps) {
         );
 
         unsubNodes = onSnapshot(
-          query(collection(db, "users", user.uid, "nodes")),
+          query(collection(firestore, "users", user.uid, "nodes")),
           (snapshot) => {
             // Don't overwrite local state while an undo/redo Firestore write is in flight.
             if (suppressSnapshotRef.current > 0) return;
@@ -928,7 +929,7 @@ export default function PlannerPage({ user }: PlannerPageProps) {
           markReady();
         } else {
           unsubRefs = onSnapshot(
-            query(collection(db, "users", user.uid, "crossRefs")),
+            query(collection(firestore, "users", user.uid, "crossRefs")),
             (snapshot) => {
               // Don't overwrite local state while an undo/redo Firestore write is in flight.
               if (suppressSnapshotRef.current > 0) return;
@@ -2900,7 +2901,8 @@ export default function PlannerPage({ user }: PlannerPageProps) {
   }, [activePortalRefId, editRefId, hydrateRefEditor, nodesById, refs, resolveNodePosition, user.uid]);
 
   const deleteSelected = useCallback(async () => {
-    if (!db || !selectedNodeId || selectedNodeId === rootNodeId) return;
+    const firestore = db;
+    if (!firestore || !selectedNodeId || selectedNodeId === rootNodeId) return;
     const ids = collectDescendants(selectedNodeId, childrenByParent);
     const idSet = new Set(ids);
     const fallbackId = nodesById.get(selectedNodeId)?.parentId || rootNodeId || null;
@@ -2969,14 +2971,14 @@ export default function PlannerPage({ user }: PlannerPageProps) {
     setBusyAction(true);
     setError(null);
     try {
-      const batch = writeBatch(db);
+      const batch = writeBatch(firestore);
       ids.forEach((id) => {
-        batch.delete(doc(db, "users", user.uid, "nodes", id));
+        batch.delete(doc(firestore, "users", user.uid, "nodes", id));
       });
       refs.forEach((ref) => {
         const remaining = ref.nodeIds.filter((id) => !idSet.has(id));
         if (remaining.length === ref.nodeIds.length) return;
-        const refDoc = doc(db, "users", user.uid, "crossRefs", ref.id);
+        const refDoc = doc(firestore, "users", user.uid, "crossRefs", ref.id);
         if (remaining.length === 0) {
           batch.delete(refDoc);
         } else {
@@ -3699,7 +3701,8 @@ export default function PlannerPage({ user }: PlannerPageProps) {
   const onNodeDragStop = useCallback(
     async (_: React.MouseEvent, node: Node) => {
       isDraggingRef.current = false;
-      if (!db) return;
+      const firestore = db;
+      if (!firestore) return;
 
       // Portal nodes are pinned (draggable: false) — skip silently.
       if (node.id.startsWith("portal:")) return;
@@ -3787,15 +3790,15 @@ export default function PlannerPage({ user }: PlannerPageProps) {
             })
           );
           try {
-            const batch = writeBatch(db);
-            batch.update(doc(db, "users", user.uid, "nodes", node.id), {
+            const batch = writeBatch(firestore);
+            batch.update(doc(firestore, "users", user.uid, "nodes", node.id), {
               parentId: newParentId,
               x: newX,
               y: newY,
               updatedAt: serverTimestamp(),
             });
             descendantMoves.forEach((entry) => {
-              batch.update(doc(db, "users", user.uid, "nodes", entry.id), {
+              batch.update(doc(firestore, "users", user.uid, "nodes", entry.id), {
                 x: entry.newX,
                 y: entry.newY,
                 updatedAt: serverTimestamp(),
@@ -3854,9 +3857,9 @@ export default function PlannerPage({ user }: PlannerPageProps) {
       }
       try {
         if (movedEntries.length > 0) {
-          const batch = writeBatch(db);
+          const batch = writeBatch(firestore);
           movedEntries.forEach((entry) => {
-            batch.update(doc(db, "users", user.uid, "nodes", entry.id), {
+            batch.update(doc(firestore, "users", user.uid, "nodes", entry.id), {
               x: entry.newX,
               y: entry.newY,
               updatedAt: serverTimestamp(),
@@ -4080,7 +4083,8 @@ export default function PlannerPage({ user }: PlannerPageProps) {
 
   const handleContextDelete = useCallback(
     async (nodeId: string) => {
-      if (!db || nodeId === rootNodeId) return;
+      const firestore = db;
+      if (!firestore || nodeId === rootNodeId) return;
       const ids = collectDescendants(nodeId, childrenByParent);
       const idSet = new Set(ids);
       const fallbackId = nodesById.get(nodeId)?.parentId || rootNodeId || null;
@@ -4147,20 +4151,20 @@ export default function PlannerPage({ user }: PlannerPageProps) {
       setBusyAction(true);
       setError(null);
       try {
-        const batch = writeBatch(db);
+        const batch = writeBatch(firestore);
         ids.forEach((id) => {
-          batch.delete(doc(db, "users", user.uid, "nodes", id));
+          batch.delete(doc(firestore, "users", user.uid, "nodes", id));
         });
         refs.forEach((ref) => {
           const keep = ref.nodeIds.filter((id) => !idSet.has(id));
           if (keep.length !== ref.nodeIds.length) {
             if (keep.length === 0) {
-              batch.delete(doc(db, "users", user.uid, "crossRefs", ref.id));
+              batch.delete(doc(firestore, "users", user.uid, "crossRefs", ref.id));
             } else {
               const nextAnchorNodeId = chooseAnchorNodeId(keep, ref.anchorNodeId);
               const nextAnchorPosition = nextAnchorNodeId ? resolveNodePosition(nextAnchorNodeId) : null;
               const nextPortalPosition = resolvePortalFollowPosition(ref, nextAnchorPosition, `${ref.id}:context-delete`);
-              batch.update(doc(db, "users", user.uid, "crossRefs", ref.id), {
+              batch.update(doc(firestore, "users", user.uid, "crossRefs", ref.id), {
                 nodeIds: keep,
                 anchorNodeId: nextAnchorNodeId ?? deleteField(),
                 portalX: nextPortalPosition.x,

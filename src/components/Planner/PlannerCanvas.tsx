@@ -2,6 +2,7 @@
 import React from "react";
 import ReactFlow, {
   Background,
+  ConnectionLineType,
   Controls,
   type Edge,
   type Node,
@@ -75,7 +76,7 @@ export default function PlannerCanvas({
           type: 'smoothstep',
           animated: false,
         }}
-        connectionLineType="smoothstep"
+        connectionLineType={ConnectionLineType.SmoothStep}
         snapToGrid={true}
         snapGrid={[16, 16]}
       >
