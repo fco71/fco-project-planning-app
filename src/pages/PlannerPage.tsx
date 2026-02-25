@@ -1969,29 +1969,31 @@ export default function PlannerPage({ user }: PlannerPageProps) {
               >
                 {d.isExpandedStoryCard ? "Collapse text" : "Expand text"}
               </button>
-              <button
-                className="planner-story-resize-handle nodrag nopan"
-                type="button"
-                title="Drag to resize. Double-click to reset size."
-                aria-label="Resize story card"
-                onPointerDown={(event) => {
-                  startStoryNodeResize(
-                    d.nodeId,
-                    d.nodeWidth,
-                    d.nodeHeight,
-                    d.storedWidth,
-                    d.storedHeight,
-                    event
-                  );
-                }}
-                onDoubleClick={(event) => {
-                  event.preventDefault();
-                  event.stopPropagation();
-                  void resetStoryNodeSize(d.nodeId);
-                }}
-              >
-                ↘
-              </button>
+              {isSelected ? (
+                <button
+                  className="planner-story-resize-handle nodrag nopan"
+                  type="button"
+                  title="Drag corner to resize. Double-click to reset size."
+                  aria-label="Resize story card"
+                  onPointerDown={(event) => {
+                    startStoryNodeResize(
+                      d.nodeId,
+                      d.nodeWidth,
+                      d.nodeHeight,
+                      d.storedWidth,
+                      d.storedHeight,
+                      event
+                    );
+                  }}
+                  onDoubleClick={(event) => {
+                    event.preventDefault();
+                    event.stopPropagation();
+                    void resetStoryNodeSize(d.nodeId);
+                  }}
+                >
+                  ◢
+                </button>
+              ) : null}
             </>
           ) : null}
         </div>
