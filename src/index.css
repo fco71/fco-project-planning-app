@@ -943,6 +943,9 @@ button {
   gap: 10px;
   position: relative;
   padding-bottom: 14px;
+  height: 100%;
+  min-height: 0;
+  overflow: hidden;
 }
 
 .planner-node-title {
@@ -1027,6 +1030,7 @@ button {
   font-size: 11px;
   line-height: 1.35;
   color: rgba(234, 246, 254, 0.86);
+  text-align: left;
   white-space: pre-wrap;
   overflow-wrap: anywhere;
   max-height: 96px;
@@ -1034,7 +1038,11 @@ button {
 }
 
 .planner-node-body-preview.expanded {
-  max-height: 420px;
+  height: 100%;
+  max-height: none;
+  min-height: 0;
+  flex: 1 1 auto;
+  overflow: auto;
 }
 
 .planner-node-body-editor {
@@ -1042,18 +1050,22 @@ button {
   font-size: 11px;
   line-height: 1.4;
   color: rgba(246, 250, 255, 0.96);
+  text-align: left;
   border: 1px solid rgba(255, 255, 255, 0.16);
   background: rgba(12, 18, 28, 0.62);
   border-radius: 8px;
   padding: 8px;
-  min-height: 90px;
-  max-height: 180px;
+  min-height: 0;
+  height: 100%;
+  max-height: none;
+  flex: 1 1 auto;
+  overflow: auto;
   resize: none;
   white-space: pre-wrap;
 }
 
 .planner-node-body-editor.expanded {
-  max-height: 460px;
+  max-height: none;
 }
 
 .planner-node-body-editor:focus {
@@ -1089,6 +1101,9 @@ button {
   align-items: center;
   justify-content: center;
   cursor: nwse-resize;
+  touch-action: none;
+  -webkit-user-select: none;
+  user-select: none;
 }
 
 .planner-story-step-item {

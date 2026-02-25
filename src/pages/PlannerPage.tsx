@@ -1451,6 +1451,52 @@ export default function PlannerPage({ user }: PlannerPageProps) {
     [applyLocalNodePatch, nodesById, pushHistory, user.uid]
   );
 
+  const resetStoryNodeSize = useCallback(
+    async (nodeId: string) => {
+      if (!db) return;
+      const node = nodesById.get(nodeId);
+      if (!node) return;
+      const previousWidth = node.width;
+      const previousHeight = node.height;
+      if (typeof previousWidth !== "number" && typeof previousHeight !== "number") return;
+      pushHistory({
+        id: crypto.randomUUID(),
+        label: `Reset size "${node.title}"`,
+        forwardLocal: [{ target: "nodes", op: "patch", nodeId, patch: { width: undefined, height: undefined } }],
+        forwardFirestore: [{
+          kind: "updateNode",
+          nodeId,
+          data: { width: firestoreDeleteField(), height: firestoreDeleteField() },
+        }],
+        inverseLocal: [{ target: "nodes", op: "patch", nodeId, patch: { width: previousWidth, height: previousHeight } }],
+        inverseFirestore: [{
+          kind: "updateNode",
+          nodeId,
+          data: {
+            width: typeof previousWidth === "number" ? previousWidth : firestoreDeleteField(),
+            height: typeof previousHeight === "number" ? previousHeight : firestoreDeleteField(),
+          },
+        }],
+      });
+      setBusyAction(true);
+      setError(null);
+      applyLocalNodePatch(nodeId, { width: undefined, height: undefined });
+      try {
+        await updateDoc(doc(db, "users", user.uid, "nodes", nodeId), {
+          width: deleteField(),
+          height: deleteField(),
+          updatedAt: serverTimestamp(),
+        });
+      } catch (actionError: unknown) {
+        applyLocalNodePatch(nodeId, { width: previousWidth, height: previousHeight });
+        setError(actionError instanceof Error ? actionError.message : "Could not reset story node size.");
+      } finally {
+        setBusyAction(false);
+      }
+    },
+    [applyLocalNodePatch, nodesById, pushHistory, user.uid]
+  );
+
   const startStoryNodeResize = useCallback(
     (
       nodeId: string,
@@ -1466,6 +1512,11 @@ export default function PlannerPage({ user }: PlannerPageProps) {
       const startY = event.clientY;
       let latestWidth = initialWidth;
       let latestHeight = initialHeight;
+      try {
+        event.currentTarget.setPointerCapture(event.pointerId);
+      } catch {
+        // Some browsers/input types can throw if capture is unavailable.
+      }
       const applyPreview = (width: number, height: number) => {
         setNodes((prev) => prev.map((entry) => (
           entry.id === nodeId ? { ...entry, width, height } : entry
@@ -1822,7 +1873,7 @@ export default function PlannerPage({ user }: PlannerPageProps) {
       const isActivePortalTarget = activeLinkedNodeIds.has(node.id);
       const isHoverRelated = hoverNodeIds.has(node.id);
       const isDropTarget = node.id === dropTargetNodeId;
-      const isInlineStoryEditor = d.showStoryBody && (isSelected || d.isExpandedStoryCard);
+      const isInlineStoryEditor = d.showStoryBody && d.isExpandedStoryCard;
 
       // Build JSX label from plain data (ventovault pattern: JSX created in viewNodes)
       const labelContent = (
@@ -1882,7 +1933,7 @@ export default function PlannerPage({ user }: PlannerPageProps) {
                   className={`planner-node-body-editor nodrag nopan ${d.isExpandedStoryCard ? "expanded" : ""}`}
                   defaultValue={d.bodyText}
                   placeholder="Write story text directly on the node..."
-                  rows={d.isExpandedStoryCard ? 12 : 6}
+                  rows={1}
                   onPointerDown={(event) => {
                     event.stopPropagation();
                   }}
@@ -1921,7 +1972,7 @@ export default function PlannerPage({ user }: PlannerPageProps) {
               <button
                 className="planner-story-resize-handle nodrag nopan"
                 type="button"
-                title="Resize story card"
+                title="Drag to resize. Double-click to reset size."
                 aria-label="Resize story card"
                 onPointerDown={(event) => {
                   startStoryNodeResize(
@@ -1932,6 +1983,11 @@ export default function PlannerPage({ user }: PlannerPageProps) {
                     d.storedHeight,
                     event
                   );
+                }}
+                onDoubleClick={(event) => {
+                  event.preventDefault();
+                  event.stopPropagation();
+                  void resetStoryNodeSize(d.nodeId);
                 }}
               >
                 ↘
@@ -1968,7 +2024,7 @@ export default function PlannerPage({ user }: PlannerPageProps) {
         },
       } as Node;
     });
-  }, [activeLinkedNodeIds, baseNodes, dropTargetNodeId, hoverNodeIds, hoveredEdgeId, hoveredNodeId, isMobileLayout, persistNodeBody, selectedNodeId, startStoryNodeResize, toggleNodeCollapse, toggleStoryCardExpand]);
+  }, [activeLinkedNodeIds, baseNodes, dropTargetNodeId, hoverNodeIds, hoveredEdgeId, hoveredNodeId, isMobileLayout, persistNodeBody, resetStoryNodeSize, selectedNodeId, startStoryNodeResize, toggleNodeCollapse, toggleStoryCardExpand]);
 
   const flowEdges = useMemo(() => {
     return baseEdges.map((edge) => {
