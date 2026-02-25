@@ -1,5 +1,5 @@
 // src/components/sections/CrossRefPanel.tsx
-import React, { useState } from "react";
+import { useState } from "react";
 import type { TreeNode } from "../../utils/treeUtils";
 
 type CrossRef = {

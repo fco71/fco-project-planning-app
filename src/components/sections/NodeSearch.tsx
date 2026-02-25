@@ -1,4 +1,4 @@
-import React, { useMemo, useState } from "react";
+import { useMemo, useState } from "react";
 import type { TreeNode } from "../../utils/treeUtils";
 
 type NodeSearchProps = {

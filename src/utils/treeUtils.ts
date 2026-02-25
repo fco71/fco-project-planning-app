@@ -1,14 +1,20 @@
 // src/utils/treeUtils.ts
 // Utility functions for tree manipulation and navigation
 
-export type TreeNode = {
+export type NodeKind = "root" | "project" | "item" | "story";
+
+/** Minimal shape required by tree-traversal utilities. */
+export type TreeNodeBase = {
   id: string;
   title: string;
   parentId: string | null;
-  kind: "root" | "project" | "item";
+  kind: NodeKind;
   x?: number;
   y?: number;
 };
+
+/** Backward-compatible alias used by components that import TreeNode. */
+export type TreeNode = TreeNodeBase;
 
 /**
  * Normalizes a string into a 2-4 character uppercase alphanumeric code.
@@ -45,7 +51,10 @@ export function initialsFromLabel(input: string): string {
  * @param nodesById - Map of node IDs to node objects
  * @returns Formatted path string with " / " separators
  */
-export function buildNodePath(nodeId: string, nodesById: Map<string, TreeNode>): string {
+export function buildNodePath<T extends { title: string; parentId: string | null }>(
+  nodeId: string,
+  nodesById: Map<string, T>,
+): string {
   const parts: string[] = [];
   const seen = new Set<string>();
   let cursorId: string | null = nodeId;
@@ -57,6 +66,22 @@ export function buildNodePath(nodeId: string, nodesById: Map<string, TreeNode>):
     cursorId = node.parentId;
   }
   return parts.join(" / ");
+}
+
+/**
+ * Builds a breadcrumb path showing only the last N segments.
+ * Example with segmentCount=3: "... / Phase / Item / Task"
+ */
+export function buildNodePathTail<T extends { title: string; parentId: string | null }>(
+  nodeId: string,
+  nodesById: Map<string, T>,
+  segmentCount = 3,
+): string {
+  const fullPath = buildNodePath(nodeId, nodesById);
+  if (!fullPath) return "";
+  const parts = fullPath.split(" / ");
+  if (parts.length <= segmentCount) return fullPath;
+  return `... / ${parts.slice(parts.length - segmentCount).join(" / ")}`;
 }
 
 /**
@@ -94,7 +119,11 @@ export function collectDescendants(startId: string, childrenByParent: Map<string
  * @param nodesById - Map of node IDs to node objects
  * @returns The master node ID (direct child of root, or root itself)
  */
-export function getMasterNodeFor(nodeId: string, rootNodeId: string | null, nodesById: Map<string, TreeNode>): string {
+export function getMasterNodeFor<T extends { id: string; parentId: string | null }>(
+  nodeId: string,
+  rootNodeId: string | null,
+  nodesById: Map<string, T>,
+): string {
   if (!rootNodeId) return nodeId;
   let cursor = nodesById.get(nodeId);
   if (!cursor) return rootNodeId;

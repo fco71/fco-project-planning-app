@@ -1560,3 +1560,88 @@ button {
     grid-template-columns: repeat(3, minmax(0, 1fr));
   }
 }
+
+/* ── Context Menu ──────────────────────────────────────────────────────── */
+
+.ctx-menu {
+  position: fixed;
+  z-index: 9999;
+  background: rgba(20, 26, 38, 0.98);
+  border: 1px solid rgba(255, 255, 255, 0.15);
+  border-radius: 8px;
+  box-shadow: 0 8px 24px rgba(0, 0, 0, 0.4), 0 2px 8px rgba(0, 0, 0, 0.2);
+  min-width: 200px;
+  padding: 4px;
+  backdrop-filter: blur(8px);
+}
+
+.ctx-menu-header {
+  padding: 8px 12px;
+  border-bottom: 1px solid rgba(255, 255, 255, 0.1);
+  font-size: 12px;
+  color: rgba(255, 255, 255, 0.5);
+  font-weight: 600;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.ctx-menu-items {
+  padding: 4px 0;
+}
+
+.ctx-menu-separator {
+  height: 1px;
+  background: rgba(255, 255, 255, 0.1);
+  margin: 4px 8px;
+}
+
+.ctx-menu-item {
+  width: 100%;
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 8px 12px;
+  border: none;
+  background: transparent;
+  color: rgba(245, 248, 255, 0.94);
+  font-size: 14px;
+  text-align: left;
+  cursor: pointer;
+  border-radius: 6px;
+  transition: background 120ms ease;
+}
+
+.ctx-menu-item:hover:not(:disabled) {
+  background: rgba(255, 255, 255, 0.08);
+}
+
+.ctx-menu-item--danger {
+  color: rgba(248, 113, 113, 0.9);
+}
+
+.ctx-menu-item--danger:hover:not(:disabled) {
+  background: rgba(248, 113, 113, 0.12);
+}
+
+.ctx-menu-item--disabled,
+.ctx-menu-item:disabled {
+  color: rgba(245, 248, 255, 0.3);
+  cursor: not-allowed;
+  opacity: 0.5;
+}
+
+.ctx-menu-item--danger.ctx-menu-item--disabled,
+.ctx-menu-item--danger:disabled {
+  color: rgba(248, 113, 113, 0.3);
+}
+
+.ctx-menu-item-icon {
+  font-size: 16px;
+  width: 20px;
+  text-align: center;
+}
+
+.ctx-menu-item-label {
+  flex: 1;
+}

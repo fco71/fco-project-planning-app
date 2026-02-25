@@ -32,6 +32,35 @@ import {
 } from "firebase/firestore";
 import type { User } from "firebase/auth";
 import { db } from "../firebase";
+import {
+  normalizeCode,
+  initialsFromLabel,
+  buildNodePath,
+  buildNodePathTail,
+  collectDescendants,
+  getMasterNodeFor,
+} from "../utils/treeUtils";
+import {
+  normalizeHexColor,
+  normalizeNodeKind,
+  normalizeTaskStatus,
+  normalizeStorySteps,
+  normalizeNodeBody,
+  asStringArray,
+  timestampToMs,
+  rgbaFromHex,
+} from "../utils/normalize";
+import type {
+  NodeKind,
+  TaskStatus,
+  StoryStep,
+  EntityType,
+  TreeNodeDoc,
+  TreeNode,
+  CrossRefDoc,
+  CrossRef,
+} from "../types/planner";
+import { ENTITY_TYPES, isPeopleEntityType } from "../types/planner";
 import { NodeContextMenu } from "../components/Planner/NodeContextMenu";
 import "reactflow/dist/style.css";
 
@@ -39,77 +68,8 @@ type PlannerPageProps = {
   user: User;
 };
 
-type NodeKind = "root" | "project" | "item" | "story";
-type TaskStatus = "none" | "todo" | "done";
-
-type StoryStep = {
-  id: string;
-  text: string;
-  done: boolean;
-};
-
-type EntityType = "entity" | "investor" | "partner" | "vendor" | "contact" | "client" | "organization" | "person";
 type RefCategoryFilter = "all" | "people" | "other";
 type RefScopeFilter = "view" | "all";
-
-type TreeNodeDoc = {
-  title: string;
-  parentId: string | null;
-  kind: NodeKind;
-  x?: number;
-  y?: number;
-  width?: number;
-  height?: number;
-  color?: string;
-  taskStatus?: TaskStatus;
-  storySteps?: StoryStep[];
-  body?: string;
-};
-
-type TreeNode = TreeNodeDoc & { id: string };
-
-type CrossRefDoc = {
-  label: string;
-  code: string;
-  nodeIds: string[];
-  anchorNodeId?: string;
-  color?: string;
-  portalX?: number;
-  portalY?: number;
-  portalAnchorX?: number;
-  portalAnchorY?: number;
-  // Preferred layout model: offset from anchor. Layout-change-proof.
-  portalOffsetX?: number;
-  portalOffsetY?: number;
-  entityType?: EntityType;
-  tags?: string[];
-  notes?: string;
-  contact?: string;
-  links?: string[];
-};
-
-type CrossRef = {
-  id: string;
-  label: string;
-  code: string;
-  nodeIds: string[];
-  anchorNodeId: string | null;
-  color: string | null;
-  portalX: number | null;
-  portalY: number | null;
-  portalAnchorX: number | null;
-  portalAnchorY: number | null;
-  // Preferred layout model: offset from anchor. Layout-change-proof.
-  portalOffsetX: number | null;
-  portalOffsetY: number | null;
-  entityType: EntityType;
-  tags: string[];
-  notes: string;
-  contact: string;
-  links: string[];
-  createdAtMs: number;
-  updatedAtMs: number;
-};
 
 
 type PaletteItem = {
@@ -119,20 +79,11 @@ type PaletteItem = {
   action: () => void;
 };
 
-const HEX_COLOR_REGEX = /^#?[0-9a-fA-F]{6}$/;
 const DEFAULT_BUBBLE_COLOR = "#40B6FF";
 const STORY_NODE_MIN_WIDTH = 220;
 const STORY_NODE_MAX_WIDTH = 760;
 const STORY_NODE_MIN_HEIGHT = 150;
 const STORY_NODE_MAX_HEIGHT = 940;
-
-function normalizeHexColor(value: unknown): string | undefined {
-  if (typeof value !== "string") return undefined;
-  const trimmed = value.trim();
-  if (!HEX_COLOR_REGEX.test(trimmed)) return undefined;
-  const hex = trimmed.startsWith("#") ? trimmed.slice(1) : trimmed;
-  return `#${hex.toUpperCase()}`;
-}
 
 function defaultNodeColor(kind: NodeKind): string {
   if (kind === "root") return "#52340A";
@@ -143,41 +94,6 @@ function defaultNodeColor(kind: NodeKind): string {
 
 function storyContainerColor(): string {
   return "#3A166C";
-}
-
-
-function normalizeNodeKind(value: unknown): NodeKind {
-  if (value === "root" || value === "project" || value === "item" || value === "story") return value;
-  return "item";
-}
-
-function normalizeTaskStatus(value: unknown): TaskStatus {
-  if (value === "todo" || value === "done") return value;
-  return "none";
-}
-
-function normalizeStorySteps(value: unknown): StoryStep[] {
-  if (!Array.isArray(value)) return [];
-  return value
-    .map((entry, index) => {
-      if (!entry || typeof entry !== "object") return null;
-      const raw = entry as { id?: unknown; text?: unknown; title?: unknown; done?: unknown };
-      const textCandidate = typeof raw.text === "string" ? raw.text : typeof raw.title === "string" ? raw.title : "";
-      const text = textCandidate.trim();
-      if (!text) return null;
-      const id = typeof raw.id === "string" && raw.id.trim() ? raw.id : `step-${index + 1}`;
-      return {
-        id,
-        text,
-        done: raw.done === true,
-      } satisfies StoryStep;
-    })
-    .filter((entry): entry is StoryStep => !!entry);
-}
-
-function normalizeNodeBody(value: unknown): string {
-  if (typeof value !== "string") return "";
-  return value;
 }
 
 function createStoryStep(text: string): StoryStep {
@@ -195,11 +111,6 @@ function nextNodeKind(kind: NodeKind): NodeKind {
   return "root";
 }
 
-function normalizeCode(input: string): string {
-  const cleaned = input.toUpperCase().replace(/[^A-Z0-9]/g, "").slice(0, 4);
-  return cleaned || "REF";
-}
-
 function nextBubbleCode(codes: Iterable<string>): string {
   let maxSeen = 0;
   for (const raw of codes) {
@@ -209,37 +120,6 @@ function nextBubbleCode(codes: Iterable<string>): string {
     if (Number.isFinite(parsed)) maxSeen = Math.max(maxSeen, parsed);
   }
   return `B${String(maxSeen + 1).padStart(3, "0")}`;
-}
-
-function hexToRgb(hex: string): { r: number; g: number; b: number } | null {
-  const normalized = normalizeHexColor(hex);
-  if (!normalized) return null;
-  const raw = normalized.slice(1);
-  const parsed = Number.parseInt(raw, 16);
-  if (!Number.isFinite(parsed)) return null;
-  return {
-    r: (parsed >> 16) & 255,
-    g: (parsed >> 8) & 255,
-    b: parsed & 255,
-  };
-}
-
-function rgbaFromHex(hex: string | null | undefined, alpha: number, fallback: string): string {
-  if (!hex) return fallback;
-  const rgb = hexToRgb(hex);
-  if (!rgb) return fallback;
-  return `rgba(${rgb.r}, ${rgb.g}, ${rgb.b}, ${alpha})`;
-}
-
-function initialsFromLabel(input: string): string {
-  const parts = input
-    .trim()
-    .split(/\s+/)
-    .filter(Boolean);
-  if (parts.length === 0) return "REF";
-  if (parts.length === 1) return normalizeCode(parts[0].slice(0, 4));
-  const code = `${parts[0][0] || ""}${parts[1][0] || ""}`;
-  return normalizeCode(code);
 }
 
 function bubbleDisplayToken(label: string, fallbackCode: string): string {
@@ -274,11 +154,6 @@ function crossRefToFirestoreSetData(ref: CrossRef): Record<string, unknown> {
     contact: ref.contact,
     links: [...ref.links],
   };
-}
-
-function asStringArray(value: unknown): string[] {
-  if (!Array.isArray(value)) return [];
-  return value.filter((item): item is string => typeof item === "string").map((item) => item.trim()).filter(Boolean);
 }
 
 function parseCsvLike(input: string): string[] {
@@ -330,31 +205,6 @@ function asFiniteNumber(value: unknown): number | null {
   return null;
 }
 
-function inflateRect(
-  rect: { x: number; y: number; width: number; height: number },
-  padding: number
-): { x: number; y: number; width: number; height: number } {
-  if (padding === 0) return rect;
-  return {
-    x: rect.x - padding,
-    y: rect.y - padding,
-    width: rect.width + padding * 2,
-    height: rect.height + padding * 2,
-  };
-}
-
-function rectsOverlap(
-  a: { x: number; y: number; width: number; height: number },
-  b: { x: number; y: number; width: number; height: number }
-): boolean {
-  return !(
-    a.x + a.width < b.x ||
-    a.x > b.x + b.width ||
-    a.y + a.height < b.y ||
-    a.y > b.y + b.height
-  );
-}
-
 function clamp(value: number, min: number, max: number): number {
   if (min > max) return value;
   return Math.min(max, Math.max(min, value));
@@ -397,80 +247,6 @@ function resolvePortalFollowPosition(
     };
   }
   return defaultPortalPositionForAnchor(anchor, seed);
-}
-
-function timestampToMs(value: unknown): number {
-  if (!value || typeof value !== "object") return 0;
-  const maybe = value as { toMillis?: () => number };
-  if (typeof maybe.toMillis !== "function") return 0;
-  try {
-    return maybe.toMillis();
-  } catch {
-    return 0;
-  }
-}
-
-function formatUpdatedTime(ms: number): string {
-  if (!ms) return "No activity yet";
-  const diffMs = Date.now() - ms;
-  const minute = 60 * 1000;
-  const hour = 60 * minute;
-  const day = 24 * hour;
-  if (diffMs < minute) return "just now";
-  if (diffMs < hour) return `${Math.max(1, Math.floor(diffMs / minute))}m ago`;
-  if (diffMs < day) return `${Math.max(1, Math.floor(diffMs / hour))}h ago`;
-  return `${Math.max(1, Math.floor(diffMs / day))}d ago`;
-}
-
-function buildNodePath(nodeId: string, nodesById: Map<string, TreeNode>): string {
-  const parts: string[] = [];
-  const seen = new Set<string>();
-  let cursorId: string | null = nodeId;
-  while (cursorId && !seen.has(cursorId)) {
-    seen.add(cursorId);
-    const node = nodesById.get(cursorId);
-    if (!node) break;
-    parts.unshift(node.title);
-    cursorId = node.parentId;
-  }
-  return parts.join(" / ");
-}
-
-function buildNodePathTail(nodeId: string, nodesById: Map<string, TreeNode>, segmentCount = 3): string {
-  const fullPath = buildNodePath(nodeId, nodesById);
-  if (!fullPath) return "";
-  const parts = fullPath.split(" / ");
-  if (parts.length <= segmentCount) return fullPath;
-  return `... / ${parts.slice(parts.length - segmentCount).join(" / ")}`;
-}
-
-function collectDescendants(startId: string, childrenByParent: Map<string, string[]>): string[] {
-  const ordered: string[] = [];
-  const stack = [startId];
-  const seen = new Set<string>();
-  while (stack.length > 0) {
-    const current = stack.pop();
-    if (!current || seen.has(current)) continue;
-    seen.add(current);
-    ordered.push(current);
-    const children = childrenByParent.get(current) || [];
-    for (let index = children.length - 1; index >= 0; index -= 1) {
-      stack.push(children[index]);
-    }
-  }
-  return ordered;
-}
-
-function getMasterNodeFor(nodeId: string, rootNodeId: string | null, nodesById: Map<string, TreeNode>): string {
-  if (!rootNodeId) return nodeId;
-  let cursor = nodesById.get(nodeId);
-  if (!cursor) return rootNodeId;
-  while (cursor.parentId && cursor.parentId !== rootNodeId) {
-    const parent = nodesById.get(cursor.parentId);
-    if (!parent) break;
-    cursor = parent;
-  }
-  return cursor.id || rootNodeId;
 }
 
 // ── Portal bubble node ─────────────────────────────────────────────────────
@@ -531,18 +307,12 @@ const PortalNode = memo(function PortalNode({
 
 const nodeTypes: NodeTypes = { portal: PortalNode };
 const edgeTypes: EdgeTypes = Object.freeze({});
-const ENTITY_TYPES: EntityType[] = ["entity", "organization", "partner", "vendor", "investor", "person", "contact", "client"];
-const PEOPLE_ENTITY_TYPES = new Set<EntityType>(["person", "contact", "client"]);
 const ENTITY_TYPE_GROUPS: Array<{ label: string; options: EntityType[] }> = [
   { label: "General", options: ["entity", "organization", "partner", "vendor", "investor"] },
   { label: "People", options: ["person", "contact", "client"] },
 ];
 const CROSS_REFERENCES_ENABLED = true;
 const BUBBLES_SIMPLIFIED_MODE = true;
-
-function isPeopleEntityType(entityType: EntityType): boolean {
-  return PEOPLE_ENTITY_TYPES.has(entityType);
-}
 
 function collapsedKeyFromIds(ids: Iterable<string>): string {
   return Array.from(ids).sort().join("|");
@@ -640,7 +410,6 @@ export default function PlannerPage({ user }: PlannerPageProps) {
   const [rfInstance, setRfInstance] = useState<ReactFlowInstance | null>(null);
   const [collapsedHydrated, setCollapsedHydrated] = useState(false);
   const syncedCollapsedKeyRef = useRef("");
-  const lastFocusKeyRef = useRef("");
   const initialPageParamHydratedRef = useRef(false);
 
   // ── Undo / Redo ──────────────────────────────────────────────────────────
@@ -1558,25 +1327,6 @@ export default function PlannerPage({ user }: PlannerPageProps) {
 
   const filteredTreeIdSet = useMemo(() => new Set(filteredTreeIds), [filteredTreeIds]);
 
-  // Maps each visible nodeId → the CrossRefs it belongs to, for inline badge display.
-  const nodeRefBadges = useMemo((): Map<string, CrossRef[]> => {
-    const map = new Map<string, CrossRef[]>();
-    for (const ref of refs) {
-      const inView = ref.nodeIds.filter((id) => filteredTreeIdSet.has(id));
-      if (inView.length === 0) continue;
-      for (const nodeId of inView) {
-        const existing = map.get(nodeId);
-        if (existing) {
-          existing.push(ref);
-        } else {
-          map.set(nodeId, [ref]);
-        }
-      }
-    }
-    map.forEach((badges) => badges.sort((a, b) => a.code.localeCompare(b.code)));
-    return map;
-  }, [refs, filteredTreeIdSet]);
-
   // visiblePortals is computed after baseNodes so it reads live drag positions.
 
   // ── ventovault-map pattern: baseTreeNodes has NO JSX ──────────────────────
@@ -2375,11 +2125,6 @@ export default function PlannerPage({ user }: PlannerPageProps) {
     return refs.find((ref) => ref.id === editRefId) || null;
   }, [editRefId, refs]);
 
-  const editedRefLinkedOnSelected = useMemo(() => {
-    if (!editableRef || !selectedNodeId) return false;
-    return editableRef.nodeIds.includes(selectedNodeId);
-  }, [editableRef, selectedNodeId]);
-
   const editableRefTargets = useMemo(() => {
     if (!editableRef) return [] as Array<{ id: string; path: string }>;
     return editableRef.nodeIds
@@ -2437,10 +2182,6 @@ export default function PlannerPage({ user }: PlannerPageProps) {
       .filter((node): node is TreeNode => !!node)
       .sort((a, b) => a.title.localeCompare(b.title));
   }, [activePortalRef, nodesById]);
-
-  const recentEntityRefs = useMemo(() => {
-    return [...refs].sort((a, b) => b.updatedAtMs - a.updatedAtMs).slice(0, 6);
-  }, [refs]);
 
   const mergeCandidateRefs = useMemo(() => {
     if (!editRefId) return [] as CrossRef[];

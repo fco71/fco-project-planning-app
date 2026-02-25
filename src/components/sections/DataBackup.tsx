@@ -1,14 +1,14 @@
-import React, { useCallback } from "react";
-import type { TreeNode } from "../../utils/treeUtils";
-
-type CrossRef = {
-  id: string;
-  label: string;
-  code: string;
-  nodeIds: string[];
-};
+import { useCallback, useState } from "react";
+import {
+  doc,
+  writeBatch,
+  serverTimestamp,
+} from "firebase/firestore";
+import { db } from "../../firebase";
+import type { TreeNode, CrossRef } from "../../types/planner";
 
 type DataBackupProps = {
+  userId: string;
   nodes: TreeNode[];
   refs: CrossRef[];
   profileName: string;
@@ -21,10 +21,19 @@ type BackupData = {
   profileName: string;
   rootNodeId: string | null;
   nodes: TreeNode[];
-  crossRefs: CrossRef[];
+  crossRefs: Array<{
+    id: string;
+    label: string;
+    code: string;
+    nodeIds: string[];
+    [key: string]: unknown;
+  }>;
 };
 
-export default function DataBackup({ nodes, refs, profileName, rootNodeId }: DataBackupProps) {
+export default function DataBackup({ userId, nodes, refs, profileName, rootNodeId }: DataBackupProps) {
+  const [importing, setImporting] = useState(false);
+  const [importStatus, setImportStatus] = useState<string | null>(null);
+
   const exportData = useCallback(() => {
     const backup: BackupData = {
       version: "1.0",
@@ -48,6 +57,11 @@ export default function DataBackup({ nodes, refs, profileName, rootNodeId }: Dat
   }, [nodes, refs, profileName, rootNodeId]);
 
   const importData = useCallback(() => {
+    if (!db || !userId) {
+      setImportStatus("Firestore is not available.");
+      return;
+    }
+
     const input = document.createElement("input");
     input.type = "file";
     input.accept = ".json";
@@ -56,39 +70,115 @@ export default function DataBackup({ nodes, refs, profileName, rootNodeId }: Dat
       if (!file) return;
 
       const reader = new FileReader();
-      reader.onload = (event) => {
+      reader.onload = async (event) => {
+        // Narrow db to non-null (outer guard already returned if null)
+        const firestore = db!;
         try {
           const backup = JSON.parse(event.target?.result as string) as BackupData;
 
           // Validate backup structure
-          if (!backup.version || !backup.nodes || !backup.crossRefs) {
-            alert("Invalid backup file format.");
+          if (!backup.version || !Array.isArray(backup.nodes) || !Array.isArray(backup.crossRefs)) {
+            setImportStatus("Invalid backup file format.");
             return;
           }
 
-          // Show confirmation with stats
-          const confirmMsg = `Import backup from ${new Date(backup.exportDate).toLocaleDateString()}?\n\n` +
+          // Show confirmation
+          const confirmed = window.confirm(
+            `Import backup from ${new Date(backup.exportDate).toLocaleDateString()}?\n\n` +
             `Profile: ${backup.profileName}\n` +
             `Nodes: ${backup.nodes.length}\n` +
             `Cross-references: ${backup.crossRefs.length}\n\n` +
-            `⚠️ This will NOT overwrite your current data. ` +
-            `To import, you would need to implement merge logic or use Firebase import tools.`;
+            `This will merge with your current data. Existing nodes with the same ID will be overwritten.`
+          );
 
-          alert(confirmMsg);
+          if (!confirmed) return;
 
-          // Note: Actual import would require Firebase Admin SDK or Firestore batch writes
-          // For now, this just shows the data for manual import
-          console.log("Backup data:", backup);
+          setImporting(true);
+          setImportStatus(null);
 
+          // Firestore batches are limited to 500 operations.
+          // We'll chunk the writes accordingly.
+          const MAX_BATCH_OPS = 450; // leave headroom
+          let opsInBatch = 0;
+          let batch = writeBatch(firestore);
+          let totalOps = 0;
+
+          // Import nodes
+          for (const node of backup.nodes) {
+            if (!node.id || typeof node.id !== "string") continue;
+            const nodeRef = doc(firestore, "users", userId, "nodes", node.id);
+            batch.set(nodeRef, {
+              title: node.title || "Untitled",
+              parentId: node.parentId ?? null,
+              kind: node.kind || "item",
+              ...(typeof node.x === "number" ? { x: node.x } : {}),
+              ...(typeof node.y === "number" ? { y: node.y } : {}),
+              ...(typeof node.width === "number" ? { width: node.width } : {}),
+              ...(typeof node.height === "number" ? { height: node.height } : {}),
+              ...(node.color ? { color: node.color } : {}),
+              ...(node.taskStatus && node.taskStatus !== "none" ? { taskStatus: node.taskStatus } : {}),
+              ...(node.storySteps?.length ? { storySteps: node.storySteps } : {}),
+              ...(node.body ? { body: node.body } : {}),
+              updatedAt: serverTimestamp(),
+            });
+            opsInBatch += 1;
+            totalOps += 1;
+
+            if (opsInBatch >= MAX_BATCH_OPS) {
+              await batch.commit();
+              batch = writeBatch(firestore);
+              opsInBatch = 0;
+            }
+          }
+
+          // Import cross-references
+          for (const ref of backup.crossRefs) {
+            if (!ref.id || typeof ref.id !== "string") continue;
+            const refDoc = doc(firestore, "users", userId, "crossRefs", ref.id);
+            batch.set(refDoc, {
+              label: ref.label || ref.id,
+              code: ref.code || "REF",
+              nodeIds: Array.isArray(ref.nodeIds) ? ref.nodeIds : [],
+              ...(ref.anchorNodeId ? { anchorNodeId: ref.anchorNodeId } : {}),
+              ...(ref.color ? { color: ref.color } : {}),
+              ...(ref.entityType ? { entityType: ref.entityType } : {}),
+              ...(Array.isArray(ref.tags) && ref.tags.length ? { tags: ref.tags } : {}),
+              ...(ref.notes ? { notes: ref.notes } : {}),
+              ...(ref.contact ? { contact: ref.contact } : {}),
+              ...(Array.isArray(ref.links) && ref.links.length ? { links: ref.links } : {}),
+              updatedAt: serverTimestamp(),
+            });
+            opsInBatch += 1;
+            totalOps += 1;
+
+            if (opsInBatch >= MAX_BATCH_OPS) {
+              await batch.commit();
+              batch = writeBatch(firestore);
+              opsInBatch = 0;
+            }
+          }
+
+          // Commit remaining operations
+          if (opsInBatch > 0) {
+            await batch.commit();
+          }
+
+          setImportStatus(`Imported ${totalOps} items successfully.`);
         } catch (error) {
-          alert("Failed to parse backup file. Please check the file format.");
           console.error("Import error:", error);
+          setImportStatus(
+            error instanceof Error
+              ? `Import failed: ${error.message}`
+              : "Import failed. Check the file format."
+          );
+        } finally {
+          setImporting(false);
         }
       };
       reader.readAsText(file);
     };
     input.click();
-  }, []);
+  }, [userId]);
 
   const nodeCount = nodes.length;
   const refCount = refs.length;
@@ -113,15 +203,21 @@ export default function DataBackup({ nodes, refs, profileName, rootNodeId }: Dat
 
       <div className="planner-inline-buttons">
         <button onClick={exportData} className="success">
-          ⬇ Export JSON
+          Export JSON
         </button>
-        <button onClick={importData}>
-          ⬆ Import JSON
+        <button onClick={importData} disabled={importing}>
+          {importing ? "Importing..." : "Import JSON"}
         </button>
       </div>
 
+      {importStatus && (
+        <p className="planner-subtle" style={{ fontSize: "12px", marginTop: "8px" }}>
+          {importStatus}
+        </p>
+      )}
+
       <p className="planner-subtle" style={{ fontSize: "12px", marginTop: "8px" }}>
-        💡 Exported files are safe to store in cloud storage or version control.
+        Exported files are safe to store in cloud storage or version control.
       </p>
     </div>
   );
