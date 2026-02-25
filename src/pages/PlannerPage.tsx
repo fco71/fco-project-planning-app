@@ -58,6 +58,8 @@ type TreeNodeDoc = {
   kind: NodeKind;
   x?: number;
   y?: number;
+  width?: number;
+  height?: number;
   color?: string;
   taskStatus?: TaskStatus;
   storySteps?: StoryStep[];
@@ -119,6 +121,10 @@ type PaletteItem = {
 
 const HEX_COLOR_REGEX = /^#?[0-9a-fA-F]{6}$/;
 const DEFAULT_BUBBLE_COLOR = "#40B6FF";
+const STORY_NODE_MIN_WIDTH = 220;
+const STORY_NODE_MAX_WIDTH = 760;
+const STORY_NODE_MIN_HEIGHT = 150;
+const STORY_NODE_MAX_HEIGHT = 940;
 
 function normalizeHexColor(value: unknown): string | undefined {
   if (typeof value !== "string") return undefined;
@@ -896,6 +902,8 @@ export default function PlannerPage({ user }: PlannerPageProps) {
                 kind: normalizeNodeKind(value.kind),
                 x: typeof value.x === "number" ? value.x : undefined,
                 y: typeof value.y === "number" ? value.y : undefined,
+                width: typeof value.width === "number" ? value.width : undefined,
+                height: typeof value.height === "number" ? value.height : undefined,
                 color: normalizeHexColor(value.color),
                 taskStatus: normalizeTaskStatus(value.taskStatus),
                 storySteps: normalizeStorySteps(value.storySteps),
@@ -1058,7 +1066,7 @@ export default function PlannerPage({ user }: PlannerPageProps) {
   const applyLocalNodePatch = useCallback(
     (
       nodeId: string,
-      patch: Partial<Pick<TreeNode, "title" | "parentId" | "kind" | "x" | "y" | "color" | "taskStatus" | "storySteps" | "body">>
+      patch: Partial<Pick<TreeNode, "title" | "parentId" | "kind" | "x" | "y" | "width" | "height" | "color" | "taskStatus" | "storySteps" | "body">>
     ) => {
       setNodes((prevNodes) => prevNodes.map((entry) => (entry.id === nodeId ? { ...entry, ...patch } : entry)));
     },
@@ -1359,6 +1367,143 @@ export default function PlannerPage({ user }: PlannerPageProps) {
     });
   }, []);
 
+  const persistNodeBody = useCallback(
+    async (nodeId: string, nextBody: string) => {
+      if (!db) return;
+      const previousBody = nodesById.get(nodeId)?.body || "";
+      const normalizedBody = nextBody.replace(/\r\n/g, "\n");
+      const canonicalBody = normalizedBody.trim().length === 0 ? "" : normalizedBody;
+      if (canonicalBody === previousBody) return;
+      pushHistory({
+        id: crypto.randomUUID(),
+        label: `Edit body`,
+        forwardLocal:    [{ target: "nodes", op: "patch", nodeId, patch: { body: canonicalBody } }],
+        forwardFirestore:[{ kind: "updateNode", nodeId, data: { body: canonicalBody || firestoreDeleteField() } }],
+        inverseLocal:    [{ target: "nodes", op: "patch", nodeId, patch: { body: previousBody } }],
+        inverseFirestore:[{ kind: "updateNode", nodeId, data: { body: previousBody || firestoreDeleteField() } }],
+      });
+      setBusyAction(true);
+      setError(null);
+      applyLocalNodePatch(nodeId, { body: canonicalBody });
+      try {
+        await updateDoc(doc(db, "users", user.uid, "nodes", nodeId), {
+          body: canonicalBody ? canonicalBody : deleteField(),
+          updatedAt: serverTimestamp(),
+        });
+      } catch (actionError: unknown) {
+        applyLocalNodePatch(nodeId, { body: previousBody });
+        setError(actionError instanceof Error ? actionError.message : "Could not save node body text.");
+      } finally {
+        setBusyAction(false);
+      }
+    },
+    [applyLocalNodePatch, nodesById, pushHistory, user.uid]
+  );
+
+  const saveStoryNodeSize = useCallback(
+    async (
+      nodeId: string,
+      previousWidth: number | undefined,
+      previousHeight: number | undefined,
+      nextWidth: number,
+      nextHeight: number
+    ) => {
+      if (!db) return;
+      const node = nodesById.get(nodeId);
+      if (!node) return;
+      const width = clamp(Math.round(nextWidth), STORY_NODE_MIN_WIDTH, STORY_NODE_MAX_WIDTH);
+      const height = clamp(Math.round(nextHeight), STORY_NODE_MIN_HEIGHT, STORY_NODE_MAX_HEIGHT);
+      const prevWidthRounded = typeof previousWidth === "number" ? Math.round(previousWidth) : undefined;
+      const prevHeightRounded = typeof previousHeight === "number" ? Math.round(previousHeight) : undefined;
+      if (prevWidthRounded === width && prevHeightRounded === height) return;
+      pushHistory({
+        id: crypto.randomUUID(),
+        label: `Resize "${node.title}"`,
+        forwardLocal: [{ target: "nodes", op: "patch", nodeId, patch: { width, height } }],
+        forwardFirestore: [{ kind: "updateNode", nodeId, data: { width, height } }],
+        inverseLocal: [{ target: "nodes", op: "patch", nodeId, patch: { width: previousWidth, height: previousHeight } }],
+        inverseFirestore: [{
+          kind: "updateNode",
+          nodeId,
+          data: {
+            width: typeof previousWidth === "number" ? previousWidth : firestoreDeleteField(),
+            height: typeof previousHeight === "number" ? previousHeight : firestoreDeleteField(),
+          },
+        }],
+      });
+      setBusyAction(true);
+      setError(null);
+      applyLocalNodePatch(nodeId, { width, height });
+      try {
+        await updateDoc(doc(db, "users", user.uid, "nodes", nodeId), {
+          width,
+          height,
+          updatedAt: serverTimestamp(),
+        });
+      } catch (actionError: unknown) {
+        applyLocalNodePatch(nodeId, { width: previousWidth, height: previousHeight });
+        setError(actionError instanceof Error ? actionError.message : "Could not resize story node.");
+      } finally {
+        setBusyAction(false);
+      }
+    },
+    [applyLocalNodePatch, nodesById, pushHistory, user.uid]
+  );
+
+  const startStoryNodeResize = useCallback(
+    (
+      nodeId: string,
+      initialWidth: number,
+      initialHeight: number,
+      previousStoredWidth: number | undefined,
+      previousStoredHeight: number | undefined,
+      event: React.PointerEvent<HTMLButtonElement>
+    ) => {
+      event.preventDefault();
+      event.stopPropagation();
+      const startX = event.clientX;
+      const startY = event.clientY;
+      let latestWidth = initialWidth;
+      let latestHeight = initialHeight;
+      const applyPreview = (width: number, height: number) => {
+        setNodes((prev) => prev.map((entry) => (
+          entry.id === nodeId ? { ...entry, width, height } : entry
+        )));
+      };
+      const handlePointerMove = (moveEvent: PointerEvent) => {
+        const nextWidth = clamp(
+          Math.round(initialWidth + (moveEvent.clientX - startX)),
+          STORY_NODE_MIN_WIDTH,
+          STORY_NODE_MAX_WIDTH
+        );
+        const nextHeight = clamp(
+          Math.round(initialHeight + (moveEvent.clientY - startY)),
+          STORY_NODE_MIN_HEIGHT,
+          STORY_NODE_MAX_HEIGHT
+        );
+        if (nextWidth === latestWidth && nextHeight === latestHeight) return;
+        latestWidth = nextWidth;
+        latestHeight = nextHeight;
+        applyPreview(nextWidth, nextHeight);
+      };
+      const stopResize = () => {
+        window.removeEventListener("pointermove", handlePointerMove);
+        window.removeEventListener("pointerup", handlePointerUp);
+        window.removeEventListener("pointercancel", handlePointerUp);
+        if (latestWidth !== initialWidth || latestHeight !== initialHeight) {
+          void saveStoryNodeSize(nodeId, previousStoredWidth, previousStoredHeight, latestWidth, latestHeight);
+        }
+      };
+      const handlePointerUp = () => {
+        stopResize();
+      };
+      window.addEventListener("pointermove", handlePointerMove);
+      window.addEventListener("pointerup", handlePointerUp);
+      window.addEventListener("pointercancel", handlePointerUp);
+    },
+    [saveStoryNodeSize]
+  );
+
   const filteredTreeIdSet = useMemo(() => new Set(filteredTreeIds), [filteredTreeIds]);
 
   // Maps each visible nodeId → the CrossRefs it belongs to, for inline badge display.
@@ -1410,6 +1555,12 @@ export default function PlannerPage({ user }: PlannerPageProps) {
         const showStoryBody = isStory || isStoryLaneBeat;
         const isExpandedStoryCard = expandedStoryNodeIds.has(node.id);
         const bodyText = (node.body || "").trim();
+        const storyDefaultWidth = isStoryLaneBeat ? 320 : (isMobileLayout ? 320 : 300);
+        const storyDefaultHeight = isExpandedStoryCard ? 320 : 210;
+        const storedWidth = typeof node.width === "number" ? node.width : undefined;
+        const storedHeight = typeof node.height === "number" ? node.height : undefined;
+        const storyWidth = clamp(storedWidth ?? storyDefaultWidth, STORY_NODE_MIN_WIDTH, STORY_NODE_MAX_WIDTH);
+        const storyHeight = clamp(storedHeight ?? storyDefaultHeight, STORY_NODE_MIN_HEIGHT, STORY_NODE_MAX_HEIGHT);
         const baseBackground = isRoot
           ? "rgba(82, 52, 6, 0.97)"
           : hasStoryChildren
@@ -1441,6 +1592,10 @@ export default function PlannerPage({ user }: PlannerPageProps) {
             showStoryBody,
             isExpandedStoryCard,
             bodyText,
+            nodeWidth: storyWidth,
+            nodeHeight: storyHeight,
+            storedWidth,
+            storedHeight,
           },
           style: {
             border: isSearchMatch
@@ -1455,8 +1610,9 @@ export default function PlannerPage({ user }: PlannerPageProps) {
                   ? "1.5px solid rgba(52, 211, 153, 0.8)"
                 : "1px solid rgba(100, 106, 140, 0.5)",
             borderRadius: isStoryLaneBeat ? 10 : 14,
-            width: isStoryLaneBeat ? 300 : showStoryBody ? (isMobileLayout ? 300 : 280) : (isMobileLayout ? 280 : 260),
-            minHeight: showStoryBody ? (isExpandedStoryCard ? 280 : 190) : undefined,
+            width: showStoryBody ? storyWidth : (isMobileLayout ? 280 : 260),
+            height: showStoryBody ? storyHeight : undefined,
+            minHeight: showStoryBody ? STORY_NODE_MIN_HEIGHT : undefined,
             padding: showStoryBody ? 12 : (isMobileLayout ? 12 : 10),
             background,
             color: "rgba(250, 252, 255, 0.95)",
@@ -1658,11 +1814,14 @@ export default function PlannerPage({ user }: PlannerPageProps) {
         hasStoryChildren: boolean; isTaskTodo: boolean; isTaskDone: boolean;
         isStoryLaneBeat: boolean; showStoryBody: boolean;
         isExpandedStoryCard: boolean; bodyText: string;
+        nodeWidth: number; nodeHeight: number;
+        storedWidth?: number; storedHeight?: number;
       };
       const isSelected = selectedNodeId === node.id;
       const isActivePortalTarget = activeLinkedNodeIds.has(node.id);
       const isHoverRelated = hoverNodeIds.has(node.id);
       const isDropTarget = node.id === dropTargetNodeId;
+      const isInlineStoryEditor = d.showStoryBody && (isSelected || d.isExpandedStoryCard);
 
       // Build JSX label from plain data (ventovault pattern: JSX created in viewNodes)
       const labelContent = (
@@ -1716,9 +1875,38 @@ export default function PlannerPage({ user }: PlannerPageProps) {
           </div>
           {d.showStoryBody ? (
             <>
-              <div className={`planner-node-body-preview ${d.isExpandedStoryCard ? "expanded" : ""}`}>
-                {d.bodyText || "No body text yet. Select this node and add text in the Body panel."}
-              </div>
+              {isInlineStoryEditor ? (
+                <textarea
+                  key={`story-inline:${d.nodeId}:${d.bodyText}`}
+                  className={`planner-node-body-editor nodrag nopan ${d.isExpandedStoryCard ? "expanded" : ""}`}
+                  defaultValue={d.bodyText}
+                  placeholder="Write story text directly on the node..."
+                  rows={d.isExpandedStoryCard ? 12 : 6}
+                  onPointerDown={(event) => {
+                    event.stopPropagation();
+                  }}
+                  onClick={(event) => {
+                    event.stopPropagation();
+                  }}
+                  onFocus={(event) => {
+                    event.stopPropagation();
+                    setSelectedNodeId(d.nodeId);
+                  }}
+                  onBlur={(event) => {
+                    void persistNodeBody(d.nodeId, event.currentTarget.value);
+                  }}
+                  onKeyDown={(event) => {
+                    if ((event.metaKey || event.ctrlKey) && event.key === "Enter") {
+                      event.preventDefault();
+                      event.currentTarget.blur();
+                    }
+                  }}
+                />
+              ) : (
+                <div className={`planner-node-body-preview ${d.isExpandedStoryCard ? "expanded" : ""}`}>
+                  {d.bodyText || "No body text yet. Select this node and write directly on the card."}
+                </div>
+              )}
               <button
                 className="planner-story-card-expand"
                 onClick={(event) => {
@@ -1728,6 +1916,24 @@ export default function PlannerPage({ user }: PlannerPageProps) {
                 type="button"
               >
                 {d.isExpandedStoryCard ? "Collapse text" : "Expand text"}
+              </button>
+              <button
+                className="planner-story-resize-handle nodrag nopan"
+                type="button"
+                title="Resize story card"
+                aria-label="Resize story card"
+                onPointerDown={(event) => {
+                  startStoryNodeResize(
+                    d.nodeId,
+                    d.nodeWidth,
+                    d.nodeHeight,
+                    d.storedWidth,
+                    d.storedHeight,
+                    event
+                  );
+                }}
+              >
+                ↘
               </button>
             </>
           ) : null}
@@ -1761,7 +1967,7 @@ export default function PlannerPage({ user }: PlannerPageProps) {
         },
       } as Node;
     });
-  }, [activeLinkedNodeIds, baseNodes, dropTargetNodeId, hoverNodeIds, hoveredEdgeId, hoveredNodeId, isMobileLayout, selectedNodeId, toggleNodeCollapse, toggleStoryCardExpand]);
+  }, [activeLinkedNodeIds, baseNodes, dropTargetNodeId, hoverNodeIds, hoveredEdgeId, hoveredNodeId, isMobileLayout, persistNodeBody, selectedNodeId, startStoryNodeResize, toggleNodeCollapse, toggleStoryCardExpand]);
 
   const flowEdges = useMemo(() => {
     return baseEdges.map((edge) => {
@@ -2280,34 +2486,9 @@ export default function PlannerPage({ user }: PlannerPageProps) {
 
   const saveNodeBody = useCallback(
     async (nodeId: string, nextBody: string) => {
-      if (!db) return;
-      const previousBody = nodesById.get(nodeId)?.body || "";
-      const normalizedBody = nextBody.trim();
-      if (normalizedBody === previousBody) return;
-      pushHistory({
-        id: crypto.randomUUID(),
-        label: `Edit body`,
-        forwardLocal:    [{ target: "nodes", op: "patch", nodeId, patch: { body: normalizedBody } }],
-        forwardFirestore:[{ kind: "updateNode", nodeId, data: { body: normalizedBody || firestoreDeleteField() } }],
-        inverseLocal:    [{ target: "nodes", op: "patch", nodeId, patch: { body: previousBody } }],
-        inverseFirestore:[{ kind: "updateNode", nodeId, data: { body: previousBody || firestoreDeleteField() } }],
-      });
-      setBusyAction(true);
-      setError(null);
-      applyLocalNodePatch(nodeId, { body: normalizedBody });
-      try {
-        await updateDoc(doc(db, "users", user.uid, "nodes", nodeId), {
-          body: normalizedBody ? normalizedBody : deleteField(),
-          updatedAt: serverTimestamp(),
-        });
-      } catch (actionError: unknown) {
-        applyLocalNodePatch(nodeId, { body: previousBody });
-        setError(actionError instanceof Error ? actionError.message : "Could not save node body text.");
-      } finally {
-        setBusyAction(false);
-      }
+      await persistNodeBody(nodeId, nextBody);
     },
-    [applyLocalNodePatch, nodesById, pushHistory, user.uid]
+    [persistNodeBody]
   );
 
   const saveSelectedBody = useCallback(async () => {
@@ -2779,7 +2960,7 @@ export default function PlannerPage({ user }: PlannerPageProps) {
         ...invLocalRefs,
       ],
       inverseFirestore:[
-        ...deletedNodes.map((n): FirestoreOp => ({ kind: "setNode", nodeId: n.id, data: { title: n.title, parentId: n.parentId, kind: n.kind, x: n.x ?? 0, y: n.y ?? 0, ...(n.color ? { color: n.color } : {}), ...(n.taskStatus && n.taskStatus !== "none" ? { taskStatus: n.taskStatus } : {}), ...(n.body ? { body: n.body } : {}), ...(n.storySteps ? { storySteps: n.storySteps } : {}) } })),
+        ...deletedNodes.map((n): FirestoreOp => ({ kind: "setNode", nodeId: n.id, data: { title: n.title, parentId: n.parentId, kind: n.kind, x: n.x ?? 0, y: n.y ?? 0, ...(typeof n.width === "number" ? { width: n.width } : {}), ...(typeof n.height === "number" ? { height: n.height } : {}), ...(n.color ? { color: n.color } : {}), ...(n.taskStatus && n.taskStatus !== "none" ? { taskStatus: n.taskStatus } : {}), ...(n.body ? { body: n.body } : {}), ...(n.storySteps ? { storySteps: n.storySteps } : {}) } })),
         ...invFirestoreRefs,
       ],
     });
@@ -3957,7 +4138,7 @@ export default function PlannerPage({ user }: PlannerPageProps) {
           ...invLocalRefs,
         ],
         inverseFirestore:[
-          ...deletedNodes.map((n): FirestoreOp => ({ kind: "setNode", nodeId: n.id, data: { title: n.title, parentId: n.parentId, kind: n.kind, x: n.x ?? 0, y: n.y ?? 0, ...(n.color ? { color: n.color } : {}), ...(n.taskStatus && n.taskStatus !== "none" ? { taskStatus: n.taskStatus } : {}), ...(n.body ? { body: n.body } : {}), ...(n.storySteps ? { storySteps: n.storySteps } : {}) } })),
+          ...deletedNodes.map((n): FirestoreOp => ({ kind: "setNode", nodeId: n.id, data: { title: n.title, parentId: n.parentId, kind: n.kind, x: n.x ?? 0, y: n.y ?? 0, ...(typeof n.width === "number" ? { width: n.width } : {}), ...(typeof n.height === "number" ? { height: n.height } : {}), ...(n.color ? { color: n.color } : {}), ...(n.taskStatus && n.taskStatus !== "none" ? { taskStatus: n.taskStatus } : {}), ...(n.body ? { body: n.body } : {}), ...(n.storySteps ? { storySteps: n.storySteps } : {}) } })),
           ...invFirestoreRefs,
         ],
       });
@@ -4024,6 +4205,8 @@ export default function PlannerPage({ user }: PlannerPageProps) {
           kind: original.kind,
           x: (typeof original.x === "number" ? original.x : 0) + 80,
           y: (typeof original.y === "number" ? original.y : 0) + 80,
+          ...(typeof original.width === "number" ? { width: original.width } : {}),
+          ...(typeof original.height === "number" ? { height: original.height } : {}),
           ...(original.color ? { color: original.color } : {}),
           ...(original.taskStatus && original.taskStatus !== "none" ? { taskStatus: original.taskStatus } : {}),
           ...(original.storySteps && original.storySteps.length > 0 ? { storySteps: original.storySteps } : {}),

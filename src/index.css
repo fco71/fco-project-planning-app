@@ -941,6 +941,8 @@ button {
 
 .planner-node-card.story {
   gap: 10px;
+  position: relative;
+  padding-bottom: 14px;
 }
 
 .planner-node-title {
@@ -1025,6 +1027,7 @@ button {
   font-size: 11px;
   line-height: 1.35;
   color: rgba(234, 246, 254, 0.86);
+  white-space: pre-wrap;
   overflow-wrap: anywhere;
   max-height: 96px;
   overflow: hidden;
@@ -1032,6 +1035,31 @@ button {
 
 .planner-node-body-preview.expanded {
   max-height: 420px;
+}
+
+.planner-node-body-editor {
+  width: 100%;
+  font-size: 11px;
+  line-height: 1.4;
+  color: rgba(246, 250, 255, 0.96);
+  border: 1px solid rgba(255, 255, 255, 0.16);
+  background: rgba(12, 18, 28, 0.62);
+  border-radius: 8px;
+  padding: 8px;
+  min-height: 90px;
+  max-height: 180px;
+  resize: none;
+  white-space: pre-wrap;
+}
+
+.planner-node-body-editor.expanded {
+  max-height: 460px;
+}
+
+.planner-node-body-editor:focus {
+  outline: none;
+  border-color: rgba(125, 211, 252, 0.62);
+  box-shadow: 0 0 0 2px rgba(125, 211, 252, 0.16);
 }
 
 .planner-story-card-expand {
@@ -1043,6 +1071,24 @@ button {
   padding: 4px 8px;
   font-size: 10px;
   font-weight: 700;
+}
+
+.planner-story-resize-handle {
+  position: absolute;
+  right: 0;
+  bottom: 0;
+  width: 18px;
+  height: 18px;
+  border: 1px solid rgba(255, 255, 255, 0.22);
+  border-radius: 5px;
+  background: rgba(255, 255, 255, 0.1);
+  color: rgba(245, 248, 255, 0.9);
+  font-size: 10px;
+  line-height: 1;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  cursor: nwse-resize;
 }
 
 .planner-story-step-item {
