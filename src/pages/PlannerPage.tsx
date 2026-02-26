@@ -762,7 +762,7 @@ export default function PlannerPage({ user }: PlannerPageProps) {
       unsubNodes?.();
       unsubRefs?.();
     };
-  }, [ensureWorkspace, user.displayName, user.email, user.uid]);
+  }, [ensureWorkspace, suppressSnapshotRef, user.displayName, user.email, user.uid]);
 
   useEffect(() => {
     if (!rootNodeId || loading) return;
@@ -2163,7 +2163,7 @@ export default function PlannerPage({ user }: PlannerPageProps) {
       return;
     }
     setMobileQuickBubbleEditName(activePortalRef.label);
-  }, [activePortalRef?.id, activePortalRef?.label]);
+  }, [activePortalRef]);
 
   useEffect(() => {
     if (!isMobileLayout || !mobileQuickBubbleOpen || !selectedNodeId) return;
@@ -3671,7 +3671,7 @@ export default function PlannerPage({ user }: PlannerPageProps) {
         setError(actionError instanceof Error ? actionError.message : "Could not save node position.");
       }
     },
-    [childrenByParent, collapsedNodeIds, db, nodesById, pushHistory, rootNodeId, showSaveError, user.uid]
+    [childrenByParent, collapsedNodeIds, nodesById, pushHistory, rootNodeId, showSaveError, user.uid]
   );
 
   const onSelectionDragStop = useCallback(
@@ -3797,7 +3797,7 @@ export default function PlannerPage({ user }: PlannerPageProps) {
         setError(actionError instanceof Error ? actionError.message : "Could not save node positions.");
       }
     },
-    [childrenByParent, collapsedNodeIds, db, nodesById, pushHistory, showSaveError, user.uid]
+    [childrenByParent, collapsedNodeIds, nodesById, pushHistory, showSaveError, user.uid]
   );
 
   // Context menu handlers
