@@ -9,43 +9,20 @@ type PortalNodeData = {
 
 const PortalNode = memo(function PortalNode({ data }: NodeProps<PortalNodeData>) {
   return (
-    <div
-      style={{
-        width: "100%",
-        height: "100%",
-        display: "flex",
-        alignItems: "center",
-        justifyContent: "center",
-        position: "relative",
-      }}
-    >
+    <div className="planner-portal-node-inner">
       <Handle
         type="target"
         position={Position.Top}
         id="portal-target"
         isConnectable={false}
-        style={{
-          width: 8,
-          height: 8,
-          opacity: 0,
-          border: "none",
-          background: "transparent",
-          pointerEvents: "none",
-        }}
+        className="planner-portal-handle"
       />
       <Handle
         type="source"
         position={Position.Bottom}
         id="portal-source"
         isConnectable={false}
-        style={{
-          width: 8,
-          height: 8,
-          opacity: 0,
-          border: "none",
-          background: "transparent",
-          pointerEvents: "none",
-        }}
+        className="planner-portal-handle"
       />
       <div className={`planner-portal-label${data.isActive ? " active" : ""}`} data-tooltip={data.tooltip}>
         {data.display}

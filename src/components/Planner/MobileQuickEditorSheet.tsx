@@ -239,16 +239,16 @@ export function MobileQuickEditorSheet({
                   />
                   <div className="planner-inline-buttons">
                     <input
+                      className="planner-flex-1"
                       value={newRefCode}
                       onChange={(event) => onNewRefCodeChange(event.target.value)}
                       placeholder={`Code (auto ${nextAutoBubbleCode})`}
-                      style={{ flex: 1 }}
                     />
                     <input
+                      className="planner-color-input-sm"
                       type="color"
                       value={newRefColor}
                       onChange={(event) => onNewRefColorChange(event.target.value)}
-                      style={{ width: 54, height: 34, padding: "4px 6px" }}
                     />
                     <button
                       onClick={() => {

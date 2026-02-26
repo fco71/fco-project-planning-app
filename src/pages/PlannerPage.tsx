@@ -1,17 +1,9 @@
 /* eslint-disable react-hooks/set-state-in-effect */
 import { useEffect, useRef, useState } from "react";
 import { useUndoRedo } from "../hooks/useUndoRedo";
-import ReactFlow, {
-  Background,
-  SelectionMode,
-  type EdgeTypes,
-  type ReactFlowInstance,
-} from "reactflow";
+import type { EdgeTypes, ReactFlowInstance } from "reactflow";
 import type { User } from "firebase/auth";
 import { db } from "../firebase";
-import {
-  buildNodePath,
-} from "../utils/treeUtils";
 import {
   bubbleDisplayToken,
   chooseAnchorNodeId,
@@ -26,16 +18,13 @@ import {
   BUBBLES_SIMPLIFIED_MODE,
   CROSS_REFERENCES_ENABLED,
   DEFAULT_BUBBLE_COLOR,
-  defaultNodeColor,
   nextNodeKind,
   STORY_NODE_MAX_HEIGHT,
   STORY_NODE_MAX_WIDTH,
   STORY_NODE_MIN_HEIGHT,
   STORY_NODE_MIN_WIDTH,
-  storyContainerColor,
 } from "../utils/plannerConfig";
 import type {
-  TaskStatus,
   TreeNode,
   CrossRef,
 } from "../types/planner";
@@ -80,17 +69,14 @@ import { usePlannerHoverState } from "../hooks/usePlannerHoverState";
 import { usePlannerDefaultPortalPosition } from "../hooks/usePlannerDefaultPortalPosition";
 import { usePlannerSidebarSectionVisibility } from "../hooks/usePlannerSidebarSectionVisibility";
 import { usePlannerCrossRefUiState } from "../hooks/usePlannerCrossRefUiState";
-import { NodeContextMenu } from "../components/Planner/NodeContextMenu";
-import { PortalContextMenu } from "../components/Planner/PortalContextMenu";
-import { SaveErrorToast } from "../components/Planner/SaveErrorToast";
-import { CommandPalette } from "../components/Planner/CommandPalette";
-import { MobileQuickBubbleSheet } from "../components/Planner/MobileQuickBubbleSheet";
-import { MobileQuickEditorSheet } from "../components/Planner/MobileQuickEditorSheet";
-import { MobileOverlayBackdrops } from "../components/Planner/MobileOverlayBackdrops";
-import { MobileCanvasToolbar } from "../components/Planner/MobileCanvasToolbar";
-import { SimpleBubblesPanel } from "../components/Planner/SimpleBubblesPanel";
-import { SharedBubblesManager } from "../components/Planner/SharedBubblesManager";
-import { SharedBubblesTopPanel } from "../components/Planner/SharedBubblesTopPanel";
+import { usePlannerMobileToolbarActions } from "../hooks/usePlannerMobileToolbarActions";
+import { usePlannerCanvasSurfaceProps } from "../hooks/usePlannerCanvasSurfaceProps";
+import { usePlannerMobilePanelsProps } from "../hooks/usePlannerMobilePanelsProps";
+import { usePlannerSidebarPanelsProps } from "../hooks/usePlannerSidebarPanelsProps";
+import { PlannerSidebarChrome } from "../components/Planner/PlannerSidebarChrome";
+import { PlannerCanvasSurface } from "../components/Planner/PlannerCanvasSurface";
+import { PlannerSidebarPanels } from "../components/Planner/PlannerSidebarPanels";
+import { PlannerMobilePanels } from "../components/Planner/PlannerMobilePanels";
 import { plannerNodeTypes } from "../components/Planner/PortalNode";
 import "reactflow/dist/style.css";
 
@@ -868,6 +854,300 @@ export default function PlannerPage({ user }: PlannerPageProps) {
     bubblesSimplifiedMode: BUBBLES_SIMPLIFIED_MODE,
   });
 
+  const {
+    onToolbarToggleOpen,
+    onToolbarOpenMenu,
+    onToolbarOpenEditor,
+    onToolbarOpenBubble,
+    onToolbarAddChild,
+    onToolbarToggleTaskStatus,
+    onToolbarGoHome,
+    onToolbarGoUp,
+  } = usePlannerMobileToolbarActions({
+    selectedNodeId,
+    selectedNode,
+    setMobileToolbarOpen,
+    setMobileSidebarSection,
+    setMobileSidebarOpen,
+    setMobileQuickEditorMode,
+    setMobileQuickEditorOpen,
+    setMobileQuickBubbleOpen,
+    setActivePortalRefId,
+    openMobileQuickBubble,
+    handleContextAddChild,
+    setNodeTaskStatus,
+    goGrandmotherView,
+    goUpOneView,
+  });
+
+  const plannerCanvasSurfaceProps = usePlannerCanvasSurfaceProps({
+    isMobileLayout,
+    mobileToolbarOpen,
+    selectedNodeId,
+    selectedNode,
+    crossReferencesEnabled: CROSS_REFERENCES_ENABLED,
+    rootNodeId,
+    currentRootHasParent: !!currentRootNode?.parentId,
+    reactFlowNodes,
+    flowEdges,
+    nodeTypes: plannerNodeTypes,
+    edgeTypes,
+    onInit: setRfInstance,
+    onNodesChange: handleNodesChange,
+    activePortalRefId,
+    onSetActivePortalRefId: setActivePortalRefId,
+    onSelectRefForEditing: selectRefForEditing,
+    onOpenBubblesPanel: openBubblesPanel,
+    onSetSelectedNodeId: setSelectedNodeId,
+    onSetMobileQuickEditorMode: setMobileQuickEditorMode,
+    onNodeDoubleClick,
+    scheduleHoverUpdate,
+    hoveredEdgeId,
+    hoveredNodeId,
+    isDraggingRef,
+    onNodeDrag,
+    onNodeDragStop,
+    onSelectionDragStop,
+    onSetPortalContextMenu: setPortalContextMenu,
+    portalContextMenu,
+    onSetContextMenu: setContextMenu,
+    contextMenu,
+    nodesById,
+    childrenByParent,
+    onContextAddChild: handleContextAddChild,
+    onContextAddStorySibling: handleContextAddStorySibling,
+    onContextDelete: handleContextDelete,
+    onContextDuplicate: handleContextDuplicate,
+    onContextRename: handleContextRename,
+    onContextAddCrossRef: CROSS_REFERENCES_ENABLED ? handleContextAddCrossRef : undefined,
+    onContextChangeType: handleContextChangeType,
+    onContextToggleTaskStatus: handleContextToggleTaskStatus,
+    refs,
+    busyAction,
+    paletteOpen,
+    paletteQuery,
+    paletteIndex,
+    paletteItems,
+    paletteInputRef,
+    onPaletteQueryChange: setPaletteQuery,
+    onSetPaletteIndex: setPaletteIndex,
+    onRunPaletteAction: runPaletteAction,
+    showSaveErrorToast: saveStatus === "error",
+    onToolbarToggleOpen,
+    onToolbarOpenMenu,
+    onToolbarOpenEditor,
+    onToolbarOpenBubble,
+    onToolbarAddChild,
+    onToolbarToggleTaskStatus,
+    onToolbarGoHome,
+    onToolbarGoUp,
+    setMobileSidebarOpen,
+    setMobileToolbarOpen,
+    setMobileQuickBubbleOpen,
+    setMobileQuickEditorOpen,
+    setPaletteOpen,
+    setPaletteQuery,
+    setPaletteIndex,
+    onDeletePortalByRefIdAsync: deletePortalByRefId,
+  });
+
+  const plannerMobilePanelsProps = usePlannerMobilePanelsProps({
+    isMobileLayout,
+    mobileSidebarOpen,
+    mobileQuickEditorOpen,
+    mobileQuickBubbleOpen,
+    mobileQuickEditorMode,
+    selectedNode,
+    selectedNodeId,
+    nodesById,
+    renameTitle,
+    busyAction,
+    selectedNodeRefs,
+    crossReferencesEnabled: CROSS_REFERENCES_ENABLED,
+    newRefLabel,
+    canCreateBubbleFromInput,
+    bodyDraft,
+    newRefCode,
+    nextAutoBubbleCode,
+    newRefColor,
+    bubblePrefixSuggestions,
+    selectedNodeChildrenCount: selectedNodeChildren.length,
+    selectedNodeCollapsed,
+    effectiveNewBubbleCode,
+    mobileQuickBubbleInputRef,
+    activePortalRef,
+    mobileQuickBubbleEditName,
+    defaultBubbleColor: DEFAULT_BUBBLE_COLOR,
+    renameSelected,
+    createCrossRef,
+    openMobileQuickBubble,
+    saveSelectedBody,
+    applyBubbleSuggestion,
+    openBubblesPanel,
+    setNodeTaskStatus,
+    handleContextChangeType,
+    toggleNodeCollapse,
+    setCurrentRootId,
+    handleContextAddChild,
+    openSelectedAsStoryLane,
+    focusMobileQuickBubbleInput,
+    blurActiveInput,
+    selectRefForEditing,
+    saveMobileQuickBubbleName,
+    updateCrossRefColor,
+    deletePortalByRefId,
+    setMobileSidebarOpen,
+    setMobileQuickEditorMode,
+    setRenameTitle,
+    setNewRefLabel,
+    setBodyDraft,
+    setNewRefCode,
+    setNewRefColor,
+    setMobileSidebarSection,
+    setMobileQuickEditorOpen,
+    setMobileQuickBubbleOpen,
+    setMobileQuickBubbleEditName,
+  });
+
+  const plannerSidebarPanelsProps = usePlannerSidebarPanelsProps({
+    showProjectSection,
+    showNodeSection,
+    showSimpleBubblesSection,
+    showBubblesSection,
+    error,
+    profileName,
+    userEmail: user.email,
+    currentRootPath,
+    currentRootId,
+    rootNodeId,
+    projectPages,
+    activeProjectPageId,
+    activeProjectPageIndex,
+    selectedNodeId,
+    selectedNodeKind: selectedNode?.kind,
+    currentRootHasParent: !!currentRootNode?.parentId,
+    currentRootKind,
+    storyLaneMode,
+    busyAction,
+    visibleTreeCount: filteredTreeIds.length,
+    crossReferencesEnabled: CROSS_REFERENCES_ENABLED,
+    bubblesSimplifiedMode: BUBBLES_SIMPLIFIED_MODE,
+    newChildTitle,
+    setNewChildTitle,
+    goPrevProjectPage,
+    goNextProjectPage,
+    openProjectPage,
+    goGrandmotherView,
+    goUpOneView,
+    openSelectedAsMaster,
+    openSelectedAsStoryLane,
+    setStoryLaneMode,
+    organizeVisibleTree,
+    organizeSelectedBranch,
+    cleanUpCrossRefs,
+    createChild,
+    selectedNode,
+    nodesById,
+    renameInputRef,
+    renameTitle,
+    setRenameTitle,
+    bodyDraft,
+    setBodyDraft,
+    selectedNodeHasStoryChildren,
+    selectedNodeChildren,
+    selectedNodeCollapsed,
+    newStoryStepText,
+    setNewStoryStepText,
+    handleContextChangeType,
+    setNodeTaskStatus,
+    setNodeColor,
+    renameSelected,
+    deleteSelected,
+    saveSelectedBody,
+    setSelectedNodeId,
+    setActivePortalRefId,
+    toggleNodeCollapse,
+    handleContextAddCrossRef,
+    handleContextAddChild,
+    toggleStoryStepDone,
+    moveStoryStep,
+    deleteStoryStep,
+    addStoryStep,
+    bubbleTargetNode,
+    isMobileLayout,
+    selectedNodeRefs,
+    activePortalRef,
+    effectiveBubbleTargetId,
+    newRefLabelInputRef,
+    newRefLabel,
+    setNewRefLabel,
+    newRefColor,
+    setNewRefColor,
+    newRefCode,
+    setNewRefCode,
+    nextAutoBubbleCode,
+    effectiveNewBubbleCode,
+    canCreateBubbleFromInput,
+    bubblePrefixSuggestions,
+    defaultBubbleColor: DEFAULT_BUBBLE_COLOR,
+    createCrossRef,
+    openMobileQuickBubble,
+    setMobileQuickBubbleOpen,
+    setMobileSidebarOpen,
+    setMobileQuickEditorOpen,
+    blurActiveInput,
+    applyBubbleSuggestion,
+    deletePortalByRefId,
+    updateCrossRefColor,
+    refs,
+    activePortalTargets,
+    newRefType,
+    setNewRefType,
+    newRefSuggestions,
+    describeRefTargets,
+    linkCrossRefToNode,
+    selectRefForEditing,
+    detachCrossRef,
+    jumpToReferencedNode,
+    refScopeFilter,
+    setRefScopeFilter,
+    refCategoryFilter,
+    setRefCategoryFilter,
+    refSearchQuery,
+    setRefSearchQuery,
+    filteredRefs,
+    selectedNodeRefIds,
+    describeRefLibraryPreview,
+    editRefId,
+    editRefLabel,
+    setEditRefLabel,
+    editRefCode,
+    setEditRefCode,
+    editRefType,
+    setEditRefType,
+    editRefTags,
+    setEditRefTags,
+    editRefContact,
+    setEditRefContact,
+    editRefNotes,
+    setEditRefNotes,
+    editRefLinks,
+    setEditRefLinks,
+    saveCrossRefEdits,
+    duplicateCrossRef,
+    linkNodeQuery,
+    setLinkNodeQuery,
+    linkTargetNodeId,
+    setLinkTargetNodeId,
+    linkableNodeOptions,
+    editableRefTargets,
+    mergeCandidateRefs,
+    mergeFromRefId,
+    setMergeFromRefId,
+    mergeCrossRefIntoEdited,
+    deleteCrossRefBubble,
+  });
+
   if (!db) {
     return (
       <div className="planner-empty-state">
@@ -885,901 +1165,44 @@ export default function PlannerPage({ user }: PlannerPageProps) {
       <aside
         className={`planner-sidebar ${sidebarIsCollapsed ? "collapsed" : ""} ${isMobileLayout ? (mobileSidebarOpen ? "mobile-open" : "mobile-hidden") : ""}`}
       >
-        <div className="planner-sidebar-header">
-          {!sidebarIsCollapsed && (
-            <div className="planner-undo-redo-btns">
-              <button
-                className="planner-undo-redo-btn"
-                onClick={() => undo(applyLocalOps)}
-                disabled={!canUndo || busyAction}
-                title={undoLabel ? `Undo: ${undoLabel}` : "Undo (⌘Z)"}
-                aria-label="Undo"
-              >
-                ↩
-              </button>
-              <button
-                className="planner-undo-redo-btn"
-                onClick={() => redo(applyLocalOps)}
-                disabled={!canRedo || busyAction}
-                title={redoLabel ? `Redo: ${redoLabel}` : "Redo (⌘⇧Z)"}
-                aria-label="Redo"
-              >
-                ↪
-              </button>
-            </div>
-          )}
-          <button
-            onClick={() => {
-              if (isMobileLayout) {
-                setMobileSidebarOpen(false);
-                return;
-              }
-              setSidebarCollapsed(!sidebarCollapsed);
-            }}
-            className="planner-sidebar-toggle"
-            aria-label={isMobileLayout ? "Close controls" : sidebarIsCollapsed ? "Expand sidebar" : "Collapse sidebar"}
-          >
-            {isMobileLayout ? "✕" : sidebarIsCollapsed ? "→" : "←"}
-          </button>
-        </div>
-
-        {sidebarIsCollapsed ? (
-          <div className="planner-collapsed-controls">
-            <div className="planner-collapsed-controls-label">
-              Controls
-            </div>
-          </div>
-        ) : (
-          <>
-        {/* Search Input */}
-        <div className="planner-search-wrap">
-          <input
-            className="planner-search-input"
-            ref={searchInputRef}
-            type="text"
-            placeholder={isMobileLayout ? "Search nodes..." : "Search nodes... (Ctrl+F)"}
-            value={searchQuery}
-            onChange={(e) => setSearchQuery(e.target.value)}
-          />
-          {searchMatchingIds.size > 0 && (
-            <div className="planner-search-match">
-              {searchMatchingIds.size} match{searchMatchingIds.size !== 1 ? "es" : ""} found
-            </div>
-          )}
-          <button
-            className="planner-palette-launcher"
-            onClick={() => {
-              setPaletteOpen(true);
-              setPaletteQuery("");
-              setPaletteIndex(0);
-            }}
-          >
-            Command palette (Cmd/Ctrl+K)
-          </button>
-          {!isMobileLayout ? (
-            <div className="planner-top-actions">
-              <button onClick={organizeSelectedBranch} disabled={busyAction || !selectedNodeId}>
-                Clean up selected branch
-              </button>
-              {CROSS_REFERENCES_ENABLED && !BUBBLES_SIMPLIFIED_MODE ? (
-                <button onClick={cleanUpCrossRefs} disabled={busyAction}>
-                  Clean stale bubbles
-                </button>
-              ) : null}
-            </div>
-          ) : null}
-        </div>
-
-        {isMobileLayout ? (
-          <div className="planner-mobile-section-tabs">
-            <button
-              className={mobileSidebarSection === "project" ? "active" : ""}
-              onClick={() => setMobileSidebarSection("project")}
-            >
-              Project
-            </button>
-            <button
-              className={mobileSidebarSection === "node" ? "active" : ""}
-              onClick={() => setMobileSidebarSection("node")}
-            >
-              Node
-            </button>
-            {CROSS_REFERENCES_ENABLED ? (
-              <button
-                className={mobileSidebarSection === "bubbles" ? "active" : ""}
-                onClick={() => openBubblesPanel(true)}
-              >
-                Bubbles
-              </button>
-            ) : null}
-          </div>
-        ) : null}
-
-        {showProjectSection ? (
-          <>
-        <div id="project-overview-panel" className="planner-panel-block">
-          <h2>{profileName || "Main Node"}</h2>
-          <p className="planner-subtle">{user.email}</p>
-          <p className="planner-subtle">
-            Current view: <strong>{currentRootPath || "No selection"}</strong>
-          </p>
-          {currentRootId && rootNodeId && currentRootId !== rootNodeId ? (
-            <p className="planner-subtle">Isolated view active. Use “Back to main workspace” to return.</p>
-          ) : null}
-          <div className="planner-row-label">Project pages</div>
-          {projectPages.length === 0 ? (
-            <p className="planner-subtle">No top-level project pages yet.</p>
-          ) : (
-            <>
-              <div className="planner-inline-buttons">
-                <button onClick={goPrevProjectPage} disabled={projectPages.length < 2}>
-                  Previous project
-                </button>
-                <button onClick={goNextProjectPage} disabled={projectPages.length < 2}>
-                  Next project
-                </button>
-              </div>
-              <select
-                value={activeProjectPageId}
-                onChange={(event) => {
-                  if (!event.target.value) return;
-                  openProjectPage(event.target.value);
-                }}
-              >
-                {activeProjectPageId === "" ? <option value="">Select a project page</option> : null}
-                {projectPages.map((project, index) => (
-                  <option key={project.id} value={project.id}>
-                    {`${index + 1}. ${project.title}`}
-                  </option>
-                ))}
-              </select>
-              <p className="planner-subtle">
-                {activeProjectPageIndex >= 0
-                  ? `Page ${activeProjectPageIndex + 1} of ${projectPages.length} — URL keeps this page.`
-                  : "You are outside top-level project pages. Pick one above to normalize."}
-              </p>
-            </>
-          )}
-          <div className="planner-inline-buttons">
-            <button onClick={goGrandmotherView} disabled={!rootNodeId} title="Return to your full workspace root">
-              Back to main workspace
-            </button>
-            <button onClick={goUpOneView} disabled={!currentRootNode?.parentId} title="Move one level up from the current view">
-              Parent view
-            </button>
-          </div>
-          <p className="planner-subtle">Back to main workspace returns to the root. Parent view moves one level up.</p>
-          <button onClick={openSelectedAsMaster} disabled={!selectedNodeId}>
-            Open selected as master
-          </button>
-          <div className="planner-inline-buttons">
-            <button onClick={openSelectedAsStoryLane} disabled={!selectedNodeId || selectedNode?.kind !== "story"}>
-              Open selected in story lane
-            </button>
-            <button onClick={() => setStoryLaneMode((prev) => !prev)} disabled={currentRootKind !== "story"}>
-              {storyLaneMode ? "Story lane: on" : "Story lane: off"}
-            </button>
-          </div>
-          <div className="planner-row-label">Quick maintenance</div>
-          <div className="planner-inline-buttons">
-            <button onClick={organizeVisibleTree} disabled={busyAction || filteredTreeIds.length === 0}>
-              Clean up visible tree
-            </button>
-            <button onClick={organizeSelectedBranch} disabled={busyAction || !selectedNodeId}>
-              Clean up selected branch
-            </button>
-            {CROSS_REFERENCES_ENABLED && !BUBBLES_SIMPLIFIED_MODE ? (
-              <button onClick={cleanUpCrossRefs} disabled={busyAction}>
-                Clean stale bubbles
-              </button>
-            ) : null}
-          </div>
-        </div>
-
-        <div className="planner-panel-block">
-          <h3>Add Child Node</h3>
-          <p className="planner-subtle">Leave blank to create a default node name and rename immediately.</p>
-          <input
-            value={newChildTitle}
-            onChange={(event) => setNewChildTitle(event.target.value)}
-            onKeyDown={(event) => {
-              if (event.key !== "Enter") return;
-              event.preventDefault();
-              if (busyAction) return;
-              void createChild();
-            }}
-            placeholder="Film Production, Education, Finance..."
-          />
-          <button
-            onClick={createChild}
-            disabled={busyAction || (!selectedNodeId && !currentRootId && !rootNodeId)}
-          >
-            Add child
-          </button>
-        </div>
-          </>
-        ) : null}
-
-        {showNodeSection ? (
-        <div className="planner-panel-block">
-          <h3>Selected Node</h3>
-          {selectedNode ? (
-            <>
-              <div className="planner-row-label">Path</div>
-              <div className="planner-path">{buildNodePath(selectedNode.id, nodesById)}</div>
-              <div className="planner-inline-buttons">
-                <button onClick={organizeSelectedBranch} disabled={busyAction}>
-                  Clean up this branch
-                </button>
-              </div>
-              <div className="planner-row-label">Type</div>
-              <div className="planner-inline-buttons">
-                <button
-                  onClick={() => handleContextChangeType(selectedNode.id)}
-                  disabled={busyAction || selectedNode.kind === "root"}
-                >
-                  {selectedNode.kind === "root" ? "Root" : `Set as ${nextNodeKind(selectedNode.kind)}`}
-                </button>
-                <button disabled>{selectedNode.kind}</button>
-              </div>
-              <div className="planner-row-label">Task status</div>
-              <div className="planner-inline-buttons">
-                <select
-                  value={selectedNode.taskStatus || "none"}
-                  onChange={(event) => {
-                    void setNodeTaskStatus(selectedNode.id, event.target.value as TaskStatus);
-                  }}
-                  disabled={busyAction || selectedNode.kind === "root"}
-                >
-                  <option value="none">No task</option>
-                  <option value="todo">Todo</option>
-                  <option value="done">Done</option>
-                </select>
-                <button
-                  onClick={() => {
-                    const current = selectedNode.taskStatus || "none";
-                    const nextStatus: TaskStatus = current === "done" ? "todo" : "done";
-                    void setNodeTaskStatus(selectedNode.id, nextStatus);
-                  }}
-                  disabled={busyAction || selectedNode.kind === "root"}
-                >
-                  {selectedNode.taskStatus === "done" ? "Mark todo" : "Mark done"}
-                </button>
-              </div>
-              <div className="planner-row-label">Color</div>
-              <div className="planner-inline-buttons">
-                <input
-                  type="color"
-                  value={selectedNode.color || (selectedNodeHasStoryChildren ? storyContainerColor() : defaultNodeColor(selectedNode.kind))}
-                  onChange={(event) => {
-                    void setNodeColor(selectedNode.id, event.target.value);
-                  }}
-                  disabled={busyAction}
-                  className="planner-color-input-lg"
-                />
-                <button
-                  onClick={() => {
-                    void setNodeColor(selectedNode.id, undefined);
-                  }}
-                  disabled={busyAction || !selectedNode.color}
-                >
-                  Reset color
-                </button>
-              </div>
-              <input
-                ref={renameInputRef}
-                value={renameTitle}
-                onChange={(event) => setRenameTitle(event.target.value)}
-                onKeyDown={(event) => {
-                  if (event.key !== "Enter") return;
-                  event.preventDefault();
-                  if (busyAction) return;
-                  void renameSelected();
-                }}
-              />
-              <div className="planner-inline-buttons">
-                <button onClick={renameSelected} disabled={busyAction || renameTitle.trim().length === 0}>
-                  Rename
-                </button>
-                <button
-                  className="danger"
-                  onClick={deleteSelected}
-                  disabled={busyAction || selectedNode.id === rootNodeId}
-                >
-                  Delete subtree
-                </button>
-              </div>
-              <div className="planner-row-label">Body text</div>
-              <textarea
-                value={bodyDraft}
-                onChange={(event) => setBodyDraft(event.target.value)}
-                placeholder={
-                  selectedNode.kind === "story"
-                    ? "Write scene/story details for this node..."
-                    : "Write extended notes for this node..."
-                }
-                rows={selectedNode.kind === "story" ? 7 : 5}
-                disabled={busyAction}
-              />
-              <button onClick={saveSelectedBody} disabled={busyAction || bodyDraft.trim() === (selectedNode.body || "").trim()}>
-                Save body text
-              </button>
-
-              <div className="planner-row-label">Children</div>
-              <div className="planner-chip-list">
-                {selectedNodeChildren.length === 0 ? (
-                  <span className="planner-subtle">No child nodes yet.</span>
-                ) : (
-                  selectedNodeChildren.map((child) => (
-                    <button
-                      key={child.id}
-                      className="chip"
-                      onClick={() => {
-                        setSelectedNodeId(child.id);
-                        setActivePortalRefId(null);
-                      }}
-                    >
-                      <span className={child.taskStatus === "done" ? "planner-node-title done" : ""}>{child.title}</span>
-                    </button>
-                  ))
-                )}
-              </div>
-              {selectedNodeChildren.length > 0 ? (
-                <button
-                  onClick={() => toggleNodeCollapse(selectedNode.id)}
-                  type="button"
-                >
-                  {selectedNodeCollapsed ? "Expand children" : "Collapse children"}
-                </button>
-              ) : null}
-              {CROSS_REFERENCES_ENABLED ? (
-                <>
-                  <div className="planner-row-label">Bubbles</div>
-                  <div className="planner-inline-buttons">
-                    <button
-                      onClick={() => {
-                        void handleContextAddCrossRef(selectedNode.id);
-                      }}
-                    >
-                      Add bubble to this node
-                    </button>
-                  </div>
-                </>
-              ) : null}
-
-              {selectedNode.kind === "story" ? (
-                <>
-                  <div className="planner-row-label">Story lane</div>
-                  <div className="planner-inline-buttons">
-                    <button onClick={openSelectedAsStoryLane}>Open this story in lane view</button>
-                    <button
-                      onClick={() => {
-                        void handleContextAddChild(selectedNode.id);
-                      }}
-                      disabled={busyAction}
-                    >
-                      Add beat node
-                    </button>
-                  </div>
-                  <p className="planner-subtle">
-                    Lane view arranges child nodes left-to-right as beats. Use each beat node's body text for long scene notes.
-                  </p>
-                  <details className="planner-advanced-tools">
-                    <summary>Legacy checklist beats (optional)</summary>
-                    <div className="planner-advanced-tools-content">
-                      <div className="planner-reference-list">
-                        {(selectedNode.storySteps || []).length === 0 ? (
-                          <span className="planner-subtle">No checklist beats yet.</span>
-                        ) : (
-                          (selectedNode.storySteps || []).map((step, index) => (
-                            <div key={step.id} className="planner-story-step-item">
-                              <button
-                                className="planner-story-step-toggle"
-                                onClick={() => {
-                                  void toggleStoryStepDone(step.id);
-                                }}
-                                disabled={busyAction}
-                                title={step.done ? "Mark as not done" : "Mark as done"}
-                              >
-                                {step.done ? "☑" : "☐"}
-                              </button>
-                              <span className={step.done ? "planner-story-step-text done" : "planner-story-step-text"}>
-                                {`${index + 1}. ${step.text}`}
-                              </span>
-                              <div className="planner-story-step-actions">
-                                <button
-                                  onClick={() => {
-                                    void moveStoryStep(step.id, -1);
-                                  }}
-                                  disabled={busyAction || index === 0}
-                                  title="Move up"
-                                >
-                                  ↑
-                                </button>
-                                <button
-                                  onClick={() => {
-                                    void moveStoryStep(step.id, 1);
-                                  }}
-                                  disabled={busyAction || index === (selectedNode.storySteps || []).length - 1}
-                                  title="Move down"
-                                >
-                                  ↓
-                                </button>
-                                <button
-                                  className="danger"
-                                  onClick={() => {
-                                    void deleteStoryStep(step.id);
-                                  }}
-                                  disabled={busyAction}
-                                  title="Delete step"
-                                >
-                                  x
-                                </button>
-                              </div>
-                            </div>
-                          ))
-                        )}
-                      </div>
-                      <div className="planner-story-step-add">
-                        <input
-                          value={newStoryStepText}
-                          onChange={(event) => setNewStoryStepText(event.target.value)}
-                          onKeyDown={(event) => {
-                            if (event.key !== "Enter") return;
-                            event.preventDefault();
-                            if (busyAction || newStoryStepText.trim().length === 0) return;
-                            void addStoryStep();
-                          }}
-                          placeholder="Add checklist beat..."
-                          disabled={busyAction}
-                        />
-                        <button onClick={addStoryStep} disabled={busyAction || newStoryStepText.trim().length === 0}>
-                          Add step
-                        </button>
-                      </div>
-                    </div>
-                  </details>
-                </>
-              ) : null}
-            </>
-          ) : (
-            <p className="planner-subtle">No node selected.</p>
-          )}
-        </div>
-        ) : null}
-
-        {showSimpleBubblesSection ? (
-          <SimpleBubblesPanel
-            bubbleTargetNode={bubbleTargetNode}
-            nodesById={nodesById}
-            isMobileLayout={isMobileLayout}
-            busyAction={busyAction}
-            selectedNodeId={selectedNodeId}
-            selectedNodeRefs={selectedNodeRefs}
-            activePortalRef={activePortalRef}
-            effectiveBubbleTargetId={effectiveBubbleTargetId}
-            newRefLabelInputRef={newRefLabelInputRef}
-            newRefLabel={newRefLabel}
-            onNewRefLabelChange={setNewRefLabel}
-            newRefColor={newRefColor}
-            onNewRefColorChange={setNewRefColor}
-            newRefCode={newRefCode}
-            onNewRefCodeChange={setNewRefCode}
-            nextAutoBubbleCode={nextAutoBubbleCode}
-            effectiveNewBubbleCode={effectiveNewBubbleCode}
-            canCreateBubbleFromInput={canCreateBubbleFromInput}
-            bubblePrefixSuggestions={bubblePrefixSuggestions}
-            defaultBubbleColor={DEFAULT_BUBBLE_COLOR}
-            onSelectBubbleTarget={(nodeId) => {
-              setSelectedNodeId(nodeId);
-              setActivePortalRefId(null);
-            }}
-            onCreateCrossRef={createCrossRef}
-            onOpenMobileQuickBubble={openMobileQuickBubble}
-            onCloseMobilePanels={() => {
-              setMobileQuickBubbleOpen(false);
-              setMobileSidebarOpen(false);
-              setMobileQuickEditorOpen(false);
-            }}
-            onBlurActiveInput={blurActiveInput}
-            onApplyBubbleSuggestion={applyBubbleSuggestion}
-            onToggleActivePortalRef={(refId) => {
-              setActivePortalRefId((prev) => (prev === refId ? null : refId));
-            }}
-            onDeletePortalByRefId={(refId) => {
-              void deletePortalByRefId(refId);
-            }}
-            onUpdateCrossRefColor={updateCrossRefColor}
-          />
-        ) : null}
-
-        {showBubblesSection ? (
-        <div className="planner-panel-block">
-          <SharedBubblesTopPanel
-            refs={refs}
-            selectedNode={selectedNode}
-            selectedNodeId={selectedNodeId}
-            selectedNodeRefs={selectedNodeRefs}
-            nodesById={nodesById}
-            activePortalRef={activePortalRef}
-            activePortalTargets={activePortalTargets}
-            busyAction={busyAction}
-            canCreateBubbleFromInput={canCreateBubbleFromInput}
-            newRefLabelInputRef={newRefLabelInputRef}
-            newRefLabel={newRefLabel}
-            onNewRefLabelChange={setNewRefLabel}
-            newRefCode={newRefCode}
-            onNewRefCodeChange={setNewRefCode}
-            newRefType={newRefType}
-            onNewRefTypeChange={setNewRefType}
-            newRefSuggestions={newRefSuggestions}
-            onCreateCrossRef={createCrossRef}
-            describeRefTargets={describeRefTargets}
-            onLinkCrossRefToNode={linkCrossRefToNode}
-            onSelectRefForEditing={selectRefForEditing}
-            onDetachCrossRef={detachCrossRef}
-            onJumpToReferencedNode={jumpToReferencedNode}
-          />
-
-          <SharedBubblesManager
-            refs={refs}
-            refScopeFilter={refScopeFilter}
-            onRefScopeFilterChange={setRefScopeFilter}
-            refCategoryFilter={refCategoryFilter}
-            onRefCategoryFilterChange={setRefCategoryFilter}
-            refSearchQuery={refSearchQuery}
-            onRefSearchQueryChange={setRefSearchQuery}
-            filteredRefs={filteredRefs}
-            selectedNodeId={selectedNodeId}
-            selectedNodeRefIds={selectedNodeRefIds}
-            busyAction={busyAction}
-            onSelectRefForEditing={selectRefForEditing}
-            describeRefLibraryPreview={describeRefLibraryPreview}
-            onLinkCrossRefToNode={linkCrossRefToNode}
-            onDetachCrossRef={detachCrossRef}
-            editRefId={editRefId}
-            editRefLabel={editRefLabel}
-            onEditRefLabelChange={setEditRefLabel}
-            editRefCode={editRefCode}
-            onEditRefCodeChange={setEditRefCode}
-            editRefType={editRefType}
-            onEditRefTypeChange={setEditRefType}
-            editRefTags={editRefTags}
-            onEditRefTagsChange={setEditRefTags}
-            editRefContact={editRefContact}
-            onEditRefContactChange={setEditRefContact}
-            editRefNotes={editRefNotes}
-            onEditRefNotesChange={setEditRefNotes}
-            editRefLinks={editRefLinks}
-            onEditRefLinksChange={setEditRefLinks}
-            onSaveCrossRefEdits={saveCrossRefEdits}
-            onDuplicateCrossRef={(refId) => {
-              void duplicateCrossRef(refId);
-            }}
-            linkNodeQuery={linkNodeQuery}
-            onLinkNodeQueryChange={setLinkNodeQuery}
-            linkTargetNodeId={linkTargetNodeId}
-            onLinkTargetNodeIdChange={setLinkTargetNodeId}
-            linkableNodeOptions={linkableNodeOptions}
-            onLinkNodeFromEdit={linkCrossRefToNode}
-            editableRefTargets={editableRefTargets}
-            onJumpToReferencedNode={jumpToReferencedNode}
-            mergeCandidateRefs={mergeCandidateRefs}
-            mergeFromRefId={mergeFromRefId}
-            onMergeFromRefIdChange={setMergeFromRefId}
-            onMergeCrossRefIntoEdited={mergeCrossRefIntoEdited}
-            onDeleteCrossRefBubble={deleteCrossRefBubble}
-          />
-
-        </div>
-        ) : null}
-
-
-        {error ? <div className="planner-error">{error}</div> : null}
-          </>
-        )}
-      </aside>
-
-      <MobileOverlayBackdrops
-        isMobileLayout={isMobileLayout}
-        mobileSidebarOpen={mobileSidebarOpen}
-        mobileQuickEditorOpen={mobileQuickEditorOpen}
-        mobileQuickBubbleOpen={mobileQuickBubbleOpen}
-        onCloseSidebar={() => setMobileSidebarOpen(false)}
-        onCloseQuickEditor={() => setMobileQuickEditorOpen(false)}
-        onCloseQuickBubble={() => setMobileQuickBubbleOpen(false)}
-      />
-
-      <MobileQuickEditorSheet
-        open={isMobileLayout && mobileQuickEditorOpen}
-        mode={mobileQuickEditorMode}
-        onModeChange={setMobileQuickEditorMode}
-        selectedNode={selectedNode}
-        selectedNodeId={selectedNodeId}
-        nodesById={nodesById}
-        renameTitle={renameTitle}
-        onRenameTitleChange={setRenameTitle}
-        onRenameSelected={renameSelected}
-        busyAction={busyAction}
-        crossReferencesEnabled={CROSS_REFERENCES_ENABLED}
-        selectedNodeRefs={selectedNodeRefs}
-        newRefLabel={newRefLabel}
-        onNewRefLabelChange={setNewRefLabel}
-        canCreateBubbleFromInput={canCreateBubbleFromInput}
-        onCreateCrossRef={createCrossRef}
-        onOpenMobileQuickBubble={openMobileQuickBubble}
-        bodyDraft={bodyDraft}
-        onBodyDraftChange={setBodyDraft}
-        onSaveSelectedBody={saveSelectedBody}
-        selectedNodeBody={selectedNode?.body || ""}
-        newRefCode={newRefCode}
-        onNewRefCodeChange={setNewRefCode}
-        nextAutoBubbleCode={nextAutoBubbleCode}
-        newRefColor={newRefColor}
-        onNewRefColorChange={setNewRefColor}
-        bubblePrefixSuggestions={bubblePrefixSuggestions}
-        onApplyBubbleSuggestion={applyBubbleSuggestion}
-        onOpenBubblesPanel={openBubblesPanel}
-        selectedNodeChildrenCount={selectedNodeChildren.length}
-        selectedNodeCollapsed={selectedNodeCollapsed}
-        onSetNodeTaskStatus={setNodeTaskStatus}
-        onChangeType={(nodeId) => handleContextChangeType(nodeId)}
-        onToggleNodeCollapse={toggleNodeCollapse}
-        onFocusHere={setCurrentRootId}
-        onAddChild={handleContextAddChild}
-        onOpenSelectedAsStoryLane={openSelectedAsStoryLane}
-        onOpenFullNodePanel={() => {
-          setMobileSidebarSection("node");
-          setMobileSidebarOpen(true);
-          setMobileQuickEditorOpen(false);
-        }}
-        onClose={() => setMobileQuickEditorOpen(false)}
-      />
-
-      <MobileQuickBubbleSheet
-        open={isMobileLayout && mobileQuickBubbleOpen}
-        selectedNode={selectedNode}
-        nodesById={nodesById}
-        mobileQuickBubbleInputRef={mobileQuickBubbleInputRef}
-        newRefLabel={newRefLabel}
-        onNewRefLabelChange={setNewRefLabel}
-        busyAction={busyAction}
-        canCreateBubbleFromInput={canCreateBubbleFromInput}
-        onCreateBubble={createCrossRef}
-        focusMobileQuickBubbleInput={focusMobileQuickBubbleInput}
-        blurActiveInput={blurActiveInput}
-        openBubblesPanel={openBubblesPanel}
-        newRefColor={newRefColor}
-        onNewRefColorChange={setNewRefColor}
-        newRefCode={newRefCode}
-        onNewRefCodeChange={setNewRefCode}
-        nextAutoBubbleCode={nextAutoBubbleCode}
-        effectiveNewBubbleCode={effectiveNewBubbleCode}
-        bubblePrefixSuggestions={bubblePrefixSuggestions}
-        applyBubbleSuggestion={applyBubbleSuggestion}
-        selectedNodeRefs={selectedNodeRefs}
-        onSelectRefForEditing={selectRefForEditing}
-        activePortalRef={activePortalRef}
-        mobileQuickBubbleEditName={mobileQuickBubbleEditName}
-        onMobileQuickBubbleEditNameChange={setMobileQuickBubbleEditName}
-        onSaveMobileQuickBubbleName={saveMobileQuickBubbleName}
-        onUpdateCrossRefColor={updateCrossRefColor}
-        defaultBubbleColor={DEFAULT_BUBBLE_COLOR}
-        onDeletePortalByRefId={deletePortalByRefId}
-        onClose={() => setMobileQuickBubbleOpen(false)}
-      />
-
-      <main className="planner-canvas">
-        <MobileCanvasToolbar
+        <PlannerSidebarChrome
+          sidebarIsCollapsed={sidebarIsCollapsed}
           isMobileLayout={isMobileLayout}
-          mobileToolbarOpen={mobileToolbarOpen}
+          canUndo={canUndo}
+          canRedo={canRedo}
+          busyAction={busyAction}
+          undoLabel={undoLabel}
+          redoLabel={redoLabel}
+          searchInputRef={searchInputRef}
+          searchQuery={searchQuery}
+          searchMatchCount={searchMatchingIds.size}
           selectedNodeId={selectedNodeId}
-          selectedNode={selectedNode}
           crossReferencesEnabled={CROSS_REFERENCES_ENABLED}
-          rootNodeId={rootNodeId}
-          currentRootHasParent={!!currentRootNode?.parentId}
-          onToggleOpen={() => setMobileToolbarOpen((previous) => !previous)}
-          onOpenMenu={() => {
-            setMobileSidebarSection(selectedNodeId ? "node" : "project");
-            setMobileSidebarOpen(true);
-            setMobileQuickEditorOpen(false);
-            setMobileQuickBubbleOpen(false);
-            setMobileToolbarOpen(false);
-          }}
-          onOpenEditor={() => {
-            setMobileSidebarOpen(false);
-            setMobileQuickEditorMode("compact");
-            setMobileQuickEditorOpen(true);
-            setMobileQuickBubbleOpen(false);
-            setMobileToolbarOpen(false);
-          }}
-          onOpenBubble={() => {
-            if (!selectedNodeId) return;
-            setActivePortalRefId(null);
-            openMobileQuickBubble(selectedNodeId, true);
-            setMobileToolbarOpen(false);
-          }}
-          onAddChild={() => {
-            if (!selectedNodeId) return;
-            void handleContextAddChild(selectedNodeId);
-            setMobileToolbarOpen(false);
-          }}
-          onToggleTaskStatus={() => {
-            if (!selectedNodeId || !selectedNode || selectedNode.kind === "root") return;
-            const current = selectedNode.taskStatus || "none";
-            const nextStatus: TaskStatus = current === "done" ? "todo" : "done";
-            void setNodeTaskStatus(selectedNodeId, nextStatus);
-            setMobileToolbarOpen(false);
-          }}
-          onGoHome={() => {
-            goGrandmotherView();
-            setMobileToolbarOpen(false);
-          }}
-          onGoUp={() => {
-            goUpOneView();
-            setMobileToolbarOpen(false);
-          }}
-        />
-
-        <ReactFlow
-          nodes={reactFlowNodes}
-          edges={flowEdges}
-          nodeTypes={plannerNodeTypes}
-          edgeTypes={edgeTypes}
-          fitView
-          fitViewOptions={{ padding: isMobileLayout ? 0.12 : 0.3, maxZoom: isMobileLayout ? 0.85 : 1 }}
-          onlyRenderVisibleElements={false}
-          nodesConnectable={false}
-          selectionOnDrag={!isMobileLayout}
-          selectionMode={isMobileLayout ? SelectionMode.Full : SelectionMode.Partial}
-          // On mobile, single-finger drag pans the canvas (no box-selection).
-          // On desktop, panning requires middle-mouse or space+drag.
-          panOnDrag={isMobileLayout ? [0, 1, 2] : [1, 2]}
-          panOnScroll={!isMobileLayout}
-          multiSelectionKeyCode={["Shift", "Meta", "Control"]}
-          onInit={setRfInstance}
-          onNodesChange={handleNodesChange}
-          onNodeClick={(_, node) => {
-            setContextMenu(null);
-            setPortalContextMenu(null);
-            // Portal orb tap: toggle active state and (on mobile) open Bubbles panel.
-            if (node.id.startsWith("portal:")) {
-              const refId = node.id.split(":")[1];
-              const nextSelected = activePortalRefId === refId ? null : refId;
-              setActivePortalRefId(nextSelected);
-              if (nextSelected) {
-                selectRefForEditing(refId);
-                openBubblesPanel(false);
-                window.setTimeout(() => {
-                  const section = document.getElementById("cross-ref-bubbles-panel");
-                  section?.scrollIntoView({ block: "start", behavior: "smooth" });
-                }, 20);
-              }
-              if (isMobileLayout) setMobileToolbarOpen(false);
-              return;
-            }
-            setSelectedNodeId(node.id);
-            setActivePortalRefId(null);
-            if (isMobileLayout) {
-              setMobileSidebarOpen(false);
-              setMobileToolbarOpen(false);
-            }
-          }}
-          onNodeDoubleClick={(_, node) => {
-            if (isMobileLayout) return;
-            // Zoom only; changing view root is an explicit action.
-            onNodeDoubleClick(_, node);
-          }}
-          onNodeMouseEnter={(_, node) => {
-            if (node.id.startsWith("portal:")) return;
-            scheduleHoverUpdate(node.id, hoveredEdgeId);
-          }}
-          onNodeMouseLeave={(_, node) => {
-            if (node.id.startsWith("portal:")) return;
-            scheduleHoverUpdate(null, hoveredEdgeId);
-          }}
-          onEdgeMouseEnter={(_, edge) => scheduleHoverUpdate(hoveredNodeId, edge.id)}
-          onEdgeMouseLeave={() => scheduleHoverUpdate(hoveredNodeId, null)}
-          onNodeDragStart={(_, node) => {
-            if (!node.id.startsWith("portal:")) isDraggingRef.current = true;
-          }}
-          onNodeDrag={onNodeDrag}
-          onNodeDragStop={onNodeDragStop}
-          onSelectionDragStop={onSelectionDragStop}
-          onNodeContextMenu={(event, node) => {
-            event.preventDefault();
-            // Portal orb right-click → show portal delete menu
-            if (node.id.startsWith("portal:")) {
-              const refId = node.id.split(":")[1];
-              setPortalContextMenu({ x: event.clientX, y: event.clientY, refId });
-              return;
-            }
-            setPortalContextMenu(null);
-            if (isMobileLayout) {
-              setSelectedNodeId(node.id);
-              setActivePortalRefId(null);
-              setMobileSidebarOpen(false);
-              setMobileQuickBubbleOpen(false);
-              setMobileQuickEditorMode("compact");
-              setMobileQuickEditorOpen(true);
-              setMobileToolbarOpen(false);
-              return;
-            }
-            setSelectedNodeId(node.id);
-            setActivePortalRefId(null);
-            setContextMenu({
-              x: event.clientX,
-              y: event.clientY,
-              nodeId: node.id,
-            });
-          }}
-          onPaneClick={() => {
-            setContextMenu(null);
-            setPortalContextMenu(null);
-            setActivePortalRefId(null);
-            // On mobile, tapping the canvas background deselects and closes the sheet.
-            if (isMobileLayout) {
-              setSelectedNodeId(null);
-              setMobileQuickEditorOpen(false);
-              setMobileQuickBubbleOpen(false);
-              setMobileToolbarOpen(false);
-            }
-          }}
-          minZoom={0.3}
-        >
-          <Background gap={22} size={1} />
-        </ReactFlow>
-
-        {/* Context Menu */}
-        {contextMenu && (
-          <NodeContextMenu
-            x={contextMenu.x}
-            y={contextMenu.y}
-            nodeId={contextMenu.nodeId}
-            nodeTitle={nodesById.get(contextMenu.nodeId)?.title || "Node"}
-            nodeKind={nodesById.get(contextMenu.nodeId)?.kind || "item"}
-            taskStatus={nodesById.get(contextMenu.nodeId)?.taskStatus || "none"}
-            hasChildren={(childrenByParent.get(contextMenu.nodeId) || []).length > 0}
-            onClose={() => setContextMenu(null)}
-            onAddChild={handleContextAddChild}
-            onAddStorySibling={handleContextAddStorySibling}
-            onDelete={handleContextDelete}
-            onDuplicate={handleContextDuplicate}
-            onRename={handleContextRename}
-            onAddCrossRef={CROSS_REFERENCES_ENABLED ? handleContextAddCrossRef : undefined}
-            onChangeType={handleContextChangeType}
-            onToggleTaskStatus={handleContextToggleTaskStatus}
-          />
-        )}
-
-        <PortalContextMenu
-          contextMenu={portalContextMenu}
-          refs={refs}
-          busy={busyAction}
-          onDelete={(refId) => {
-            void deletePortalByRefId(refId);
-          }}
-          onClose={() => setPortalContextMenu(null)}
-        />
-
-        <CommandPalette
-          open={paletteOpen}
-          query={paletteQuery}
-          paletteIndex={paletteIndex}
-          items={paletteItems}
-          inputRef={paletteInputRef}
-          onClose={() => {
-            setPaletteOpen(false);
+          bubblesSimplifiedMode={BUBBLES_SIMPLIFIED_MODE}
+          mobileSidebarSection={mobileSidebarSection}
+          onUndo={() => undo(applyLocalOps)}
+          onRedo={() => redo(applyLocalOps)}
+          onCloseMobileSidebar={() => setMobileSidebarOpen(false)}
+          onToggleSidebarCollapse={() => setSidebarCollapsed((prev) => !prev)}
+          onSearchQueryChange={setSearchQuery}
+          onOpenPalette={() => {
+            setPaletteOpen(true);
             setPaletteQuery("");
             setPaletteIndex(0);
           }}
-          onQueryChange={setPaletteQuery}
-          onSetIndex={setPaletteIndex}
-          onRunItem={runPaletteAction}
-        />
+          onOrganizeSelectedBranch={organizeSelectedBranch}
+          onCleanUpCrossRefs={cleanUpCrossRefs}
+          onSetMobileSidebarSection={setMobileSidebarSection}
+          onOpenBubblesPanel={() => openBubblesPanel(true)}
+        >
 
-        <SaveErrorToast open={saveStatus === "error"} message="Could not save node position" />
-      </main>
+        <PlannerSidebarPanels {...plannerSidebarPanelsProps} />
+        </PlannerSidebarChrome>
+      </aside>
+
+      <PlannerMobilePanels {...plannerMobilePanelsProps} />
+
+      <PlannerCanvasSurface {...plannerCanvasSurfaceProps} />
     </div>
   );
 }

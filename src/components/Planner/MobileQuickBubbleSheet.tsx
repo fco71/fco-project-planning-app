@@ -138,26 +138,26 @@ export function MobileQuickBubbleSheet({
             </button>
           </div>
           <div className="planner-inline-buttons planner-mobile-bubble-meta-row">
-            <details className="planner-advanced-tools" style={{ width: "100%" }}>
+            <details className="planner-advanced-tools planner-mobile-bubble-advanced">
               <summary>Advanced style and code (optional)</summary>
               <div className="planner-advanced-tools-content">
-                <label style={{ display: "grid", gap: 4, alignItems: "center" }}>
-                  <span className="planner-subtle" style={{ fontSize: 11 }}>Color</span>
+                <label className="planner-bubble-color-input-wrap">
+                  <span className="planner-subtle planner-subtle-11">Color</span>
                   <input
+                    className="planner-color-input-md"
                     type="color"
                     value={newRefColor}
                     onChange={(event) => onNewRefColorChange(event.target.value)}
-                    style={{ width: 58, height: 34, padding: "4px 6px" }}
                   />
                 </label>
-                <div style={{ display: "grid", gap: 4, flex: 1 }}>
+                <div className="planner-grid-gap-4">
                   <input
+                    className="planner-flex-1"
                     value={newRefCode}
                     onChange={(event) => onNewRefCodeChange(event.target.value)}
                     placeholder={`Internal code (auto ${nextAutoBubbleCode})`}
-                    style={{ flex: 1 }}
                   />
-                  <span className="planner-subtle" style={{ fontSize: 11 }}>
+                  <span className="planner-subtle planner-subtle-11">
                     Internal code: <strong>{effectiveNewBubbleCode}</strong>
                   </span>
                 </div>
@@ -225,12 +225,12 @@ export function MobileQuickBubbleSheet({
               />
               <div className="planner-inline-buttons planner-mobile-bubble-edit-row">
                 <input
+                  className="planner-color-input-md"
                   type="color"
                   value={activePortalRef.color || defaultBubbleColor}
                   onChange={(event) => {
                     void onUpdateCrossRefColor(activePortalRef.id, event.target.value);
                   }}
-                  style={{ width: 58, height: 34, padding: "4px 6px" }}
                 />
                 <button
                   type="button"
