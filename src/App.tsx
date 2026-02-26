@@ -1,6 +1,8 @@
+import { Suspense, lazy } from "react";
 import { useAuth } from "./auth/AuthProvider";
 import LoginPage from "./pages/LoginPage";
-import PlannerPage from "./pages/PlannerPage";
+
+const PlannerPage = lazy(() => import("./pages/PlannerPage"));
 
 function LoadingFallback() {
   return <div className="planner-empty-state">Loading...</div>;
@@ -34,7 +36,9 @@ export default function App() {
         </button>
       </header>
       <div className="app-content">
-        <PlannerPage user={user} />
+        <Suspense fallback={<LoadingFallback />}>
+          <PlannerPage user={user} />
+        </Suspense>
       </div>
     </div>
   );

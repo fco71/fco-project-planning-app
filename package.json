@@ -7,6 +7,7 @@
     "dev": "vite",
     "build": "vite build",
     "build:offline": "VITE_OFFLINE_MODE=1 vite build",
+    "test": "vitest run",
     "lint": "eslint .",
     "typecheck": "tsc --noEmit",
     "check": "npm run lint && npm run typecheck",
@@ -30,7 +31,8 @@
     "firebase-tools": "^15.6.0",
     "globals": "^16.5.0",
     "typescript": "^5.9.3",
-    "vite": "npm:rolldown-vite@7.2.5"
+    "vite": "npm:rolldown-vite@7.2.5",
+    "vitest": "^4.0.18"
   },
   "overrides": {
     "vite": "npm:rolldown-vite@7.2.5"

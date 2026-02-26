@@ -61,6 +61,7 @@ import { usePlannerVisiblePortals } from "../hooks/usePlannerVisiblePortals";
 import { usePlannerFlowNodes } from "../hooks/usePlannerFlowNodes";
 import { usePlannerFlowGraph } from "../hooks/usePlannerFlowGraph";
 import { usePlannerApplyLocalOps } from "../hooks/usePlannerApplyLocalOps";
+import { usePlannerNodeIndex } from "../hooks/usePlannerNodeIndex";
 import { NodeContextMenu } from "../components/Planner/NodeContextMenu";
 import "reactflow/dist/style.css";
 
@@ -360,24 +361,7 @@ export default function PlannerPage({ user }: PlannerPageProps) {
     setRefs,
   });
 
-  const nodesById = useMemo(() => new Map(nodes.map((node) => [node.id, node] as const)), [nodes]);
-
-  const childrenByParent = useMemo(() => {
-    const map = new Map<string, string[]>();
-    nodes.forEach((node) => {
-      if (!node.parentId) return;
-      if (!map.has(node.parentId)) map.set(node.parentId, []);
-      map.get(node.parentId)?.push(node.id);
-    });
-    map.forEach((list) =>
-      list.sort((a, b) => {
-        const aTitle = nodesById.get(a)?.title || "";
-        const bTitle = nodesById.get(b)?.title || "";
-        return aTitle.localeCompare(bTitle);
-      })
-    );
-    return map;
-  }, [nodes, nodesById]);
+  const { nodesById, childrenByParent } = usePlannerNodeIndex(nodes);
 
   usePlannerResponsiveUi({
     isMobileLayout,

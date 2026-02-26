@@ -31,6 +31,29 @@ export default defineConfig({
   build: {
     // Clean dist each build to avoid stale assets being served/deployed.
     emptyOutDir: true,
+    rollupOptions: {
+      output: {
+        manualChunks(id) {
+          if (!id.includes("node_modules")) return undefined;
+          if (
+            id.includes("/reactflow/")
+            || id.includes("/@reactflow/")
+            || id.includes("/@xyflow/")
+            || id.includes("/d3-")
+            || id.includes("/zustand/")
+          ) {
+            return "vendor-reactflow";
+          }
+          if (id.includes("/firebase/") || id.includes("/@firebase/") || id.includes("/idb/")) {
+            return "vendor-firebase";
+          }
+          if (id.includes("/react/") || id.includes("/react-dom/") || id.includes("/scheduler/")) {
+            return "vendor-react";
+          }
+          return "vendor";
+        },
+      },
+    },
   },
   plugins: [
     react(),
