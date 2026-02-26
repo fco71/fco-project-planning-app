@@ -1,14 +1,12 @@
 /* eslint-disable react-hooks/set-state-in-effect */
-import React, { memo, useCallback, useEffect, useMemo, useRef, useState } from "react";
-import { useUndoRedo, type LocalOp } from "../hooks/useUndoRedo";
+import { memo, useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { useUndoRedo } from "../hooks/useUndoRedo";
 import ReactFlow, {
   Background,
   Handle,
   Position,
   SelectionMode,
-  type Edge,
   type EdgeTypes,
-  type Node,
   type NodeProps,
   type NodeTypes,
   type ReactFlowInstance,
@@ -59,6 +57,10 @@ import { usePlannerRootSelectionSync } from "../hooks/usePlannerRootSelectionSyn
 import { usePlannerEdgeHoverState } from "../hooks/usePlannerEdgeHoverState";
 import { usePlannerBaseGraphData } from "../hooks/usePlannerBaseGraphData";
 import { usePlannerBaseNodeState } from "../hooks/usePlannerBaseNodeState";
+import { usePlannerVisiblePortals } from "../hooks/usePlannerVisiblePortals";
+import { usePlannerFlowNodes } from "../hooks/usePlannerFlowNodes";
+import { usePlannerFlowGraph } from "../hooks/usePlannerFlowGraph";
+import { usePlannerApplyLocalOps } from "../hooks/usePlannerApplyLocalOps";
 import { NodeContextMenu } from "../components/Planner/NodeContextMenu";
 import "reactflow/dist/style.css";
 
@@ -143,20 +145,6 @@ function chooseAnchorNodeId(nodeIds: string[], ...preferredIds: Array<string | n
     if (preferred && nodeIds.includes(preferred)) return preferred;
   }
   return nodeIds[0] || null;
-}
-
-function asFiniteNumber(value: unknown): number | null {
-  if (typeof value === "number" && Number.isFinite(value)) return value;
-  if (typeof value === "string" && value.trim()) {
-    const parsed = Number(value);
-    return Number.isFinite(parsed) ? parsed : null;
-  }
-  return null;
-}
-
-function clamp(value: number, min: number, max: number): number {
-  if (min > max) return value;
-  return Math.min(max, Math.max(min, value));
 }
 
 function defaultPortalPositionForAnchor(anchor: { x: number; y: number } | null, seed: string): { x: number; y: number } {
@@ -367,37 +355,10 @@ export default function PlannerPage({ user }: PlannerPageProps) {
     redoLabel,
   } = useUndoRedo(user.uid);
 
-  /**
-   * Apply a list of LocalOps to React state immediately (used by undo/redo).
-   * Kept as a stable callback; setNodes/setRefs identity is guaranteed stable.
-   */
-  const applyLocalOps = useCallback((ops: LocalOp[]) => {
-    const nodeOps = ops.filter((o) => o.target === "nodes");
-    const refOps  = ops.filter((o) => o.target === "refs");
-    if (nodeOps.length > 0) {
-      setNodes((prev) => {
-        let next = prev;
-        for (const op of nodeOps) {
-          if (op.op === "patch")  next = next.map((n) => n.id === op.nodeId ? { ...n, ...op.patch } as TreeNode : n);
-          if (op.op === "add")    next = [...next, op.node as TreeNode];
-          if (op.op === "remove") { const ids = new Set(op.nodeIds); next = next.filter((n) => !ids.has(n.id)); }
-        }
-        return next;
-      });
-    }
-    if (refOps.length > 0) {
-      setRefs((prev) => {
-        let next = prev;
-        for (const op of refOps) {
-          if (op.op === "patch")  next = next.map((r) => r.id === op.refId ? { ...r, ...op.patch } as CrossRef : r);
-          if (op.op === "add")    next = [...next, op.ref as CrossRef];
-          if (op.op === "remove") { const ids = new Set(op.refIds); next = next.filter((r) => !ids.has(r.id)); }
-        }
-        return next;
-      });
-    }
-  }, []);
-  // ─────────────────────────────────────────────────────────────────────────
+  const applyLocalOps = usePlannerApplyLocalOps({
+    setNodes,
+    setRefs,
+  });
 
   const nodesById = useMemo(() => new Map(nodes.map((node) => [node.id, node] as const)), [nodes]);
 
@@ -601,354 +562,44 @@ export default function PlannerPage({ user }: PlannerPageProps) {
     baseTreeNodes,
   });
 
-  // ── flowNodes (ventovault-map: viewNodes) ──────────────────────────────────
-  // Creates JSX labels from plain data in baseNodes + applies selection/hover styling.
-  // This is the equivalent of ventovault's viewNodes memo: JSX is created HERE,
-  // not in the base data, so baseNodes stays reference-stable for applyNodeChanges.
-  const flowNodes = useMemo(() => {
-    return baseNodes.map((node) => {
-      const d = node.data as {
-        nodeId: string; title: string; kind: NodeKind;
-        childCount: number; isCollapsed: boolean; isRoot: boolean;
-        isSearchMatch: boolean; isProject: boolean; isStory: boolean;
-        hasStoryChildren: boolean; isTaskTodo: boolean; isTaskDone: boolean;
-        isStoryLaneBeat: boolean; showStoryBody: boolean;
-        isExpandedStoryCard: boolean; bodyText: string;
-        nodeWidth: number; nodeHeight: number;
-        storedWidth?: number; storedHeight?: number;
-      };
-      const isSelected = selectedNodeId === node.id;
-      const isActivePortalTarget = activeLinkedNodeIds.has(node.id);
-      const isHoverRelated = hoverNodeIds.has(node.id);
-      const isDropTarget = node.id === dropTargetNodeId;
-      const isInlineStoryEditor = d.showStoryBody && d.isExpandedStoryCard;
+  const flowNodes = usePlannerFlowNodes({
+    baseNodes,
+    selectedNodeId,
+    activeLinkedNodeIds,
+    hoverNodeIds,
+    dropTargetNodeId,
+    hoveredNodeId,
+    hoveredEdgeId,
+    isMobileLayout,
+    toggleNodeCollapse,
+    setSelectedNodeId,
+    persistNodeBody,
+    toggleStoryCardExpand,
+    startStoryNodeResize,
+    resetStoryNodeSize,
+  });
 
-      // Build JSX label from plain data (ventovault pattern: JSX created in viewNodes)
-      const labelContent = (
-        <div className={`planner-node-card${d.showStoryBody ? " story" : ""}`}>
-          <div className="planner-node-label">
-            {d.childCount > 0 && (
-              <button
-                className="nodrag nopan planner-collapse-toggle"
-                type="button"
-                aria-label={d.isCollapsed ? "Expand children" : "Collapse children"}
-                onClick={(e) => {
-                  e.stopPropagation();
-                  toggleNodeCollapse(d.nodeId);
-                }}
-                onTouchStart={(e) => {
-                  e.stopPropagation();
-                }}
-                style={{
-                  marginRight: "6px",
-                  minWidth: isMobileLayout ? 30 : 24,
-                  minHeight: isMobileLayout ? 28 : 22,
-                  padding: isMobileLayout ? "4px 8px" : "2px 6px",
-                  border: "none",
-                  background: "rgba(255, 255, 255, 0.1)",
-                  color: "rgba(255, 255, 255, 0.8)",
-                  borderRadius: "4px",
-                  cursor: "pointer",
-                  fontSize: isMobileLayout ? "12px" : "10px",
-                  fontWeight: 700,
-                  touchAction: "manipulation",
-                  transition: "background 150ms ease",
-                }}
-                onMouseEnter={(e) => {
-                  (e.target as HTMLButtonElement).style.background = "rgba(255, 255, 255, 0.2)";
-                }}
-                onMouseLeave={(e) => {
-                  (e.target as HTMLButtonElement).style.background = "rgba(255, 255, 255, 0.1)";
-                }}
-              >
-                {d.isCollapsed ? "▶" : "▼"}
-              </button>
-            )}
-            <span className={d.isTaskDone ? "planner-node-title done" : "planner-node-title"}>{d.title}</span>
-            {!d.isRoot ? <span className={`planner-kind-badge ${d.kind}`}>{d.kind}</span> : null}
-            {!d.isRoot && (d.isTaskTodo || d.isTaskDone) ? (
-              <span className={`planner-task-badge ${d.isTaskDone ? "done" : "todo"}`}>
-                {d.isTaskDone ? "Done" : "Task"}
-              </span>
-            ) : null}
-            {d.childCount > 0 ? <span className="planner-node-count">{d.childCount}</span> : null}
-          </div>
-          {d.showStoryBody ? (
-            <>
-              {isInlineStoryEditor ? (
-                <textarea
-                  key={`story-inline:${d.nodeId}:${d.bodyText}`}
-                  className={`planner-node-body-editor nodrag nopan ${d.isExpandedStoryCard ? "expanded" : ""}`}
-                  defaultValue={d.bodyText}
-                  placeholder="Write story text directly on the node..."
-                  rows={1}
-                  onPointerDown={(event) => {
-                    event.stopPropagation();
-                  }}
-                  onClick={(event) => {
-                    event.stopPropagation();
-                  }}
-                  onFocus={(event) => {
-                    event.stopPropagation();
-                    setSelectedNodeId(d.nodeId);
-                  }}
-                  onBlur={(event) => {
-                    void persistNodeBody(d.nodeId, event.currentTarget.value);
-                  }}
-                  onKeyDown={(event) => {
-                    if ((event.metaKey || event.ctrlKey) && event.key === "Enter") {
-                      event.preventDefault();
-                      event.currentTarget.blur();
-                    }
-                  }}
-                />
-              ) : (
-                <div className={`planner-node-body-preview ${d.isExpandedStoryCard ? "expanded" : ""}`}>
-                  {d.bodyText || "No body text yet. Select this node and write directly on the card."}
-                </div>
-              )}
-              <button
-                className="planner-story-card-expand"
-                onClick={(event) => {
-                  event.stopPropagation();
-                  toggleStoryCardExpand(d.nodeId);
-                }}
-                type="button"
-              >
-                {d.isExpandedStoryCard ? "Collapse text" : "Expand text"}
-              </button>
-              {isSelected ? (
-                <button
-                  className="planner-story-resize-handle nodrag nopan"
-                  type="button"
-                  title="Drag corner to resize. Double-click to reset size."
-                  aria-label="Resize story card"
-                  onPointerDown={(event) => {
-                    startStoryNodeResize(
-                      d.nodeId,
-                      d.nodeWidth,
-                      d.nodeHeight,
-                      d.storedWidth,
-                      d.storedHeight,
-                      event
-                    );
-                  }}
-                  onDoubleClick={(event) => {
-                    event.preventDefault();
-                    event.stopPropagation();
-                    void resetStoryNodeSize(d.nodeId);
-                  }}
-                >
-                  ◢
-                </button>
-              ) : null}
-            </>
-          ) : null}
-        </div>
-      );
+  const visiblePortals = usePlannerVisiblePortals({
+    crossReferencesEnabled: CROSS_REFERENCES_ENABLED,
+    refs,
+    filteredTreeIdSet,
+    baseNodes,
+    isMobileLayout,
+    activePortalRefId,
+    defaultBubbleColor: DEFAULT_BUBBLE_COLOR,
+    chooseAnchorNodeId,
+    bubbleDisplayToken,
+    rgbaFromHex,
+  });
 
-      return {
-        ...node,
-        data: { ...node.data, label: labelContent },
-        className: isDropTarget ? "drop-target-hover" : undefined,
-        style: {
-          ...(node.style || {}),
-          border: isSelected
-            ? "2px solid rgba(253, 224, 71, 0.95)"
-            : isDropTarget
-              ? "2px solid rgba(52, 211, 153, 0.95)"
-            : isActivePortalTarget
-              ? "2px solid rgba(251, 146, 60, 0.85)"
-            : (node.style as React.CSSProperties)?.border,
-          boxShadow: isSelected
-            ? "0 0 0 3px rgba(253, 224, 71, 0.18), 0 14px 32px rgba(0,0,0,0.45)"
-            : isDropTarget
-              ? "0 0 0 4px rgba(52, 211, 153, 0.28), 0 14px 32px rgba(0,0,0,0.5)"
-            : isActivePortalTarget
-              ? "0 0 0 2px rgba(251,146,60,0.2), 0 14px 30px rgba(0,0,0,0.42)"
-            : isHoverRelated
-              ? "0 0 0 2px rgba(125,211,252,0.22), 0 14px 30px rgba(0,0,0,0.42)"
-              : (node.style as React.CSSProperties)?.boxShadow,
-          opacity: hoveredNodeId || hoveredEdgeId ? (isHoverRelated ? 1 : 0.4) : 1,
-          transition: "opacity 180ms cubic-bezier(0.4, 0, 0.2, 1), box-shadow 180ms cubic-bezier(0.4, 0, 0.2, 1), border-color 180ms cubic-bezier(0.4, 0, 0.2, 1)",
-        },
-      } as Node;
-    });
-  }, [activeLinkedNodeIds, baseNodes, dropTargetNodeId, hoverNodeIds, hoveredEdgeId, hoveredNodeId, isMobileLayout, persistNodeBody, resetStoryNodeSize, selectedNodeId, startStoryNodeResize, toggleNodeCollapse, toggleStoryCardExpand]);
-
-  const flowEdges = useMemo(() => {
-    return baseEdges.map((edge) => {
-      const isHoverRelated = hoverEdgeIds.has(edge.id);
-      const edgeStyle = (edge.style || {}) as React.CSSProperties;
-      const baseStroke = (edgeStyle.stroke as string | undefined) || "rgba(125, 211, 252, 0.45)";
-      const baseWidth = typeof edgeStyle.strokeWidth === "number" ? edgeStyle.strokeWidth : 2;
-      return {
-        ...edge,
-        style: {
-          ...edgeStyle,
-          stroke: isHoverRelated ? "rgba(255, 255, 255, 0.9)" : baseStroke,
-          strokeWidth: isHoverRelated ? Math.max(baseWidth, 3) : baseWidth,
-          opacity: hoveredNodeId || hoveredEdgeId ? (isHoverRelated ? 1 : 0.35) : 1,
-          transition: "opacity 180ms cubic-bezier(0.4, 0, 0.2, 1), stroke 180ms cubic-bezier(0.4, 0, 0.2, 1), stroke-width 180ms cubic-bezier(0.4, 0, 0.2, 1)",
-        },
-      } as Edge;
-    });
-  }, [baseEdges, hoverEdgeIds, hoveredEdgeId, hoveredNodeId]);
-
-  // ── Portal bubble nodes ────────────────────────────────────────────────────
-  // Portals read positions directly from baseNodes (which has live drag positions
-  // via applyNodeChanges). No portalPosRef, no portalPosTick — ventovault pattern.
-
-  const visiblePortals = useMemo((): Node[] => {
-    if (!CROSS_REFERENCES_ENABLED) return [];
-    const PORTAL_SIZE = isMobileLayout ? 48 : 40;
-    const PORTAL_GAP = isMobileLayout ? 54 : 50;
-    const PORTAL_VERTICAL_GAP = isMobileLayout ? 34 : 30;
-    const PORTAL_SIDE_GAP = isMobileLayout ? 56 : 52;
-    const NODE_FALLBACK_WIDTH = isMobileLayout ? 280 : 260;
-    const NODE_FALLBACK_HEIGHT = isMobileLayout ? 96 : 80;
-
-    const nodeBounds = baseNodes.map((node) => {
-      const style = (node.style || {}) as React.CSSProperties;
-      const width = asFiniteNumber(style.width) ?? asFiniteNumber(node.width) ?? NODE_FALLBACK_WIDTH;
-      const measuredHeight = asFiniteNumber(style.height) ?? asFiniteNumber(node.height) ?? NODE_FALLBACK_HEIGHT;
-      const minHeight = asFiniteNumber(style.minHeight) ?? 0;
-      return {
-        id: node.id,
-        x: node.position.x,
-        y: node.position.y,
-        width,
-        height: Math.max(measuredHeight, minHeight, NODE_FALLBACK_HEIGHT),
-      };
-    });
-    if (nodeBounds.length === 0) return [];
-    const boundsByNodeId = new Map(nodeBounds.map((entry) => [entry.id, entry] as const));
-    const sceneBounds = nodeBounds.reduce(
-      (acc, rect) => ({
-        minX: Math.min(acc.minX, rect.x),
-        maxX: Math.max(acc.maxX, rect.x + rect.width),
-        minY: Math.min(acc.minY, rect.y),
-        maxY: Math.max(acc.maxY, rect.y + rect.height),
-      }),
-      { minX: nodeBounds[0].x, maxX: nodeBounds[0].x + nodeBounds[0].width, minY: nodeBounds[0].y, maxY: nodeBounds[0].y + nodeBounds[0].height }
-    );
-    const sceneMidX = (sceneBounds.minX + sceneBounds.maxX) / 2;
-    const sceneMidY = (sceneBounds.minY + sceneBounds.maxY) / 2;
-    const minX = sceneBounds.minX - (isMobileLayout ? 100 : 120);
-    const maxX = sceneBounds.maxX + (isMobileLayout ? 100 : 140);
-    const minY = sceneBounds.minY - (isMobileLayout ? 80 : 70);
-    const maxY = sceneBounds.maxY + (isMobileLayout ? 100 : 80);
-
-    const refsByAnchor = new Map<string, CrossRef[]>();
-    for (const ref of refs) {
-      const visibleNodeIds = ref.nodeIds.filter((nodeId) => filteredTreeIdSet.has(nodeId));
-      if (visibleNodeIds.length === 0) continue;
-      const anchorNodeId = chooseAnchorNodeId(visibleNodeIds, ref.anchorNodeId);
-      if (!anchorNodeId || !boundsByNodeId.has(anchorNodeId)) continue;
-      if (!refsByAnchor.has(anchorNodeId)) refsByAnchor.set(anchorNodeId, []);
-      refsByAnchor.get(anchorNodeId)?.push(ref);
-    }
-    refsByAnchor.forEach((anchorRefs) =>
-      anchorRefs.sort((a, b) => a.code.localeCompare(b.code) || a.label.localeCompare(b.label))
-    );
-
-    const result: Node[] = [];
-    const anchorOrder = Array.from(refsByAnchor.keys()).sort((a, b) => {
-      const aBounds = boundsByNodeId.get(a);
-      const bBounds = boundsByNodeId.get(b);
-      if (!aBounds || !bBounds) return a.localeCompare(b);
-      if (aBounds.y !== bBounds.y) return aBounds.y - bBounds.y;
-      if (aBounds.x !== bBounds.x) return aBounds.x - bBounds.x;
-      return a.localeCompare(b);
-    });
-
-    for (const anchorNodeId of anchorOrder) {
-      const anchorRefs = refsByAnchor.get(anchorNodeId);
-      const anchorBounds = boundsByNodeId.get(anchorNodeId);
-      if (!anchorRefs || anchorRefs.length === 0 || !anchorBounds) continue;
-      const anchorNudge = getNudge(anchorNodeId, 12, 6);
-      const stackHeight = (anchorRefs.length - 1) * PORTAL_GAP;
-      const stackXBase = anchorBounds.x + anchorBounds.width / 2 - PORTAL_SIZE / 2 + anchorNudge.x;
-      const placeBelow = anchorBounds.y + anchorBounds.height / 2 <= sceneMidY;
-      let stackYBase = placeBelow
-        ? anchorBounds.y + anchorBounds.height + PORTAL_VERTICAL_GAP
-        : anchorBounds.y - PORTAL_VERTICAL_GAP - stackHeight - PORTAL_SIZE;
-      stackYBase = clamp(stackYBase + anchorNudge.y, minY, maxY - stackHeight - PORTAL_SIZE);
-      const sideXBase =
-        anchorBounds.x +
-        (anchorBounds.x + anchorBounds.width / 2 >= sceneMidX
-          ? -(PORTAL_SIDE_GAP + PORTAL_SIZE)
-          : anchorBounds.width + PORTAL_SIDE_GAP);
-      let sideYBase = anchorBounds.y + anchorBounds.height / 2 - stackHeight / 2 + anchorNudge.y;
-      sideYBase = clamp(sideYBase, minY, maxY - stackHeight - PORTAL_SIZE);
-      const anchorRect = {
-        x: anchorBounds.x,
-        y: anchorBounds.y,
-        width: anchorBounds.width,
-        height: anchorBounds.height,
-      };
-
-      anchorRefs.forEach((ref, idx) => {
-        const refNudge = getNudge(`${ref.id}:${anchorNodeId}`, 8, 8);
-        let x = clamp(stackXBase + refNudge.x * 0.22, minX, maxX - PORTAL_SIZE);
-        let y = clamp(stackYBase + idx * PORTAL_GAP + refNudge.y * 0.22, minY, maxY - PORTAL_SIZE);
-        const overlapsAnchor = !(
-          x + PORTAL_SIZE < anchorRect.x ||
-          x > anchorRect.x + anchorRect.width ||
-          y + PORTAL_SIZE < anchorRect.y ||
-          y > anchorRect.y + anchorRect.height
-        );
-        if (overlapsAnchor) {
-          x = clamp(sideXBase + refNudge.x * 0.2, minX, maxX - PORTAL_SIZE);
-          y = clamp(sideYBase + idx * PORTAL_GAP + refNudge.y * 0.2, minY, maxY - PORTAL_SIZE);
-        }
-        const isActive = activePortalRefId === ref.id;
-        const bubbleColor = ref.color || DEFAULT_BUBBLE_COLOR;
-        result.push({
-          id: `portal:${ref.id}`,
-          position: { x, y },
-          type: "portal",
-          className: "planner-portal-node",
-          data: {
-            display: bubbleDisplayToken(ref.label, ref.code),
-            tooltip:
-              ref.nodeIds.length > 1
-                ? `${ref.label}\n${ref.nodeIds.length} linked nodes`
-                : ref.label,
-            isActive,
-          },
-          draggable: false,
-          selectable: true,
-          zIndex: 10,
-          style: {
-            width: PORTAL_SIZE,
-            height: PORTAL_SIZE,
-            borderRadius: 999,
-            border: isActive ? "2px solid rgba(251,191,36,0.95)" : `2px solid ${rgbaFromHex(bubbleColor, 0.95, "rgba(64,182,255,0.95)")}`,
-            background: isActive ? "rgba(48,30,4,0.88)" : rgbaFromHex(bubbleColor, 0.26, "rgba(12,36,72,0.82)"),
-            color: isActive ? "rgba(255,230,130,0.98)" : rgbaFromHex(bubbleColor, 0.98, "rgba(200,235,255,0.95)"),
-            fontSize: PORTAL_SIZE >= 48 ? 11 : 10,
-            fontWeight: 900,
-            display: "flex",
-            alignItems: "center",
-            justifyContent: "center",
-            boxShadow: "0 10px 24px rgba(0, 0, 0, 0.50)",
-            opacity: 1,
-            visibility: "visible",
-            pointerEvents: "all",
-            padding: 0,
-          },
-        } as Node);
-      });
-    }
-    return result;
-  }, [refs, filteredTreeIdSet, baseNodes, isMobileLayout, activePortalRefId]);
-
-  // Final node array — styled tree nodes + portal orbs (ventovault-map: viewNodes).
-  const reactFlowNodes = useMemo(
-    () => [...flowNodes, ...visiblePortals],
-    [flowNodes, visiblePortals]
-  );
+  const { flowEdges, reactFlowNodes } = usePlannerFlowGraph({
+    baseEdges,
+    hoverEdgeIds,
+    hoveredEdgeId,
+    hoveredNodeId,
+    flowNodes,
+    visiblePortals,
+  });
 
   const { saveStatus, showSaveError, onNodeDoubleClick } = usePlannerFlowUiFeedback(rfInstance);
 
