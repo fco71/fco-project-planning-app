@@ -16,7 +16,6 @@ import ReactFlow, {
   type ReactFlowInstance,
   type OnNodesChange,
 } from "reactflow";
-import { doc, setDoc } from "firebase/firestore";
 import type { User } from "firebase/auth";
 import { db } from "../firebase";
 import {
@@ -24,8 +23,6 @@ import {
   initialsFromLabel,
   buildNodePath,
   buildNodePathTail,
-  collectDescendants,
-  getMasterNodeFor,
 } from "../utils/treeUtils";
 import {
   rgbaFromHex,
@@ -54,9 +51,14 @@ import { usePlannerDragActions } from "../hooks/usePlannerDragActions";
 import { usePlannerContextNodeActions } from "../hooks/usePlannerContextNodeActions";
 import { usePlannerContextUiActions } from "../hooks/usePlannerContextUiActions";
 import { usePlannerKeyboardShortcuts } from "../hooks/usePlannerKeyboardShortcuts";
-import { usePlannerPaletteItems, type PaletteItem } from "../hooks/usePlannerPaletteItems";
+import { usePlannerPaletteItems } from "../hooks/usePlannerPaletteItems";
 import { usePlannerCreateDeleteActions } from "../hooks/usePlannerCreateDeleteActions";
 import { usePlannerCrossRefUiSync } from "../hooks/usePlannerCrossRefUiSync";
+import { usePlannerCommandActions } from "../hooks/usePlannerCommandActions";
+import { usePlannerBubbleUiActions } from "../hooks/usePlannerBubbleUiActions";
+import { usePlannerFlowUiFeedback } from "../hooks/usePlannerFlowUiFeedback";
+import { usePlannerTreeViewState } from "../hooks/usePlannerTreeViewState";
+import { usePlannerRootSelectionSync } from "../hooks/usePlannerRootSelectionSync";
 import { NodeContextMenu } from "../components/Planner/NodeContextMenu";
 import "reactflow/dist/style.css";
 
@@ -345,15 +347,12 @@ export default function PlannerPage({ user }: PlannerPageProps) {
   // on every mousemove frame which would recompute flowNodes each frame.
   const dropTargetIdRef = useRef<string | null>(null);
   const [contextMenu, setContextMenu] = useState<{ x: number; y: number; nodeId: string } | null>(null);
-  const [saveStatus, setSaveStatus] = useState<"idle" | "error">("idle");
-  const saveTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const [busyAction, setBusyAction] = useState(false);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [rfInstance, setRfInstance] = useState<ReactFlowInstance | null>(null);
   const [collapsedHydrated, setCollapsedHydrated] = useState(false);
   const syncedCollapsedKeyRef = useRef("");
-  const initialPageParamHydratedRef = useRef(false);
 
   // ── Undo / Redo ──────────────────────────────────────────────────────────
   const {
@@ -450,71 +449,28 @@ export default function PlannerPage({ user }: PlannerPageProps) {
     bubblesSimplifiedMode: BUBBLES_SIMPLIFIED_MODE,
   });
 
-  useEffect(() => {
-    if (!rootNodeId || loading) return;
-    if (!initialPageParamHydratedRef.current) {
-      initialPageParamHydratedRef.current = true;
-      if (typeof window !== "undefined") {
-        const pageParam = new URLSearchParams(window.location.search).get("page");
-        if (pageParam && nodesById.has(pageParam)) {
-          setCurrentRootId(pageParam);
-          return;
-        }
-      }
-    }
-    if (!currentRootId) {
-      setCurrentRootId(rootNodeId);
-      return;
-    }
-    // Recover gracefully if the current view root was deleted or became stale.
-    if (!nodesById.has(currentRootId) && nodesById.has(rootNodeId)) {
-      setCurrentRootId(rootNodeId);
-    }
-  }, [currentRootId, loading, nodesById, rootNodeId]);
-
-  useEffect(() => {
-    if (typeof window === "undefined") return;
-    if (!rootNodeId || !currentRootId) return;
-    const url = new URL(window.location.href);
-    if (currentRootId === rootNodeId) {
-      url.searchParams.delete("page");
-    } else {
-      url.searchParams.set("page", currentRootId);
-    }
-    const next = `${url.pathname}${url.search}${url.hash}`;
-    const current = `${window.location.pathname}${window.location.search}${window.location.hash}`;
-    if (next !== current) {
-      window.history.replaceState({}, "", next);
-    }
-  }, [currentRootId, rootNodeId]);
-
-  useEffect(() => {
-    if (selectedNodeId && !nodesById.has(selectedNodeId)) {
-      if (pendingSelectedNodeId === selectedNodeId) return;
-      setSelectedNodeId(null);
-    }
-  }, [pendingSelectedNodeId, selectedNodeId, nodesById]);
-
-  useEffect(() => {
-    if (!pendingSelectedNodeId) return;
-    if (!nodesById.has(pendingSelectedNodeId)) return;
-    setSelectedNodeId(pendingSelectedNodeId);
-    setPendingSelectedNodeId(null);
-  }, [nodesById, pendingSelectedNodeId]);
-
-  useEffect(() => {
-    // On mobile, keep selection explicit (don't silently snap back to root),
-    // so sidebar actions always stay node-scoped to what the user tapped.
-    if (isMobileLayout) return;
-    if (!selectedNodeId && currentRootId) {
-      setSelectedNodeId(currentRootId);
-    }
-  }, [selectedNodeId, currentRootId, isMobileLayout]);
-
-  const selectedNode = useMemo(
-    () => (selectedNodeId ? nodesById.get(selectedNodeId) || null : null),
-    [selectedNodeId, nodesById]
-  );
+  const { selectedNode } = usePlannerRootSelectionSync({
+    rootNodeId,
+    loading,
+    nodesById,
+    currentRootId,
+    setCurrentRootId,
+    selectedNodeId,
+    setSelectedNodeId,
+    pendingSelectedNodeId,
+    setPendingSelectedNodeId,
+    isMobileLayout,
+    setRenameTitle,
+    setBodyDraft,
+    storyLaneMode,
+    setStoryLaneMode,
+    pendingRenameNodeId,
+    setPendingRenameNodeId,
+    setSidebarCollapsed,
+    setMobileSidebarSection,
+    setMobileSidebarOpen,
+    renameInputRef,
+  });
 
   const effectiveBubbleTargetId = selectedNodeId || null;
   const bubbleTargetNode = selectedNode;
@@ -529,287 +485,53 @@ export default function PlannerPage({ user }: PlannerPageProps) {
     []
   );
 
-  useEffect(() => {
-    setRenameTitle(selectedNode?.title || "");
-  }, [selectedNode?.id, selectedNode?.title]);
-
-  useEffect(() => {
-    setBodyDraft(selectedNode?.body || "");
-  }, [selectedNode?.body, selectedNode?.id]);
-
-  useEffect(() => {
-    if (!storyLaneMode) return;
-    const current = currentRootId ? nodesById.get(currentRootId) : null;
-    if (current?.kind === "story") return;
-    setStoryLaneMode(false);
-  }, [currentRootId, nodesById, storyLaneMode]);
-
-  useEffect(() => {
-    if (!pendingRenameNodeId) return;
-    if (!selectedNodeId || selectedNodeId !== pendingRenameNodeId) return;
-    const timeout = window.setTimeout(() => {
-      setSidebarCollapsed(false);
-      setMobileSidebarSection("node");
-      if (isMobileLayout) setMobileSidebarOpen(true);
-      renameInputRef.current?.focus();
-      renameInputRef.current?.select();
-      setPendingRenameNodeId(null);
-    }, 60);
-    return () => window.clearTimeout(timeout);
-  }, [isMobileLayout, pendingRenameNodeId, selectedNodeId]);
-
-  const focusBubbleLabelInput = useCallback((delayMs = 60) => {
-    window.setTimeout(() => {
-      const input = newRefLabelInputRef.current;
-      if (!input) return;
-      try {
-        input.focus({ preventScroll: true });
-      } catch {
-        input.focus();
-      }
-      input.select();
-    }, delayMs);
-  }, []);
-
-  const openBubblesPanel = useCallback(
-    (focusInput = true) => {
-      setSidebarCollapsed(false);
-      setMobileSidebarSection("bubbles");
-      setMobileSidebarOpen(true);
-      setMobileQuickEditorOpen(false);
-      setMobileQuickBubbleOpen(false);
-      if (focusInput) {
-        focusBubbleLabelInput(isMobileLayout ? 90 : 20);
-      }
-    },
-    [focusBubbleLabelInput, isMobileLayout]
-  );
-
-  const focusMobileQuickBubbleInput = useCallback((delayMs = 90) => {
-    window.setTimeout(() => {
-      const input = mobileQuickBubbleInputRef.current;
-      if (!input) return;
-      try {
-        input.focus({ preventScroll: true });
-      } catch {
-        input.focus();
-      }
-      input.select();
-    }, delayMs);
-  }, []);
-
-  const openMobileQuickBubble = useCallback(
-    (nodeId?: string, focusInput = true) => {
-      const targetId = nodeId || selectedNodeId;
-      if (!targetId) return;
-      setSelectedNodeId(targetId);
-      setActivePortalRefId(null);
-      setSidebarCollapsed(false);
-      setMobileSidebarOpen(false);
-      setMobileQuickEditorOpen(false);
-      setMobileQuickBubbleOpen(true);
-      if (focusInput) {
-        focusMobileQuickBubbleInput(90);
-      }
-    },
-    [focusMobileQuickBubbleInput, selectedNodeId]
-  );
-
-  const blurActiveInput = useCallback(() => {
-    if (typeof document === "undefined") return;
-    const active = document.activeElement;
-    if (active instanceof HTMLElement) active.blur();
-  }, []);
-
-  useEffect(() => {
-    if (!isMobileLayout) return;
-    if (!mobileSidebarOpen || mobileSidebarSection !== "bubbles") return;
-    focusBubbleLabelInput(90);
-  }, [focusBubbleLabelInput, isMobileLayout, mobileSidebarOpen, mobileSidebarSection]);
-
-  useEffect(() => {
-    if (!isMobileLayout || !mobileQuickBubbleOpen) return;
-    focusMobileQuickBubbleInput(90);
-  }, [focusMobileQuickBubbleInput, isMobileLayout, mobileQuickBubbleOpen]);
+  const {
+    openBubblesPanel,
+    focusMobileQuickBubbleInput,
+    openMobileQuickBubble,
+    blurActiveInput,
+  } = usePlannerBubbleUiActions({
+    isMobileLayout,
+    selectedNodeId,
+    mobileSidebarOpen,
+    mobileSidebarSection,
+    mobileQuickBubbleOpen,
+    newRefLabelInputRef,
+    mobileQuickBubbleInputRef,
+    setSelectedNodeId,
+    setActivePortalRefId,
+    setSidebarCollapsed,
+    setMobileSidebarSection,
+    setMobileSidebarOpen,
+    setMobileQuickEditorOpen,
+    setMobileQuickBubbleOpen,
+  });
 
   useEffect(() => {
     setNewStoryStepText("");
   }, [selectedNode?.id]);
 
-  const visibleTreeIds = useMemo(() => {
-    if (!currentRootId) return [] as string[];
-    return collectDescendants(currentRootId, childrenByParent);
-  }, [childrenByParent, currentRootId]);
-
-  const visibleTreeIdSet = useMemo(() => new Set(visibleTreeIds), [visibleTreeIds]);
-
-  // Toggle node collapse/expand
-  const toggleNodeCollapse = useCallback((nodeId: string) => {
-    setCollapsedNodeIds((prev) => {
-      const next = new Set(prev);
-      if (next.has(nodeId)) {
-        next.delete(nodeId);
-      } else {
-        next.add(nodeId);
-      }
-      return next;
-    });
-  }, []);
-
-  // Persist collapsed nodes to Firebase
-  useEffect(() => {
-    if (!db || !user.uid || !collapsedHydrated) return;
-    const collapsedArray = Array.from(collapsedNodeIds).sort();
-    const nextKey = collapsedArray.join("|");
-    if (syncedCollapsedKeyRef.current === nextKey) return;
-    setDoc(
-      doc(db, "users", user.uid),
-      {
-        collapsedNodes: collapsedArray,
-      },
-      { merge: true }
-    )
-      .then(() => {
-        syncedCollapsedKeyRef.current = nextKey;
-      })
-      .catch((err) => {
-      console.error("Failed to save collapsed state:", err);
-    });
-  }, [collapsedHydrated, collapsedNodeIds, user.uid]);
-
-  // Filter out descendants of collapsed nodes
-  const filteredTreeIds = useMemo(() => {
-    if (collapsedNodeIds.size === 0) return visibleTreeIds;
-
-    const hiddenIds = new Set<string>();
-    // For each collapsed node, collect all its descendants
-    collapsedNodeIds.forEach((collapsedId) => {
-      const descendants = collectDescendants(collapsedId, childrenByParent);
-      descendants.forEach((id) => {
-        if (id !== collapsedId) {
-          hiddenIds.add(id);
-        }
-      });
-    });
-
-    // Return only nodes that are not hidden
-    return visibleTreeIds.filter((id) => !hiddenIds.has(id));
-  }, [childrenByParent, collapsedNodeIds, visibleTreeIds]);
-
-  // Search matching nodes
-  const searchMatchingIds = useMemo(() => {
-    if (!searchQuery.trim()) return new Set<string>();
-
-    const query = searchQuery.toLowerCase().trim();
-    const matches = new Set<string>();
-
-    filteredTreeIds.forEach((id) => {
-      const node = nodesById.get(id);
-      if (node && node.title.toLowerCase().includes(query)) {
-        matches.add(id);
-      }
-    });
-
-    return matches;
-  }, [filteredTreeIds, nodesById, searchQuery]);
-
-  const currentRootKind = currentRootId ? nodesById.get(currentRootId)?.kind || null : null;
-
-  const treeLayout = useMemo(() => {
-    const map = new Map<string, { x: number; y: number }>();
-    if (!currentRootId) return map;
-    const filteredIdSet = new Set(filteredTreeIds);
-
-    if (storyLaneMode && currentRootKind === "story") {
-      map.set(currentRootId, { x: 0, y: 0 });
-
-      const firstChildren = (childrenByParent.get(currentRootId) || []).filter((child) => filteredIdSet.has(child));
-      const orderedChildren = [...firstChildren].sort((a, b) => {
-        const aNode = nodesById.get(a);
-        const bNode = nodesById.get(b);
-        const ax = typeof aNode?.x === "number" ? aNode.x : Number.POSITIVE_INFINITY;
-        const bx = typeof bNode?.x === "number" ? bNode.x : Number.POSITIVE_INFINITY;
-        if (ax !== bx) return ax - bx;
-        const ay = typeof aNode?.y === "number" ? aNode.y : Number.POSITIVE_INFINITY;
-        const by = typeof bNode?.y === "number" ? bNode.y : Number.POSITIVE_INFINITY;
-        if (ay !== by) return ay - by;
-        return (aNode?.title || "").localeCompare(bNode?.title || "");
-      });
-
-      const laneXGap = 340;
-      const laneY = 260;
-      const branchXGap = 220;
-      const branchYGap = 150;
-
-      const placeBranch = (parentId: string, parentX: number, parentY: number) => {
-        const isCollapsed = collapsedNodeIds.has(parentId);
-        const parentNode = nodesById.get(parentId);
-        const children = isCollapsed
-          ? []
-          : (childrenByParent.get(parentId) || []).filter((child) => filteredIdSet.has(child));
-        let storyChainIndex = 0;
-        let branchIndex = 0;
-        children.forEach((childId) => {
-          const childNode = nodesById.get(childId);
-          const isStoryChain = parentNode?.kind === "story" && childNode?.kind === "story";
-          const x = isStoryChain ? parentX + laneXGap * (storyChainIndex + 1) : parentX + branchXGap;
-          const y = isStoryChain ? parentY : parentY + branchYGap + branchIndex * branchYGap;
-          if (isStoryChain) {
-            storyChainIndex += 1;
-          } else {
-            branchIndex += 1;
-          }
-          if (!map.has(childId)) map.set(childId, { x, y });
-          placeBranch(childId, x, y);
-        });
-      };
-
-      orderedChildren.forEach((childId, index) => {
-        const x = index * laneXGap;
-        map.set(childId, { x, y: laneY });
-        placeBranch(childId, x, laneY);
-      });
-
-      return map;
-    }
-
-    let nextRow = 0;
-    const xGap = 280;
-    const yGap = 140;
-
-    const walk = (nodeId: string, depth: number): number => {
-      // Don't traverse children of collapsed nodes
-      const isCollapsed = collapsedNodeIds.has(nodeId);
-      const children = isCollapsed
-        ? []
-        : (childrenByParent.get(nodeId) || []).filter((child) => filteredIdSet.has(child));
-      if (children.length === 0) {
-        const y = nextRow * yGap;
-        nextRow += 1;
-        map.set(nodeId, { x: depth * xGap, y });
-        return y;
-      }
-      const ys = children.map((child) => walk(child, depth + 1));
-      const y = ys.reduce((acc, value) => acc + value, 0) / ys.length;
-      map.set(nodeId, { x: depth * xGap, y });
-      return y;
-    };
-
-    walk(currentRootId, 0);
-    return map;
-  }, [childrenByParent, collapsedNodeIds, currentRootId, currentRootKind, filteredTreeIds, nodesById, storyLaneMode]);
-
-  const resolveNodePosition = useCallback(
-    (nodeId: string) => {
-      const node = nodesById.get(nodeId);
-      const autoPosition = treeLayout.get(nodeId) || { x: 0, y: 0 };
-      return {
-        x: typeof node?.x === "number" ? node.x : autoPosition.x,
-        y: typeof node?.y === "number" ? node.y : autoPosition.y,
-      };
-    },
-    [nodesById, treeLayout]
-  );
+  const {
+    visibleTreeIdSet,
+    toggleNodeCollapse,
+    filteredTreeIds,
+    searchMatchingIds,
+    currentRootKind,
+    treeLayout,
+    resolveNodePosition,
+  } = usePlannerTreeViewState({
+    firestore: db,
+    userUid: user.uid,
+    currentRootId,
+    nodesById,
+    childrenByParent,
+    collapsedNodeIds,
+    setCollapsedNodeIds,
+    collapsedHydrated,
+    syncedCollapsedKeyRef,
+    searchQuery,
+    storyLaneMode,
+  });
 
   const toggleStoryCardExpand = useCallback((nodeId: string) => {
     setExpandedStoryNodeIds((prev) => {
@@ -1469,32 +1191,7 @@ export default function PlannerPage({ user }: PlannerPageProps) {
     [flowNodes, visiblePortals]
   );
 
-  // Save warning helper (successful autosaves are silent).
-  const showSaveError = useCallback(() => {
-    if (saveTimeoutRef.current) clearTimeout(saveTimeoutRef.current);
-    setSaveStatus("error");
-    saveTimeoutRef.current = setTimeout(() => setSaveStatus("idle"), 4000);
-  }, []);
-
-  useEffect(() => {
-    return () => {
-      if (saveTimeoutRef.current) clearTimeout(saveTimeoutRef.current);
-    };
-  }, []);
-
-  // Double-click to zoom (less aggressive)
-  const onNodeDoubleClick = useCallback(
-    (_: React.MouseEvent, node: Node) => {
-      if (!rfInstance) return;
-      rfInstance.fitView({
-        nodes: [node],
-        duration: 250,
-        padding: 0.8,
-        maxZoom: 1.2,
-      });
-    },
-    [rfInstance]
-  );
+  const { saveStatus, showSaveError, onNodeDoubleClick } = usePlannerFlowUiFeedback(rfInstance);
 
   const {
     currentRootNode,
@@ -1807,16 +1504,6 @@ export default function PlannerPage({ user }: PlannerPageProps) {
     setLinkTargetNodeId,
   });
 
-  const jumpToReferencedNode = useCallback(
-    (nodeId: string) => {
-      const masterId = getMasterNodeFor(nodeId, rootNodeId, nodesById);
-      setCurrentRootId(masterId);
-      setSelectedNodeId(nodeId);
-      setActivePortalRefId(null);
-    },
-    [nodesById, rootNodeId]
-  );
-
   const {
     onNodeDrag,
     onNodeDragStop,
@@ -1903,16 +1590,26 @@ export default function PlannerPage({ user }: PlannerPageProps) {
     setLinkTargetNodeId,
   });
 
-  const toggleStoryLane = useCallback(() => {
-    setStoryLaneMode((prev) => !prev);
-  }, []);
-
-  const focusNodeSearch = useCallback(() => {
-    setSidebarCollapsed(false);
-    setMobileSidebarSection("project");
-    setMobileSidebarOpen(true);
-    window.setTimeout(() => searchInputRef.current?.focus(), 30);
-  }, []);
+  const {
+    jumpToReferencedNode,
+    toggleStoryLane,
+    focusNodeSearch,
+    runPaletteAction,
+  } = usePlannerCommandActions({
+    rootNodeId,
+    nodesById,
+    setCurrentRootId,
+    setSelectedNodeId,
+    setActivePortalRefId,
+    setStoryLaneMode,
+    setSidebarCollapsed,
+    setMobileSidebarSection,
+    setMobileSidebarOpen,
+    searchInputRef,
+    setPaletteOpen,
+    setPaletteQuery,
+    setPaletteIndex,
+  });
 
   const paletteItems = usePlannerPaletteItems({
     paletteQuery,
@@ -1943,13 +1640,6 @@ export default function PlannerPage({ user }: PlannerPageProps) {
     linkCrossRefToNode,
     nextNodeKind,
   });
-
-  const runPaletteAction = useCallback((item: PaletteItem) => {
-    item.action();
-    setPaletteOpen(false);
-    setPaletteQuery("");
-    setPaletteIndex(0);
-  }, []);
 
   usePlannerKeyboardShortcuts({
     paletteOpen,
