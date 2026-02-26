@@ -6,15 +6,12 @@ import ReactFlow, {
   Handle,
   Position,
   SelectionMode,
-  applyNodeChanges,
   type Edge,
   type EdgeTypes,
   type Node,
-  type NodeChange,
   type NodeProps,
   type NodeTypes,
   type ReactFlowInstance,
-  type OnNodesChange,
 } from "reactflow";
 import type { User } from "firebase/auth";
 import { db } from "../firebase";
@@ -59,6 +56,9 @@ import { usePlannerBubbleUiActions } from "../hooks/usePlannerBubbleUiActions";
 import { usePlannerFlowUiFeedback } from "../hooks/usePlannerFlowUiFeedback";
 import { usePlannerTreeViewState } from "../hooks/usePlannerTreeViewState";
 import { usePlannerRootSelectionSync } from "../hooks/usePlannerRootSelectionSync";
+import { usePlannerEdgeHoverState } from "../hooks/usePlannerEdgeHoverState";
+import { usePlannerBaseGraphData } from "../hooks/usePlannerBaseGraphData";
+import { usePlannerBaseNodeState } from "../hooks/usePlannerBaseNodeState";
 import { NodeContextMenu } from "../components/Planner/NodeContextMenu";
 import "reactflow/dist/style.css";
 
@@ -567,280 +567,39 @@ export default function PlannerPage({ user }: PlannerPageProps) {
   const filteredTreeIdSet = useMemo(() => new Set(filteredTreeIds), [filteredTreeIds]);
 
   // visiblePortals is computed after baseNodes so it reads live drag positions.
-
-  // ── ventovault-map pattern: baseTreeNodes has NO JSX ──────────────────────
-  // Plain data objects only. JSX labels are created later in flowNodes (viewNodes).
-  // This ensures baseTreeNodes does not produce new object references every render
-  // due to JSX instability, so the sync effect only fires on real data changes.
-  const baseTreeNodes = useMemo(() => {
-    return filteredTreeIds
-      .map((id) => nodesById.get(id))
-      .filter((node): node is TreeNode => !!node)
-      .map((node) => {
-        const childIds = childrenByParent.get(node.id) || [];
-        const childCount = childIds.length;
-        const isCollapsed = collapsedNodeIds.has(node.id);
-        const autoPosition = treeLayout.get(node.id) || { x: 0, y: 0 };
-        const position = {
-          x: typeof node.x === "number" ? node.x : autoPosition.x,
-          y: typeof node.y === "number" ? node.y : autoPosition.y,
-        };
-        const isRoot = node.id === rootNodeId;
-        const isSearchMatch = searchMatchingIds.has(node.id);
-        const isProject = node.kind === "project";
-        const isStory = node.kind === "story";
-        const hasStoryChildren = !isStory && childIds.some((childId) => nodesById.get(childId)?.kind === "story");
-        const isTaskTodo = node.taskStatus === "todo";
-        const isTaskDone = node.taskStatus === "done";
-        const isStoryLaneBeat = storyLaneMode && currentRootKind === "story" && node.id !== currentRootId;
-        const showStoryBody = isStory || isStoryLaneBeat;
-        const isExpandedStoryCard = expandedStoryNodeIds.has(node.id);
-        const bodyText = (node.body || "").trim();
-        const storyDefaultWidth = isStoryLaneBeat ? 320 : (isMobileLayout ? 320 : 300);
-        const storyDefaultHeight = isExpandedStoryCard ? 320 : 210;
-        const storedWidth = typeof node.width === "number" ? node.width : undefined;
-        const storedHeight = typeof node.height === "number" ? node.height : undefined;
-        const storyWidth = clamp(storedWidth ?? storyDefaultWidth, STORY_NODE_MIN_WIDTH, STORY_NODE_MAX_WIDTH);
-        const storyHeight = clamp(storedHeight ?? storyDefaultHeight, STORY_NODE_MIN_HEIGHT, STORY_NODE_MAX_HEIGHT);
-        const baseBackground = isRoot
-          ? "rgba(82, 52, 6, 0.97)"
-          : hasStoryChildren
-            ? "rgba(58, 22, 108, 0.97)"
-          : isProject
-            ? "rgba(10, 26, 80, 0.97)"
-          : isStory
-            ? "rgba(6, 52, 42, 0.97)"
-            : "rgba(20, 22, 36, 0.97)";
-        const background = node.color || baseBackground;
-        return {
-          id: node.id,
-          position,
-          // Plain data — NO JSX. Label is created in flowNodes below.
-          data: {
-            nodeId: node.id,
-            title: node.title,
-            kind: node.kind,
-            childCount,
-            isCollapsed,
-            isRoot,
-            isSearchMatch,
-            isProject,
-            isStory,
-            hasStoryChildren,
-            isTaskTodo,
-            isTaskDone,
-            isStoryLaneBeat,
-            showStoryBody,
-            isExpandedStoryCard,
-            bodyText,
-            nodeWidth: storyWidth,
-            nodeHeight: storyHeight,
-            storedWidth,
-            storedHeight,
-          },
-          style: {
-            border: isSearchMatch
-              ? "2px solid rgba(34, 197, 94, 0.95)"
-              : isRoot
-                ? "2px solid rgba(255, 200, 60, 0.95)"
-                : hasStoryChildren
-                  ? "1.5px solid rgba(192, 132, 252, 0.85)"
-                : isProject
-                  ? "1.5px solid rgba(99, 179, 255, 0.8)"
-                : isStory
-                  ? "1.5px solid rgba(52, 211, 153, 0.8)"
-                : "1px solid rgba(100, 106, 140, 0.5)",
-            borderRadius: isStoryLaneBeat ? 10 : 14,
-            width: showStoryBody ? storyWidth : (isMobileLayout ? 280 : 260),
-            height: showStoryBody ? storyHeight : undefined,
-            minHeight: showStoryBody ? STORY_NODE_MIN_HEIGHT : undefined,
-            padding: showStoryBody ? 12 : (isMobileLayout ? 12 : 10),
-            background,
-            color: "rgba(250, 252, 255, 0.95)",
-            boxShadow: isSearchMatch
-              ? "0 0 0 3px rgba(34, 197, 94, 0.35), 0 12px 28px rgba(0,0,0,0.4)"
-              : isRoot
-                ? "0 0 0 1px rgba(255,200,60,0.15), 0 14px 32px rgba(0,0,0,0.5)"
-                : hasStoryChildren
-                  ? "0 0 0 1px rgba(192,132,252,0.12), 0 12px 28px rgba(0,0,0,0.45)"
-                : isProject
-                  ? "0 0 0 1px rgba(99,179,255,0.1), 0 10px 24px rgba(0,0,0,0.4)"
-                : isStory
-                  ? "0 0 0 1px rgba(52,211,153,0.1), 0 10px 22px rgba(0,0,0,0.4)"
-                : "0 6px 16px rgba(0,0,0,0.35)",
-            fontWeight: 700,
-            fontSize: isMobileLayout ? 14 : 12.5,
-          } as React.CSSProperties,
-          draggable: true,
-          selectable: true,
-        } as Node;
-      });
-  }, [
+  const { baseTreeNodes, baseEdges } = usePlannerBaseGraphData({
+    filteredTreeIds,
+    nodesById,
     childrenByParent,
     collapsedNodeIds,
-    currentRootId,
-    currentRootKind,
-    expandedStoryNodeIds,
-    filteredTreeIds,
-    isMobileLayout,
-    nodesById,
+    treeLayout,
     rootNodeId,
     searchMatchingIds,
     storyLaneMode,
-    treeLayout,
-  ]);
+    currentRootKind,
+    currentRootId,
+    expandedStoryNodeIds,
+    isMobileLayout,
+    refs,
+    filteredTreeIdSet,
+    crossReferencesEnabled: CROSS_REFERENCES_ENABLED,
+    storyNodeMinWidth: STORY_NODE_MIN_WIDTH,
+    storyNodeMaxWidth: STORY_NODE_MAX_WIDTH,
+    storyNodeMinHeight: STORY_NODE_MIN_HEIGHT,
+    storyNodeMaxHeight: STORY_NODE_MAX_HEIGHT,
+  });
 
-  const baseTreeEdges = useMemo(() => {
-    const filteredIdSet = new Set(filteredTreeIds);
-    return filteredTreeIds
-      .map((id) => nodesById.get(id))
-      .filter((node): node is TreeNode => !!node && !!node.parentId && filteredIdSet.has(node.parentId))
-      .map((node) => {
-        return {
-          id: `edge:${node.parentId}:${node.id}`,
-          source: node.parentId as string,
-          target: node.id,
-          style: {
-            stroke: "rgba(125, 211, 252, 0.45)",
-            strokeWidth: 2,
-          },
-          animated: false,
-        } as Edge;
-      });
-  }, [filteredTreeIds, nodesById]);
+  const { hoverNodeIds, hoverEdgeIds, activeLinkedNodeIds } = usePlannerEdgeHoverState({
+    baseEdges,
+    hoveredNodeId,
+    hoveredEdgeId,
+    activePortalRefId,
+    refs,
+  });
 
-  // Dashed orange edges: one per (ref × visible linked node)
-  const basePortalEdges = useMemo((): Edge[] => {
-    if (!CROSS_REFERENCES_ENABLED) return [];
-    const edges: Edge[] = [];
-    for (const ref of refs) {
-      for (const nodeId of ref.nodeIds) {
-        if (!filteredTreeIdSet.has(nodeId)) continue;
-        edges.push({
-          id: `portal-edge:${ref.id}:${nodeId}`,
-          source: nodeId,
-          target: `portal:${ref.id}`,
-          animated: false,
-          zIndex: 5,
-          style: {
-            stroke: "rgba(255,160,71,0.6)",
-            strokeWidth: 1.5,
-            strokeDasharray: "4 4",
-          },
-        } as Edge);
-      }
-    }
-    return edges;
-  }, [refs, filteredTreeIdSet]);
-
-  // Memoized so hoverIndex (which depends on baseEdges) gets a stable reference
-  // and doesn't recreate itself on every render, preventing the infinite loop:
-  // baseEdges → hoverIndex → hoverNodeIds/hoverEdgeIds → flowNodes → render → repeat
-  const baseEdges = useMemo(
-    () => [...baseTreeEdges, ...basePortalEdges],
-    [baseTreeEdges, basePortalEdges]
-  );
-
-  const hoverIndex = useMemo(() => {
-    const nodeToEdges = new Map<string, Set<string>>();
-    const nodeToNeighbors = new Map<string, Set<string>>();
-    const edgeToNodes = new Map<string, { source: string; target: string }>();
-    baseEdges.forEach((edge) => {
-      edgeToNodes.set(edge.id, { source: edge.source, target: edge.target });
-      if (!nodeToEdges.has(edge.source)) nodeToEdges.set(edge.source, new Set());
-      if (!nodeToEdges.has(edge.target)) nodeToEdges.set(edge.target, new Set());
-      nodeToEdges.get(edge.source)?.add(edge.id);
-      nodeToEdges.get(edge.target)?.add(edge.id);
-      if (!nodeToNeighbors.has(edge.source)) nodeToNeighbors.set(edge.source, new Set());
-      if (!nodeToNeighbors.has(edge.target)) nodeToNeighbors.set(edge.target, new Set());
-      nodeToNeighbors.get(edge.source)?.add(edge.target);
-      nodeToNeighbors.get(edge.target)?.add(edge.source);
-    });
-    return { nodeToEdges, nodeToNeighbors, edgeToNodes };
-  }, [baseEdges]);
-
-  const hoverNodeIds = useMemo(() => {
-    const ids = new Set<string>();
-    if (hoveredNodeId) {
-      ids.add(hoveredNodeId);
-      hoverIndex.nodeToNeighbors.get(hoveredNodeId)?.forEach((id) => ids.add(id));
-    }
-    if (hoveredEdgeId) {
-      const edge = hoverIndex.edgeToNodes.get(hoveredEdgeId);
-      if (edge) {
-        ids.add(edge.source);
-        ids.add(edge.target);
-      }
-    }
-    return ids;
-  }, [hoverIndex, hoveredEdgeId, hoveredNodeId]);
-
-  const hoverEdgeIds = useMemo(() => {
-    const ids = new Set<string>();
-    if (hoveredEdgeId) ids.add(hoveredEdgeId);
-    if (hoveredNodeId) {
-      hoverIndex.nodeToEdges.get(hoveredNodeId)?.forEach((id) => ids.add(id));
-    }
-    return ids;
-  }, [hoverIndex, hoveredEdgeId, hoveredNodeId]);
-
-  const activeLinkedNodeIds = useMemo(() => {
-    if (!activePortalRefId) return new Set<string>();
-    const activeRef = refs.find((ref) => ref.id === activePortalRefId);
-    return new Set(activeRef?.nodeIds || []);
-  }, [activePortalRefId, refs]);
-
-  // ── ventovault-map pattern ─────────────────────────────────────────────────
-  // baseNodes is the single source of truth for tree node positions.
-  // onNodesChange (RAF-batched) writes directly into baseNodes via applyNodeChanges.
-  // Portal positions are derived from baseNodes in a useMemo — no intermediate
-  // displayNodes state, no competing useEffect, no flashing.
-  const [baseNodes, setBaseNodes] = useState<Node[]>([]);
-  const draggedNodeIdRef   = useRef<string | null>(null);
-  const nodesChangeRafRef  = useRef<number | null>(null);
-  const pendingNodeChangesRef = useRef<NodeChange[] | null>(null);
-
-  // Sync baseTreeNodes → baseNodes. Fires on every baseTreeNodes change to pick
-  // up metadata/style updates, BUT preserves live positions from baseNodes so
-  // drag positions are never overwritten. This is safe because baseTreeNodes no
-  // longer contains JSX — its reference only changes on real data changes.
-  useEffect(() => {
-    setBaseNodes((prev) => {
-      if (prev.length === 0) return baseTreeNodes;
-      // Preserve live positions from current baseNodes (what ReactFlow sees).
-      const livePos = new Map(prev.map((n) => [n.id, n.position] as const));
-      return baseTreeNodes.map((node) => {
-        const live = livePos.get(node.id);
-        return live ? ({ ...node, position: live } as Node) : node;
-      });
-    });
-  }, [baseTreeNodes]);
-
-  // Batch onNodesChange events through RAF — identical to ventovault-map.
-  // Portals are stripped because they are derived nodes not in baseNodes.
-  // Type-safe: NodeAddChange/NodeResetChange use c.item.id, others use c.id.
-  const handleNodesChange: OnNodesChange = useCallback((changes) => {
-    const treeChanges = changes.filter((c: NodeChange) => {
-      if (c.type === "add" || c.type === "reset") {
-        return !c.item.id.startsWith("portal:");
-      }
-      return !c.id.startsWith("portal:");
-    });
-    if (treeChanges.length === 0) return;
-    pendingNodeChangesRef.current = [
-      ...(pendingNodeChangesRef.current ?? []),
-      ...treeChanges,
-    ];
-    if (nodesChangeRafRef.current !== null) return;
-    nodesChangeRafRef.current = window.requestAnimationFrame(() => {
-      const pending = pendingNodeChangesRef.current;
-      pendingNodeChangesRef.current = null;
-      nodesChangeRafRef.current = null;
-      if (pending && pending.length > 0) {
-        setBaseNodes((nds) => applyNodeChanges(pending, nds));
-      }
-    });
-  }, []);
+  const { baseNodes, handleNodesChange, draggedNodeIdRef } = usePlannerBaseNodeState({
+    baseTreeNodes,
+  });
 
   // ── flowNodes (ventovault-map: viewNodes) ──────────────────────────────────
   // Creates JSX labels from plain data in baseNodes + applies selection/hover styling.
