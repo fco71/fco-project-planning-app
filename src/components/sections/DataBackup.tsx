@@ -211,12 +211,12 @@ export default function DataBackup({ userId, nodes, refs, profileName, rootNodeI
       </div>
 
       {importStatus && (
-        <p className="planner-subtle" style={{ fontSize: "12px", marginTop: "8px" }}>
+        <p className="planner-subtle planner-subtle-xs planner-subtle-mt-8">
           {importStatus}
         </p>
       )}
 
-      <p className="planner-subtle" style={{ fontSize: "12px", marginTop: "8px" }}>
+      <p className="planner-subtle planner-subtle-xs planner-subtle-mt-8">
         Exported files are safe to store in cloud storage or version control.
       </p>
     </div>

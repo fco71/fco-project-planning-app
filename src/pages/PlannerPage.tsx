@@ -10,10 +10,7 @@ import ReactFlow, {
 import type { User } from "firebase/auth";
 import { db } from "../firebase";
 import {
-  normalizeCode,
-  initialsFromLabel,
   buildNodePath,
-  buildNodePathTail,
 } from "../utils/treeUtils";
 import {
   bubbleDisplayToken,
@@ -30,7 +27,6 @@ import {
   CROSS_REFERENCES_ENABLED,
   DEFAULT_BUBBLE_COLOR,
   defaultNodeColor,
-  ENTITY_TYPE_GROUPS,
   nextNodeKind,
   STORY_NODE_MAX_HEIGHT,
   STORY_NODE_MAX_WIDTH,
@@ -40,7 +36,6 @@ import {
 } from "../utils/plannerConfig";
 import type {
   TaskStatus,
-  EntityType,
   TreeNode,
   CrossRef,
 } from "../types/planner";
@@ -86,6 +81,16 @@ import { usePlannerDefaultPortalPosition } from "../hooks/usePlannerDefaultPorta
 import { usePlannerSidebarSectionVisibility } from "../hooks/usePlannerSidebarSectionVisibility";
 import { usePlannerCrossRefUiState } from "../hooks/usePlannerCrossRefUiState";
 import { NodeContextMenu } from "../components/Planner/NodeContextMenu";
+import { PortalContextMenu } from "../components/Planner/PortalContextMenu";
+import { SaveErrorToast } from "../components/Planner/SaveErrorToast";
+import { CommandPalette } from "../components/Planner/CommandPalette";
+import { MobileQuickBubbleSheet } from "../components/Planner/MobileQuickBubbleSheet";
+import { MobileQuickEditorSheet } from "../components/Planner/MobileQuickEditorSheet";
+import { MobileOverlayBackdrops } from "../components/Planner/MobileOverlayBackdrops";
+import { MobileCanvasToolbar } from "../components/Planner/MobileCanvasToolbar";
+import { SimpleBubblesPanel } from "../components/Planner/SimpleBubblesPanel";
+import { SharedBubblesManager } from "../components/Planner/SharedBubblesManager";
+import { SharedBubblesTopPanel } from "../components/Planner/SharedBubblesTopPanel";
 import { plannerNodeTypes } from "../components/Planner/PortalNode";
 import "reactflow/dist/style.css";
 
@@ -140,9 +145,6 @@ export default function PlannerPage({ user }: PlannerPageProps) {
   const [paletteQuery, setPaletteQuery] = useState("");
   const [paletteIndex, setPaletteIndex] = useState(0);
   const paletteInputRef = useRef<HTMLInputElement>(null);
-  // Swipe-to-dismiss tracking for the mobile quick-editor sheet.
-  const sheetTouchStartY = useRef<number | null>(null);
-  const bubbleSheetTouchStartY = useRef<number | null>(null);
   const [collapsedNodeIds, setCollapsedNodeIds] = useState<Set<string>>(new Set());
   const { hoveredNodeId, hoveredEdgeId, isDraggingRef, scheduleHoverUpdate } = usePlannerHoverState();
   const [dropTargetNodeId, setDropTargetNodeId] = useState<string | null>(null);
@@ -922,66 +924,25 @@ export default function PlannerPage({ user }: PlannerPageProps) {
         </div>
 
         {sidebarIsCollapsed ? (
-          <div style={{
-            display: "flex",
-            flexDirection: "column",
-            alignItems: "center",
-            justifyContent: "center",
-            height: "100%",
-            paddingTop: "12px",
-          }}>
-            <div style={{
-              fontSize: "10px",
-              color: "rgba(245, 248, 255, 0.6)",
-              textAlign: "center",
-              writingMode: "vertical-rl",
-              transform: "rotate(180deg)",
-              letterSpacing: "1px",
-              fontWeight: 700,
-            }}>
+          <div className="planner-collapsed-controls">
+            <div className="planner-collapsed-controls-label">
               Controls
             </div>
           </div>
         ) : (
           <>
         {/* Search Input */}
-        <div style={{
-          padding: "12px 12px 0",
-          marginBottom: "12px",
-        }}>
+        <div className="planner-search-wrap">
           <input
+            className="planner-search-input"
             ref={searchInputRef}
             type="text"
             placeholder={isMobileLayout ? "Search nodes..." : "Search nodes... (Ctrl+F)"}
             value={searchQuery}
             onChange={(e) => setSearchQuery(e.target.value)}
-            style={{
-              width: "100%",
-              padding: "8px 12px",
-              border: "1px solid rgba(255, 255, 255, 0.15)",
-              borderRadius: "6px",
-              background: "rgba(255, 255, 255, 0.05)",
-              color: "rgba(245, 248, 255, 0.94)",
-              fontSize: isMobileLayout ? "16px" : "13px",
-              outline: "none",
-              transition: "all 150ms ease",
-            }}
-            onFocus={(e) => {
-              e.target.style.borderColor = "rgba(34, 197, 94, 0.5)";
-              e.target.style.background = "rgba(255, 255, 255, 0.08)";
-            }}
-            onBlur={(e) => {
-              e.target.style.borderColor = "rgba(255, 255, 255, 0.15)";
-              e.target.style.background = "rgba(255, 255, 255, 0.05)";
-            }}
           />
           {searchMatchingIds.size > 0 && (
-            <div style={{
-              marginTop: "6px",
-              fontSize: "11px",
-              color: "rgba(34, 197, 94, 0.9)",
-              fontWeight: 600,
-            }}>
+            <div className="planner-search-match">
               {searchMatchingIds.size} match{searchMatchingIds.size !== 1 ? "es" : ""} found
             </div>
           )}
@@ -1194,7 +1155,7 @@ export default function PlannerPage({ user }: PlannerPageProps) {
                     void setNodeColor(selectedNode.id, event.target.value);
                   }}
                   disabled={busyAction}
-                  style={{ width: "72px", height: "34px", padding: "4px 6px" }}
+                  className="planner-color-input-lg"
                 />
                 <button
                   onClick={() => {
@@ -1388,604 +1349,127 @@ export default function PlannerPage({ user }: PlannerPageProps) {
         ) : null}
 
         {showSimpleBubblesSection ? (
-        <div id="cross-ref-bubbles-panel" className="planner-panel-block">
-          <h3>Bubbles</h3>
-          <p className="planner-subtle">
-            Local visual bubbles for each node. No cross-linking between nodes.
-          </p>
-          <div className="planner-row-label">Selected node target</div>
-          <div className="planner-chip-list">
-            {bubbleTargetNode ? (
-              <button
-                className="chip"
-                onClick={() => {
-                  setSelectedNodeId(bubbleTargetNode.id);
-                  setActivePortalRefId(null);
-                }}
-                title={buildNodePath(bubbleTargetNode.id, nodesById)}
-              >
-                {bubbleTargetNode.title}
-              </button>
-            ) : (
-              <span className="planner-subtle">Tap a node, then add a bubble.</span>
-            )}
-          </div>
-          {bubbleTargetNode ? (
-            <div className={`planner-path planner-bubble-target-path${isMobileLayout ? " planner-path-tail" : ""}`}>
-              {isMobileLayout
-                ? buildNodePathTail(bubbleTargetNode.id, nodesById, 3)
-                : buildNodePath(bubbleTargetNode.id, nodesById)}
-            </div>
-          ) : (
-            <p className="planner-subtle">
-              Tap any node on the canvas. This panel always targets your current selection.
-            </p>
-          )}
-          {isMobileLayout ? (
-            <>
-              <div className="planner-row-label">
-                {bubbleTargetNode ? `Quick add to: ${bubbleTargetNode.title}` : "Tap a node first"}
-              </div>
-              <div className="planner-inline-buttons planner-mobile-bubble-aux-row">
-                <button
-                  type="button"
-                  onClick={() => openMobileQuickBubble(effectiveBubbleTargetId || undefined, true)}
-                  disabled={!effectiveBubbleTargetId}
-                >
-                  Quick Add Bubble
-                </button>
-                <button
-                  type="button"
-                  onClick={() => {
-                    setMobileQuickBubbleOpen(false);
-                    setMobileSidebarOpen(false);
-                    setMobileQuickEditorOpen(false);
-                  }}
-                >
-                  Pick Node
-                </button>
-              </div>
-              <p className="planner-subtle">
-                Quick Add opens a short sheet with one input and one Add button.
-              </p>
-              <details className="planner-advanced-tools">
-                <summary>Advanced bubble options</summary>
-                <div className="planner-advanced-tools-content">
-                  <div className="planner-inline-buttons planner-mobile-bubble-input-row">
-                    <input
-                      ref={newRefLabelInputRef}
-                      value={newRefLabel}
-                      onChange={(event) => setNewRefLabel(event.target.value)}
-                      onKeyDown={(event) => {
-                        if (event.key !== "Enter") return;
-                        event.preventDefault();
-                        if (busyAction || !effectiveBubbleTargetId || !canCreateBubbleFromInput) return;
-                        void createCrossRef();
-                      }}
-                      placeholder="Bubble name"
-                    />
-                    <button
-                      onClick={() => {
-                        void createCrossRef();
-                      }}
-                      disabled={busyAction || !effectiveBubbleTargetId || !canCreateBubbleFromInput}
-                    >
-                      Add
-                    </button>
-                  </div>
-                  <div className="planner-inline-buttons planner-mobile-bubble-aux-row">
-                    <button type="button" onClick={blurActiveInput}>
-                      Done
-                    </button>
-                    <button
-                      type="button"
-                      onClick={() => openMobileQuickBubble(effectiveBubbleTargetId || undefined, true)}
-                      disabled={!effectiveBubbleTargetId}
-                    >
-                      Open Quick Add
-                    </button>
-                  </div>
-                  <div className="planner-inline-buttons">
-                    <label style={{ display: "grid", gap: 4, alignItems: "center" }}>
-                      <span className="planner-subtle" style={{ fontSize: 11 }}>Color</span>
-                      <input
-                        type="color"
-                        value={newRefColor}
-                        onChange={(event) => setNewRefColor(event.target.value)}
-                        style={{ width: 54, height: 34, padding: "4px 6px" }}
-                      />
-                    </label>
-                    <div style={{ display: "grid", gap: 4, flex: 1 }}>
-                      <input
-                        value={newRefCode}
-                        onChange={(event) => setNewRefCode(event.target.value)}
-                        placeholder={`Code (auto ${nextAutoBubbleCode})`}
-                        style={{ flex: 1 }}
-                      />
-                      <span className="planner-subtle" style={{ fontSize: 11 }}>
-                        New bubble code: <strong>{effectiveNewBubbleCode}</strong>
-                      </span>
-                    </div>
-                  </div>
-                  {bubblePrefixSuggestions.length > 0 ? (
-                    <>
-                      <div className="planner-row-label">Similar bubble styles</div>
-                      <div className="planner-chip-list">
-                        {bubblePrefixSuggestions.map((ref) => (
-                          <button
-                            key={`template:${ref.id}`}
-                            className="chip"
-                            onClick={() => applyBubbleSuggestion(ref)}
-                            title={`Use style from ${ref.label} (${ref.code})`}
-                            style={{
-                              borderColor: rgbaFromHex(ref.color, 0.9, "rgba(64,182,255,0.88)"),
-                              boxShadow: `0 0 0 1px ${rgbaFromHex(ref.color, 0.25, "rgba(64,182,255,0.2)")}`,
-                            }}
-                          >
-                            {ref.label}
-                          </button>
-                        ))}
-                      </div>
-                    </>
-                  ) : null}
-                </div>
-              </details>
-            </>
-          ) : (
-            <>
-              <div className="planner-row-label">
-                {bubbleTargetNode ? `Add bubble to: ${bubbleTargetNode.title}` : "Tap a node first"}
-              </div>
-              <input
-                ref={newRefLabelInputRef}
-                value={newRefLabel}
-                onChange={(event) => setNewRefLabel(event.target.value)}
-                onKeyDown={(event) => {
-                  if (event.key !== "Enter") return;
-                  event.preventDefault();
-                  if (busyAction || !effectiveBubbleTargetId || !canCreateBubbleFromInput) return;
-                  void createCrossRef();
-                }}
-                placeholder="Bubble name"
-              />
-              <button
-                onClick={() => {
-                  void createCrossRef();
-                }}
-                disabled={busyAction || !effectiveBubbleTargetId || !canCreateBubbleFromInput}
-              >
-                {effectiveBubbleTargetId ? "Add Bubble to Selected Node" : "Select Node to Add Bubble"}
-              </button>
-              <div className="planner-inline-buttons">
-                <label style={{ display: "grid", gap: 4, alignItems: "center" }}>
-                  <span className="planner-subtle" style={{ fontSize: 11 }}>Color</span>
-                  <input
-                    type="color"
-                    value={newRefColor}
-                    onChange={(event) => setNewRefColor(event.target.value)}
-                    style={{ width: 54, height: 34, padding: "4px 6px" }}
-                  />
-                </label>
-                <div style={{ display: "grid", gap: 4, flex: 1 }}>
-                  <input
-                    value={newRefCode}
-                    onChange={(event) => setNewRefCode(event.target.value)}
-                    placeholder={`Code (auto ${nextAutoBubbleCode})`}
-                    style={{ flex: 1 }}
-                  />
-                  <span className="planner-subtle" style={{ fontSize: 11 }}>
-                    New bubble code: <strong>{effectiveNewBubbleCode}</strong>
-                  </span>
-                </div>
-              </div>
-              {bubblePrefixSuggestions.length > 0 ? (
-                <>
-                  <div className="planner-row-label">Similar bubble styles</div>
-                  <div className="planner-chip-list">
-                    {bubblePrefixSuggestions.map((ref) => (
-                      <button
-                        key={`template:${ref.id}`}
-                        className="chip"
-                        onClick={() => applyBubbleSuggestion(ref)}
-                        title={`Use style from ${ref.label} (${ref.code})`}
-                        style={{
-                          borderColor: rgbaFromHex(ref.color, 0.9, "rgba(64,182,255,0.88)"),
-                          boxShadow: `0 0 0 1px ${rgbaFromHex(ref.color, 0.25, "rgba(64,182,255,0.2)")}`,
-                        }}
-                      >
-                        {ref.label}
-                      </button>
-                    ))}
-                  </div>
-                </>
-              ) : null}
-            </>
-          )}
-          <div className="planner-row-label">
-            {bubbleTargetNode ? `Bubbles on ${bubbleTargetNode.title}` : "Bubbles on selected node"}
-          </div>
-          <div className="planner-chip-list">
-            {selectedNodeRefs.length === 0 || !selectedNodeId ? (
-              <span className="planner-subtle">No bubbles yet.</span>
-            ) : (
-              selectedNodeRefs.map((ref) => (
-                <div key={ref.id} className="chip with-action">
-                  <button
-                    onClick={() => setActivePortalRefId((prev) => (prev === ref.id ? null : ref.id))}
-                    title={ref.label}
-                    style={{
-                      borderColor: rgbaFromHex(ref.color, 0.9, "rgba(64,182,255,0.88)"),
-                      boxShadow: `0 0 0 1px ${rgbaFromHex(ref.color, 0.25, "rgba(64,182,255,0.2)")}`,
-                    }}
-                  >
-                    {ref.label}
-                  </button>
-                  <button
-                    className="chip-action"
-                    onClick={() => void deletePortalByRefId(ref.id)}
-                    title="Delete bubble"
-                  >
-                    ×
-                  </button>
-                </div>
-              ))
-            )}
-          </div>
-          {activePortalRef ? (
-            <div className="planner-panel-block" style={{ marginTop: 8, padding: "10px 12px" }}>
-              <div className="planner-row-label">Selected bubble</div>
-              <div className="planner-inline-buttons">
-                <span className="planner-subtle" style={{ alignSelf: "center" }}>{`${activePortalRef.label} (${activePortalRef.code})`}</span>
-                <input
-                  type="color"
-                  value={activePortalRef.color || DEFAULT_BUBBLE_COLOR}
-                  onChange={(event) => {
-                    void updateCrossRefColor(activePortalRef.id, event.target.value);
-                  }}
-                  style={{ width: 56, height: 34, padding: "4px 6px" }}
-                />
-              </div>
-            </div>
-          ) : null}
-        </div>
+          <SimpleBubblesPanel
+            bubbleTargetNode={bubbleTargetNode}
+            nodesById={nodesById}
+            isMobileLayout={isMobileLayout}
+            busyAction={busyAction}
+            selectedNodeId={selectedNodeId}
+            selectedNodeRefs={selectedNodeRefs}
+            activePortalRef={activePortalRef}
+            effectiveBubbleTargetId={effectiveBubbleTargetId}
+            newRefLabelInputRef={newRefLabelInputRef}
+            newRefLabel={newRefLabel}
+            onNewRefLabelChange={setNewRefLabel}
+            newRefColor={newRefColor}
+            onNewRefColorChange={setNewRefColor}
+            newRefCode={newRefCode}
+            onNewRefCodeChange={setNewRefCode}
+            nextAutoBubbleCode={nextAutoBubbleCode}
+            effectiveNewBubbleCode={effectiveNewBubbleCode}
+            canCreateBubbleFromInput={canCreateBubbleFromInput}
+            bubblePrefixSuggestions={bubblePrefixSuggestions}
+            defaultBubbleColor={DEFAULT_BUBBLE_COLOR}
+            onSelectBubbleTarget={(nodeId) => {
+              setSelectedNodeId(nodeId);
+              setActivePortalRefId(null);
+            }}
+            onCreateCrossRef={createCrossRef}
+            onOpenMobileQuickBubble={openMobileQuickBubble}
+            onCloseMobilePanels={() => {
+              setMobileQuickBubbleOpen(false);
+              setMobileSidebarOpen(false);
+              setMobileQuickEditorOpen(false);
+            }}
+            onBlurActiveInput={blurActiveInput}
+            onApplyBubbleSuggestion={applyBubbleSuggestion}
+            onToggleActivePortalRef={(refId) => {
+              setActivePortalRefId((prev) => (prev === refId ? null : refId));
+            }}
+            onDeletePortalByRefId={(refId) => {
+              void deletePortalByRefId(refId);
+            }}
+            onUpdateCrossRefColor={updateCrossRefColor}
+          />
         ) : null}
 
         {showBubblesSection ? (
         <div className="planner-panel-block">
-          <h3>Bubbles</h3>
-          <p className="planner-subtle">
-            Shared entities across branches — vendor, partner, person, etc.
-          </p>
-
-          {/* ── CREATE / ATTACH ── */}
-          <div className="planner-row-label">
-            {selectedNode ? `Attach to: ${selectedNode.title}` : "Select a node to attach"}
-          </div>
-          <input
-            ref={newRefLabelInputRef}
-            value={newRefLabel}
-            onChange={(event) => setNewRefLabel(event.target.value)}
-            placeholder="Name (e.g., Mario Pinto, ACME Corp)"
+          <SharedBubblesTopPanel
+            refs={refs}
+            selectedNode={selectedNode}
+            selectedNodeId={selectedNodeId}
+            selectedNodeRefs={selectedNodeRefs}
+            nodesById={nodesById}
+            activePortalRef={activePortalRef}
+            activePortalTargets={activePortalTargets}
+            busyAction={busyAction}
+            canCreateBubbleFromInput={canCreateBubbleFromInput}
+            newRefLabelInputRef={newRefLabelInputRef}
+            newRefLabel={newRefLabel}
+            onNewRefLabelChange={setNewRefLabel}
+            newRefCode={newRefCode}
+            onNewRefCodeChange={setNewRefCode}
+            newRefType={newRefType}
+            onNewRefTypeChange={setNewRefType}
+            newRefSuggestions={newRefSuggestions}
+            onCreateCrossRef={createCrossRef}
+            describeRefTargets={describeRefTargets}
+            onLinkCrossRefToNode={linkCrossRefToNode}
+            onSelectRefForEditing={selectRefForEditing}
+            onDetachCrossRef={detachCrossRef}
+            onJumpToReferencedNode={jumpToReferencedNode}
           />
-          <div className="planner-inline-buttons">
-            <input
-              value={newRefCode}
-              onChange={(event) => setNewRefCode(event.target.value)}
-              placeholder="Code (e.g., MP)"
-              style={{ flex: 1 }}
-            />
-            <select value={newRefType} onChange={(event) => setNewRefType(event.target.value as EntityType)} style={{ flex: 1 }}>
-              {ENTITY_TYPE_GROUPS.map((group) => (
-                <optgroup key={group.label} label={group.label}>
-                  {group.options.map((entityType) => (
-                    <option key={entityType} value={entityType}>
-                      {entityType}
-                    </option>
-                  ))}
-                </optgroup>
-              ))}
-            </select>
-          </div>
-          {(() => {
-            const typedCode = newRefCode.trim() ? normalizeCode(newRefCode) : (newRefLabel.trim() ? initialsFromLabel(newRefLabel) : "");
-            if (!typedCode) return null;
-            const collisions = refs.filter((r) => r.code === typedCode);
-            if (collisions.length === 0) return null;
-            return (
-              <p className="planner-code-collision-warn">
-                ⚠ Code <strong>{typedCode}</strong> already used by:{" "}
-                {collisions.map((r) => r.label).join(", ")}. Consider a longer code (e.g. <em>MPinto</em> vs <em>MPérez</em>).
-              </p>
-            );
-          })()}
-          <button
-            onClick={() => {
-              void createCrossRef();
+
+          <SharedBubblesManager
+            refs={refs}
+            refScopeFilter={refScopeFilter}
+            onRefScopeFilterChange={setRefScopeFilter}
+            refCategoryFilter={refCategoryFilter}
+            onRefCategoryFilterChange={setRefCategoryFilter}
+            refSearchQuery={refSearchQuery}
+            onRefSearchQueryChange={setRefSearchQuery}
+            filteredRefs={filteredRefs}
+            selectedNodeId={selectedNodeId}
+            selectedNodeRefIds={selectedNodeRefIds}
+            busyAction={busyAction}
+            onSelectRefForEditing={selectRefForEditing}
+            describeRefLibraryPreview={describeRefLibraryPreview}
+            onLinkCrossRefToNode={linkCrossRefToNode}
+            onDetachCrossRef={detachCrossRef}
+            editRefId={editRefId}
+            editRefLabel={editRefLabel}
+            onEditRefLabelChange={setEditRefLabel}
+            editRefCode={editRefCode}
+            onEditRefCodeChange={setEditRefCode}
+            editRefType={editRefType}
+            onEditRefTypeChange={setEditRefType}
+            editRefTags={editRefTags}
+            onEditRefTagsChange={setEditRefTags}
+            editRefContact={editRefContact}
+            onEditRefContactChange={setEditRefContact}
+            editRefNotes={editRefNotes}
+            onEditRefNotesChange={setEditRefNotes}
+            editRefLinks={editRefLinks}
+            onEditRefLinksChange={setEditRefLinks}
+            onSaveCrossRefEdits={saveCrossRefEdits}
+            onDuplicateCrossRef={(refId) => {
+              void duplicateCrossRef(refId);
             }}
-            disabled={busyAction || !selectedNodeId || !canCreateBubbleFromInput}
-          >
-            Create and attach to selected
-          </button>
-
-          {newRefSuggestions.length > 0 ? (
-            <>
-              <div className="planner-row-label">Or attach existing</div>
-              <div className="planner-chip-list">
-                {newRefSuggestions.map((ref) => (
-                  <button
-                    key={ref.id}
-                    className="chip"
-                    onClick={() => {
-                      if (!selectedNodeId) return;
-                      linkCrossRefToNode(ref.id, selectedNodeId);
-                    }}
-                    title={describeRefTargets(ref, 4)}
-                  >
-                    {`${ref.code} — ${ref.label}`}
-                  </button>
-                ))}
-              </div>
-            </>
-          ) : null}
-
-          {/* ── ON SELECTED NODE ── */}
-          <div className="planner-row-label">On selected node</div>
-          <div className="planner-chip-list">
-            {selectedNodeRefs.length === 0 || !selectedNodeId ? (
-              <span className="planner-subtle">None attached.</span>
-            ) : (
-              selectedNodeRefs.map((ref) => (
-                <div key={ref.id} className="chip with-action">
-                  <button
-                    onClick={() => selectRefForEditing(ref.id)}
-                    title={describeRefTargets(ref, 4)}
-                  >{`${ref.code} — ${ref.label}`}</button>
-                  <button
-                    className="chip-action"
-                    onClick={() => detachCrossRef(ref.id, selectedNodeId)}
-                    title="Detach from selected node"
-                  >
-                    ×
-                  </button>
-                </div>
-              ))
-            )}
-          </div>
-
-          {/* ── ACTIVE BUBBLE (set by clicking on canvas or selecting here) ── */}
-          {activePortalRef ? (
-            <div className="planner-panel-block" style={{ marginTop: 8, padding: "10px 12px" }}>
-              <div style={{ fontWeight: 700, fontSize: 13, marginBottom: 4 }}>
-                {`${activePortalRef.code} — ${activePortalRef.label}`}
-                <span className="planner-kind-badge" style={{ marginLeft: 6 }}>{activePortalRef.entityType}</span>
-              </div>
-              {activePortalRef.contact ? <p className="planner-subtle" style={{ margin: "2px 0" }}>{activePortalRef.contact}</p> : null}
-              {activePortalRef.notes ? <p className="planner-subtle" style={{ margin: "2px 0" }}>{activePortalRef.notes}</p> : null}
-              {activePortalRef.links.length > 0 ? (
-                <div style={{ margin: "4px 0" }}>
-                  {activePortalRef.links.map((url) => (
-                    <a key={url} href={url} target="_blank" rel="noreferrer" style={{ display: "block", fontSize: 11, wordBreak: "break-all" }}>
-                      {url}
-                    </a>
-                  ))}
-                </div>
-              ) : null}
-              <div className="planner-row-label" style={{ marginTop: 6 }}>Linked nodes</div>
-              <div className="planner-reference-list">
-                {activePortalTargets.map((target) => (
-                  <button key={target.id} onClick={() => jumpToReferencedNode(target.id)}>
-                    {buildNodePath(target.id, nodesById)}
-                  </button>
-                ))}
-              </div>
-              <div className="planner-inline-buttons" style={{ marginTop: 6 }}>
-                <button
-                  onClick={() => {
-                    if (!selectedNodeId) return;
-                    if (activePortalRef.nodeIds.includes(selectedNodeId)) {
-                      void detachCrossRef(activePortalRef.id, selectedNodeId);
-                    } else {
-                      void linkCrossRefToNode(activePortalRef.id, selectedNodeId);
-                    }
-                  }}
-                  disabled={busyAction || !selectedNodeId}
-                >
-                  {!selectedNodeId ? "Select node" : activePortalRef.nodeIds.includes(selectedNodeId) ? "Unlink selected" : "Link to selected"}
-                </button>
-                <button
-                  onClick={() => {
-                    selectRefForEditing(activePortalRef.id);
-                  }}
-                  disabled={busyAction}
-                >
-                  Edit bubble
-                </button>
-              </div>
-            </div>
-          ) : null}
-
-          {/* ── BUBBLE MANAGER (full list + edit) ── */}
-          <details className="planner-advanced-tools">
-            <summary>Manage all bubbles ({refs.length})</summary>
-            <div className="planner-advanced-tools-content">
-              <div className="planner-filter-toggle">
-                <button type="button" className={refScopeFilter === "view" ? "active" : ""} onClick={() => setRefScopeFilter("view")}>
-                  This view
-                </button>
-                <button type="button" className={refScopeFilter === "all" ? "active" : ""} onClick={() => setRefScopeFilter("all")}>
-                  All
-                </button>
-                <button
-                  type="button"
-                  className={refCategoryFilter === "people" ? "active" : ""}
-                  onClick={() => setRefCategoryFilter(refCategoryFilter === "people" ? "all" : "people")}
-                >
-                  People
-                </button>
-              </div>
-              <input
-                value={refSearchQuery}
-                onChange={(event) => setRefSearchQuery(event.target.value)}
-                placeholder="Search bubbles..."
-              />
-              <div className="planner-reference-list">
-                {filteredRefs.length === 0 ? (
-                  <span className="planner-subtle">
-                    {refs.length === 0 ? "No bubbles yet." : "No matches."}
-                  </span>
-                ) : (
-                  filteredRefs.map((ref) => {
-                    const linkedOnSelected = selectedNodeId ? selectedNodeRefIds.has(ref.id) : false;
-                    return (
-                      <div key={ref.id} className="planner-reference-item">
-                        <button onClick={() => selectRefForEditing(ref.id)}>{`${ref.code} — ${ref.label}`}</button>
-                        <div className="planner-reference-preview">{describeRefLibraryPreview(ref)}</div>
-                        <div className="planner-reference-actions">
-                          <button
-                            onClick={() => {
-                              if (!selectedNodeId) return;
-                              if (linkedOnSelected) {
-                                detachCrossRef(ref.id, selectedNodeId);
-                              } else {
-                                linkCrossRefToNode(ref.id, selectedNodeId);
-                              }
-                            }}
-                            disabled={busyAction || !selectedNodeId}
-                          >
-                            {!selectedNodeId ? "Select node" : linkedOnSelected ? "Unlink" : "Link to selected"}
-                          </button>
-                        </div>
-                      </div>
-                    );
-                  })
-                )}
-              </div>
-
-              {/* Edit active bubble */}
-              {editRefId ? (
-                <>
-                  <div className="planner-row-label">
-                    Editing: {editRefLabel || "—"}
-                  </div>
-                  <input
-                    value={editRefLabel}
-                    onChange={(event) => setEditRefLabel(event.target.value)}
-                    placeholder="Bubble name"
-                  />
-                  <div className="planner-inline-buttons">
-                    <input
-                      value={editRefCode}
-                      onChange={(event) => setEditRefCode(event.target.value)}
-                      placeholder="Code"
-                      style={{ flex: 1 }}
-                    />
-                    <select
-                      value={editRefType}
-                      onChange={(event) => setEditRefType(event.target.value as EntityType)}
-                      style={{ flex: 1 }}
-                    >
-                      {ENTITY_TYPE_GROUPS.map((group) => (
-                        <optgroup key={group.label} label={group.label}>
-                          {group.options.map((entityType) => (
-                            <option key={entityType} value={entityType}>{entityType}</option>
-                          ))}
-                        </optgroup>
-                      ))}
-                    </select>
-                  </div>
-                  <input
-                    value={editRefTags}
-                    onChange={(event) => setEditRefTags(event.target.value)}
-                    placeholder="Tags (comma-separated)"
-                  />
-                  <input
-                    value={editRefContact}
-                    onChange={(event) => setEditRefContact(event.target.value)}
-                    placeholder="Contact info"
-                  />
-                  <textarea
-                    value={editRefNotes}
-                    onChange={(event) => setEditRefNotes(event.target.value)}
-                    placeholder="Notes"
-                    rows={3}
-                  />
-                  <textarea
-                    value={editRefLinks}
-                    onChange={(event) => setEditRefLinks(event.target.value)}
-                    placeholder="One URL per line"
-                    rows={2}
-                  />
-                  <div className="planner-inline-buttons">
-                    <button onClick={saveCrossRefEdits} disabled={busyAction || editRefLabel.trim().length === 0}>
-                      Save
-                    </button>
-                    <button onClick={() => void duplicateCrossRef(editRefId)} disabled={busyAction}>
-                      Duplicate
-                    </button>
-                  </div>
-
-                  {/* Link to another node */}
-                  <div className="planner-row-label">Link to node</div>
-                  <input
-                    value={linkNodeQuery}
-                    onChange={(event) => setLinkNodeQuery(event.target.value)}
-                    placeholder="Search node..."
-                  />
-                  <select value={linkTargetNodeId} onChange={(event) => setLinkTargetNodeId(event.target.value)}>
-                    <option value="">Choose node...</option>
-                    {linkableNodeOptions.map((entry) => (
-                      <option key={entry.id} value={entry.id}>{entry.path}</option>
-                    ))}
-                  </select>
-                  <button
-                    onClick={() => { if (editRefId && linkTargetNodeId) linkCrossRefToNode(editRefId, linkTargetNodeId); }}
-                    disabled={busyAction || !linkTargetNodeId}
-                  >
-                    Link node
-                  </button>
-
-                  {/* Linked nodes */}
-                  <div className="planner-row-label">All linked nodes</div>
-                  <div className="planner-reference-list">
-                    {editableRefTargets.length === 0 ? (
-                      <span className="planner-subtle">Not linked to any node yet.</span>
-                    ) : (
-                      editableRefTargets.map((entry) => (
-                        <div key={entry.id} className="planner-reference-target-item">
-                          <button onClick={() => jumpToReferencedNode(entry.id)}>{entry.path}</button>
-                          <button className="danger" onClick={() => detachCrossRef(editRefId, entry.id)} disabled={busyAction}>
-                            Unlink
-                          </button>
-                        </div>
-                      ))
-                    )}
-                  </div>
-
-                  {/* Merge */}
-                  {mergeCandidateRefs.length > 0 ? (
-                    <>
-                      <div className="planner-row-label">Merge duplicate</div>
-                      <select value={mergeFromRefId} onChange={(event) => setMergeFromRefId(event.target.value)}>
-                        <option value="">Select duplicate...</option>
-                        {mergeCandidateRefs.map((ref) => (
-                          <option key={ref.id} value={ref.id}>{`${ref.code} — ${ref.label}`}</option>
-                        ))}
-                      </select>
-                      <button onClick={mergeCrossRefIntoEdited} disabled={busyAction || !mergeFromRefId}>
-                        Merge into current
-                      </button>
-                    </>
-                  ) : null}
-
-                  <button className="danger" onClick={deleteCrossRefBubble} disabled={busyAction} style={{ marginTop: 8 }}>
-                    Delete bubble
-                  </button>
-                </>
-              ) : (
-                <p className="planner-subtle">Click a bubble above to edit it.</p>
-              )}
-            </div>
-          </details>
+            linkNodeQuery={linkNodeQuery}
+            onLinkNodeQueryChange={setLinkNodeQuery}
+            linkTargetNodeId={linkTargetNodeId}
+            onLinkTargetNodeIdChange={setLinkTargetNodeId}
+            linkableNodeOptions={linkableNodeOptions}
+            onLinkNodeFromEdit={linkCrossRefToNode}
+            editableRefTargets={editableRefTargets}
+            onJumpToReferencedNode={jumpToReferencedNode}
+            mergeCandidateRefs={mergeCandidateRefs}
+            mergeFromRefId={mergeFromRefId}
+            onMergeFromRefIdChange={setMergeFromRefId}
+            onMergeCrossRefIntoEdited={mergeCrossRefIntoEdited}
+            onDeleteCrossRefBubble={deleteCrossRefBubble}
+          />
 
         </div>
         ) : null}
@@ -1996,598 +1480,146 @@ export default function PlannerPage({ user }: PlannerPageProps) {
         )}
       </aside>
 
-      {isMobileLayout && mobileSidebarOpen ? (
-        <button
-          type="button"
-          className="planner-mobile-backdrop"
-          aria-label="Close controls panel"
-          onClick={() => setMobileSidebarOpen(false)}
-        />
-      ) : null}
+      <MobileOverlayBackdrops
+        isMobileLayout={isMobileLayout}
+        mobileSidebarOpen={mobileSidebarOpen}
+        mobileQuickEditorOpen={mobileQuickEditorOpen}
+        mobileQuickBubbleOpen={mobileQuickBubbleOpen}
+        onCloseSidebar={() => setMobileSidebarOpen(false)}
+        onCloseQuickEditor={() => setMobileQuickEditorOpen(false)}
+        onCloseQuickBubble={() => setMobileQuickBubbleOpen(false)}
+      />
 
-      {isMobileLayout && mobileQuickEditorOpen ? (
-        <button
-          type="button"
-          className="planner-mobile-backdrop planner-mobile-sheet-backdrop"
-          aria-label="Close quick editor"
-          onClick={() => setMobileQuickEditorOpen(false)}
-        />
-      ) : null}
+      <MobileQuickEditorSheet
+        open={isMobileLayout && mobileQuickEditorOpen}
+        mode={mobileQuickEditorMode}
+        onModeChange={setMobileQuickEditorMode}
+        selectedNode={selectedNode}
+        selectedNodeId={selectedNodeId}
+        nodesById={nodesById}
+        renameTitle={renameTitle}
+        onRenameTitleChange={setRenameTitle}
+        onRenameSelected={renameSelected}
+        busyAction={busyAction}
+        crossReferencesEnabled={CROSS_REFERENCES_ENABLED}
+        selectedNodeRefs={selectedNodeRefs}
+        newRefLabel={newRefLabel}
+        onNewRefLabelChange={setNewRefLabel}
+        canCreateBubbleFromInput={canCreateBubbleFromInput}
+        onCreateCrossRef={createCrossRef}
+        onOpenMobileQuickBubble={openMobileQuickBubble}
+        bodyDraft={bodyDraft}
+        onBodyDraftChange={setBodyDraft}
+        onSaveSelectedBody={saveSelectedBody}
+        selectedNodeBody={selectedNode?.body || ""}
+        newRefCode={newRefCode}
+        onNewRefCodeChange={setNewRefCode}
+        nextAutoBubbleCode={nextAutoBubbleCode}
+        newRefColor={newRefColor}
+        onNewRefColorChange={setNewRefColor}
+        bubblePrefixSuggestions={bubblePrefixSuggestions}
+        onApplyBubbleSuggestion={applyBubbleSuggestion}
+        onOpenBubblesPanel={openBubblesPanel}
+        selectedNodeChildrenCount={selectedNodeChildren.length}
+        selectedNodeCollapsed={selectedNodeCollapsed}
+        onSetNodeTaskStatus={setNodeTaskStatus}
+        onChangeType={(nodeId) => handleContextChangeType(nodeId)}
+        onToggleNodeCollapse={toggleNodeCollapse}
+        onFocusHere={setCurrentRootId}
+        onAddChild={handleContextAddChild}
+        onOpenSelectedAsStoryLane={openSelectedAsStoryLane}
+        onOpenFullNodePanel={() => {
+          setMobileSidebarSection("node");
+          setMobileSidebarOpen(true);
+          setMobileQuickEditorOpen(false);
+        }}
+        onClose={() => setMobileQuickEditorOpen(false)}
+      />
 
-      {isMobileLayout && mobileQuickBubbleOpen ? (
-        <button
-          type="button"
-          className="planner-mobile-backdrop planner-mobile-sheet-backdrop"
-          aria-label="Close quick bubble add"
-          onClick={() => setMobileQuickBubbleOpen(false)}
-        />
-      ) : null}
-
-      {isMobileLayout && mobileQuickEditorOpen ? (
-        <section
-          className={`planner-mobile-sheet ${mobileQuickEditorMode === "compact" ? "compact" : "full"}`}
-          role="dialog"
-          aria-label="Quick node editor"
-        >
-          <div
-            className="planner-mobile-sheet-handle"
-            onClick={() => setMobileQuickEditorOpen(false)}
-            role="button"
-            aria-label="Close"
-            onTouchStart={(e) => { sheetTouchStartY.current = e.touches[0]?.clientY ?? null; }}
-            onTouchEnd={(e) => {
-              const startY = sheetTouchStartY.current;
-              if (startY === null) return;
-              const endY = e.changedTouches[0]?.clientY ?? startY;
-              sheetTouchStartY.current = null;
-              // Swipe down on handle ≥ 60px → dismiss.
-              if (endY - startY > 60) setMobileQuickEditorOpen(false);
-            }}
-          />
-          {selectedNode ? (
-            <>
-              <div className="planner-mobile-sheet-header">
-                <strong>{selectedNode.title}</strong>
-                <span>{selectedNode.kind}</span>
-              </div>
-              <div className="planner-mobile-sheet-path">{buildNodePath(selectedNode.id, nodesById)}</div>
-              <div className="planner-mobile-sheet-mode-toggle" role="tablist" aria-label="Editor detail level">
-                <button
-                  type="button"
-                  className={mobileQuickEditorMode === "compact" ? "active" : ""}
-                  onClick={() => setMobileQuickEditorMode("compact")}
-                  aria-selected={mobileQuickEditorMode === "compact"}
-                >
-                  Compact
-                </button>
-                <button
-                  type="button"
-                  className={mobileQuickEditorMode === "full" ? "active" : ""}
-                  onClick={() => setMobileQuickEditorMode("full")}
-                  aria-selected={mobileQuickEditorMode === "full"}
-                >
-                  Full
-                </button>
-              </div>
-              <input
-                value={renameTitle}
-                onChange={(event) => setRenameTitle(event.target.value)}
-                onKeyDown={(event) => {
-                  if (event.key !== "Enter") return;
-                  event.preventDefault();
-                  if (busyAction) return;
-                  void renameSelected();
-                }}
-                placeholder="Rename node..."
-              />
-              <button onClick={renameSelected} disabled={busyAction || renameTitle.trim().length === 0}>
-                Save Name
-              </button>
-              {mobileQuickEditorMode === "compact" ? (
-                <>
-                  <div className="planner-mobile-sheet-compact-summary">
-                    <div className="planner-row-label">Body preview</div>
-                    <div className="planner-subtle">
-                      {(selectedNode.body || "").trim().length > 0
-                        ? ((selectedNode.body || "").trim().length > 120
-                          ? `${(selectedNode.body || "").trim().slice(0, 120)}...`
-                          : (selectedNode.body || "").trim())
-                        : "No body text yet."}
-                    </div>
-                    {CROSS_REFERENCES_ENABLED ? (
-                      <div className="planner-subtle">
-                        {selectedNodeRefs.length} bubble{selectedNodeRefs.length === 1 ? "" : "s"} on this node
-                      </div>
-                    ) : null}
-                  </div>
-                  {CROSS_REFERENCES_ENABLED ? (
-                    <>
-                      <div className="planner-row-label">Quick bubble on this node</div>
-                      <div className="planner-inline-buttons planner-mobile-quick-bubble-row">
-                        <input
-                          value={newRefLabel}
-                          onChange={(event) => setNewRefLabel(event.target.value)}
-                          onKeyDown={(event) => {
-                            if (event.key !== "Enter") return;
-                            event.preventDefault();
-                            if (busyAction || !canCreateBubbleFromInput) return;
-                            void createCrossRef(selectedNode.id);
-                          }}
-                          placeholder="Bubble name"
-                        />
-                        <button
-                          type="button"
-                          onClick={() => {
-                            void createCrossRef(selectedNode.id);
-                          }}
-                          disabled={busyAction || !canCreateBubbleFromInput}
-                        >
-                          Add bubble
-                        </button>
-                      </div>
-                    </>
-                  ) : null}
-                  <div className="planner-mobile-sheet-grid planner-mobile-sheet-compact-grid">
-                    <button
-                      type="button"
-                      onClick={() => setMobileQuickEditorMode("full")}
-                    >
-                      Expand Editor
-                    </button>
-                    {CROSS_REFERENCES_ENABLED ? (
-                      <button
-                        type="button"
-                        onClick={() => {
-                          setMobileQuickEditorOpen(false);
-                          openMobileQuickBubble(selectedNode.id, true);
-                        }}
-                      >
-                        Add Bubble
-                      </button>
-                    ) : null}
-                  </div>
-                </>
-              ) : (
-                <>
-                  <textarea
-                    value={bodyDraft}
-                    onChange={(event) => setBodyDraft(event.target.value)}
-                    placeholder={selectedNode.kind === "story" ? "Scene/story body..." : "Node notes..."}
-                    rows={selectedNode.kind === "story" ? 6 : 4}
-                  />
-                  <button onClick={saveSelectedBody} disabled={busyAction || bodyDraft.trim() === (selectedNode.body || "").trim()}>
-                    Save Body
-                  </button>
-                  {CROSS_REFERENCES_ENABLED ? (
-                    <>
-                      <div className="planner-row-label">Quick bubble on this node</div>
-                      <input
-                        value={newRefLabel}
-                        onChange={(event) => setNewRefLabel(event.target.value)}
-                        onKeyDown={(event) => {
-                          if (event.key !== "Enter") return;
-                          event.preventDefault();
-                          if (busyAction || !selectedNodeId || !canCreateBubbleFromInput) return;
-                          void createCrossRef(selectedNode.id);
-                        }}
-                        placeholder="Bubble name"
-                      />
-                      <div className="planner-inline-buttons">
-                        <input
-                          value={newRefCode}
-                          onChange={(event) => setNewRefCode(event.target.value)}
-                          placeholder={`Code (auto ${nextAutoBubbleCode})`}
-                          style={{ flex: 1 }}
-                        />
-                        <input
-                          type="color"
-                          value={newRefColor}
-                          onChange={(event) => setNewRefColor(event.target.value)}
-                          style={{ width: 54, height: 34, padding: "4px 6px" }}
-                        />
-                        <button
-                          onClick={() => {
-                            void createCrossRef(selectedNode.id);
-                          }}
-                          disabled={busyAction || !selectedNodeId || !canCreateBubbleFromInput}
-                        >
-                          Add Bubble
-                        </button>
-                      </div>
-                      {bubblePrefixSuggestions.length > 0 ? (
-                        <div className="planner-chip-list">
-                          {bubblePrefixSuggestions.slice(0, 3).map((ref) => (
-                            <button
-                              key={`mobile-template:${ref.id}`}
-                              className="chip"
-                              onClick={() => applyBubbleSuggestion(ref)}
-                              title={`Use style from ${ref.label} (${ref.code})`}
-                              style={{
-                                borderColor: rgbaFromHex(ref.color, 0.9, "rgba(64,182,255,0.88)"),
-                                boxShadow: `0 0 0 1px ${rgbaFromHex(ref.color, 0.25, "rgba(64,182,255,0.2)")}`,
-                              }}
-                            >
-                              {ref.label}
-                            </button>
-                          ))}
-                        </div>
-                      ) : null}
-                      <button
-                        onClick={() => {
-                          setMobileQuickEditorOpen(false);
-                          openBubblesPanel(false);
-                        }}
-                      >
-                        Open Bubble Manager
-                      </button>
-                    </>
-                  ) : null}
-                </>
-              )}
-              <div className="planner-mobile-sheet-grid">
-                <button
-                  onClick={() => {
-                    if (selectedNode.kind === "root") return;
-                    const current = selectedNode.taskStatus || "none";
-                    const nextStatus: TaskStatus = current === "done" ? "todo" : "done";
-                    void setNodeTaskStatus(selectedNode.id, nextStatus);
-                  }}
-                  disabled={busyAction || selectedNode.kind === "root"}
-                >
-                  {selectedNode.taskStatus === "done" ? "Mark Todo" : "Mark Done"}
-                </button>
-                <button
-                  onClick={() => {
-                    void handleContextChangeType(selectedNode.id);
-                  }}
-                  disabled={busyAction || selectedNode.kind === "root"}
-                >
-                  {selectedNode.kind === "root" ? "Root" : `Set ${nextNodeKind(selectedNode.kind)}`}
-                </button>
-                <button
-                  onClick={() => toggleNodeCollapse(selectedNode.id)}
-                  disabled={selectedNodeChildren.length === 0}
-                >
-                  {selectedNodeCollapsed ? "Expand kids" : "Collapse kids"}
-                </button>
-                <button
-                  onClick={() => {
-                    setCurrentRootId(selectedNode.id);
-                    setMobileQuickEditorOpen(false);
-                  }}
-                >
-                  Focus Here
-                </button>
-                <button
-                  onClick={() => {
-                    void handleContextAddChild(selectedNode.id);
-                  }}
-                  disabled={busyAction}
-                >
-                  Add Child
-                </button>
-              </div>
-              {selectedNode.kind === "story" ? (
-                <div className="planner-mobile-sheet-story">
-                  <button onClick={openSelectedAsStoryLane}>Open Story Lane</button>
-                  <button
-                    onClick={() => {
-                      void handleContextAddChild(selectedNode.id);
-                    }}
-                    disabled={busyAction}
-                  >
-                    Add Beat Node
-                  </button>
-                </div>
-              ) : null}
-              <div className="planner-mobile-sheet-actions">
-                <button
-                  onClick={() => {
-                    setMobileSidebarSection("node");
-                    setMobileSidebarOpen(true);
-                    setMobileQuickEditorOpen(false);
-                  }}
-                >
-                  Open Full Node Panel
-                </button>
-                <button onClick={() => setMobileQuickEditorOpen(false)}>Close</button>
-              </div>
-            </>
-          ) : (
-            <div className="planner-subtle">Select a node to edit.</div>
-          )}
-        </section>
-      ) : null}
-
-      {isMobileLayout && mobileQuickBubbleOpen ? (
-        <section
-          className="planner-mobile-sheet compact planner-mobile-bubble-sheet"
-          role="dialog"
-          aria-label="Quick bubble add"
-        >
-          <div
-            className="planner-mobile-sheet-handle"
-            onClick={() => setMobileQuickBubbleOpen(false)}
-            role="button"
-            aria-label="Close"
-            onTouchStart={(event) => { bubbleSheetTouchStartY.current = event.touches[0]?.clientY ?? null; }}
-            onTouchEnd={(event) => {
-              const startY = bubbleSheetTouchStartY.current;
-              if (startY === null) return;
-              const endY = event.changedTouches[0]?.clientY ?? startY;
-              bubbleSheetTouchStartY.current = null;
-              if (endY - startY > 60) setMobileQuickBubbleOpen(false);
-            }}
-          />
-          {selectedNode ? (
-            <>
-              <div className="planner-mobile-sheet-header">
-                <strong>{selectedNode.title}</strong>
-                <span>bubble</span>
-              </div>
-              <div className="planner-mobile-sheet-path planner-mobile-sheet-path-tail">
-                {buildNodePathTail(selectedNode.id, nodesById, 3)}
-              </div>
-              <div className="planner-row-label">Bubble name</div>
-              <div className="planner-inline-buttons planner-mobile-bubble-input-row">
-                <input
-                  ref={mobileQuickBubbleInputRef}
-                  value={newRefLabel}
-                  onChange={(event) => setNewRefLabel(event.target.value)}
-                  onKeyDown={(event) => {
-                    if (event.key !== "Enter") return;
-                    event.preventDefault();
-                    if (busyAction || !canCreateBubbleFromInput) return;
-                    void createCrossRef(selectedNode.id).then(() => {
-                      focusMobileQuickBubbleInput(30);
-                    });
-                  }}
-                  placeholder="Bubble name"
-                />
-                <button
-                  type="button"
-                  onClick={() => {
-                    void createCrossRef(selectedNode.id).then(() => {
-                      focusMobileQuickBubbleInput(30);
-                    });
-                  }}
-                  disabled={busyAction || !canCreateBubbleFromInput}
-                >
-                  Add
-                </button>
-              </div>
-              <div className="planner-inline-buttons planner-mobile-bubble-aux-row">
-                <button type="button" onClick={blurActiveInput}>
-                  Done
-                </button>
-                <button type="button" onClick={() => openBubblesPanel(false)}>
-                  Manage
-                </button>
-              </div>
-              <div className="planner-inline-buttons planner-mobile-bubble-meta-row">
-                <details className="planner-advanced-tools" style={{ width: "100%" }}>
-                  <summary>Advanced style and code (optional)</summary>
-                  <div className="planner-advanced-tools-content">
-                    <label style={{ display: "grid", gap: 4, alignItems: "center" }}>
-                      <span className="planner-subtle" style={{ fontSize: 11 }}>Color</span>
-                      <input
-                        type="color"
-                        value={newRefColor}
-                        onChange={(event) => setNewRefColor(event.target.value)}
-                        style={{ width: 58, height: 34, padding: "4px 6px" }}
-                      />
-                    </label>
-                    <div style={{ display: "grid", gap: 4, flex: 1 }}>
-                      <input
-                        value={newRefCode}
-                        onChange={(event) => setNewRefCode(event.target.value)}
-                        placeholder={`Internal code (auto ${nextAutoBubbleCode})`}
-                        style={{ flex: 1 }}
-                      />
-                      <span className="planner-subtle" style={{ fontSize: 11 }}>
-                        Internal code: <strong>{effectiveNewBubbleCode}</strong>
-                      </span>
-                    </div>
-                  </div>
-                </details>
-              </div>
-              {bubblePrefixSuggestions.length > 0 ? (
-                <div className="planner-chip-list">
-                  {bubblePrefixSuggestions.slice(0, 4).map((ref) => (
-                    <button
-                      key={`mobile-quick-template:${ref.id}`}
-                      className="chip"
-                      onClick={() => applyBubbleSuggestion(ref)}
-                      title={`Use style from ${ref.label} (${ref.code})`}
-                      style={{
-                        borderColor: rgbaFromHex(ref.color, 0.9, "rgba(64,182,255,0.88)"),
-                        boxShadow: `0 0 0 1px ${rgbaFromHex(ref.color, 0.25, "rgba(64,182,255,0.2)")}`,
-                      }}
-                    >
-                      {ref.label}
-                    </button>
-                  ))}
-                </div>
-              ) : null}
-              <div className="planner-subtle">
-                {selectedNodeRefs.length} bubble{selectedNodeRefs.length === 1 ? "" : "s"} currently on this node.
-              </div>
-              <div className="planner-row-label">Bubbles on this node</div>
-              <div className="planner-chip-list">
-                {selectedNodeRefs.length === 0 ? (
-                  <span className="planner-subtle">No bubbles yet.</span>
-                ) : (
-                  selectedNodeRefs.map((ref) => (
-                    <button
-                      key={`mobile-quick-node-ref:${ref.id}`}
-                      className="chip"
-                      onClick={() => selectRefForEditing(ref.id)}
-                      style={{
-                        borderColor: rgbaFromHex(ref.color, 0.9, "rgba(64,182,255,0.88)"),
-                        boxShadow: `0 0 0 1px ${rgbaFromHex(ref.color, 0.25, "rgba(64,182,255,0.2)")}`,
-                        background:
-                          activePortalRef?.id === ref.id
-                            ? rgbaFromHex(ref.color, 0.22, "rgba(64,182,255,0.2)")
-                            : undefined,
-                      }}
-                    >
-                      {ref.label}
-                    </button>
-                  ))
-                )}
-              </div>
-              {activePortalRef && activePortalRef.nodeIds.includes(selectedNode.id) ? (
-                <>
-                  <div className="planner-row-label">Edit selected bubble</div>
-                  <input
-                    value={mobileQuickBubbleEditName}
-                    onChange={(event) => setMobileQuickBubbleEditName(event.target.value)}
-                    onKeyDown={(event) => {
-                      if (event.key !== "Enter") return;
-                      event.preventDefault();
-                      if (busyAction || mobileQuickBubbleEditName.trim().length === 0) return;
-                      void saveMobileQuickBubbleName();
-                    }}
-                    placeholder="Bubble name"
-                  />
-                  <div className="planner-inline-buttons planner-mobile-bubble-edit-row">
-                    <input
-                      type="color"
-                      value={activePortalRef.color || DEFAULT_BUBBLE_COLOR}
-                      onChange={(event) => {
-                        void updateCrossRefColor(activePortalRef.id, event.target.value);
-                      }}
-                      style={{ width: 58, height: 34, padding: "4px 6px" }}
-                    />
-                    <button
-                      type="button"
-                      onClick={() => {
-                        void saveMobileQuickBubbleName();
-                      }}
-                      disabled={busyAction || mobileQuickBubbleEditName.trim().length === 0}
-                    >
-                      Save Name
-                    </button>
-                    <button
-                      type="button"
-                      onClick={() => {
-                        void deletePortalByRefId(activePortalRef.id);
-                      }}
-                      disabled={busyAction}
-                    >
-                      Delete
-                    </button>
-                  </div>
-                </>
-              ) : null}
-              <div className="planner-mobile-sheet-actions">
-                <button onClick={() => setMobileQuickBubbleOpen(false)}>Close</button>
-              </div>
-            </>
-          ) : (
-            <>
-              <div className="planner-subtle">Select a node first, then use Bubble.</div>
-              <div className="planner-mobile-sheet-actions">
-                <button onClick={() => setMobileQuickBubbleOpen(false)}>Close</button>
-              </div>
-            </>
-          )}
-        </section>
-      ) : null}
+      <MobileQuickBubbleSheet
+        open={isMobileLayout && mobileQuickBubbleOpen}
+        selectedNode={selectedNode}
+        nodesById={nodesById}
+        mobileQuickBubbleInputRef={mobileQuickBubbleInputRef}
+        newRefLabel={newRefLabel}
+        onNewRefLabelChange={setNewRefLabel}
+        busyAction={busyAction}
+        canCreateBubbleFromInput={canCreateBubbleFromInput}
+        onCreateBubble={createCrossRef}
+        focusMobileQuickBubbleInput={focusMobileQuickBubbleInput}
+        blurActiveInput={blurActiveInput}
+        openBubblesPanel={openBubblesPanel}
+        newRefColor={newRefColor}
+        onNewRefColorChange={setNewRefColor}
+        newRefCode={newRefCode}
+        onNewRefCodeChange={setNewRefCode}
+        nextAutoBubbleCode={nextAutoBubbleCode}
+        effectiveNewBubbleCode={effectiveNewBubbleCode}
+        bubblePrefixSuggestions={bubblePrefixSuggestions}
+        applyBubbleSuggestion={applyBubbleSuggestion}
+        selectedNodeRefs={selectedNodeRefs}
+        onSelectRefForEditing={selectRefForEditing}
+        activePortalRef={activePortalRef}
+        mobileQuickBubbleEditName={mobileQuickBubbleEditName}
+        onMobileQuickBubbleEditNameChange={setMobileQuickBubbleEditName}
+        onSaveMobileQuickBubbleName={saveMobileQuickBubbleName}
+        onUpdateCrossRefColor={updateCrossRefColor}
+        defaultBubbleColor={DEFAULT_BUBBLE_COLOR}
+        onDeletePortalByRefId={deletePortalByRefId}
+        onClose={() => setMobileQuickBubbleOpen(false)}
+      />
 
       <main className="planner-canvas">
-        {isMobileLayout ? (
-          <>
-            <button
-              type="button"
-              className="planner-mobile-toolbar-launcher"
-              aria-label={mobileToolbarOpen ? "Hide controls" : "Show controls"}
-              onClick={() => setMobileToolbarOpen((previous) => !previous)}
-            >
-              {mobileToolbarOpen ? "×" : "☰"}
-            </button>
-            {mobileToolbarOpen ? (
-              <div className="planner-mobile-toolbar">
-                <button
-                  onClick={() => {
-                    setMobileSidebarSection(selectedNodeId ? "node" : "project");
-                    setMobileSidebarOpen(true);
-                    setMobileQuickEditorOpen(false);
-                    setMobileQuickBubbleOpen(false);
-                    setMobileToolbarOpen(false);
-                  }}
-                >
-                  ☰ Menu
-                </button>
-                <button
-                  onClick={() => {
-                    setMobileSidebarOpen(false);
-                    setMobileQuickEditorMode("compact");
-                    setMobileQuickEditorOpen(true);
-                    setMobileQuickBubbleOpen(false);
-                    setMobileToolbarOpen(false);
-                  }}
-                  disabled={!selectedNode}
-                >
-                  Edit
-                </button>
-                {CROSS_REFERENCES_ENABLED ? (
-                  <button
-                    onClick={() => {
-                      if (!selectedNodeId) return;
-                      setActivePortalRefId(null);
-                      openMobileQuickBubble(selectedNodeId, true);
-                      setMobileToolbarOpen(false);
-                    }}
-                    disabled={!selectedNodeId}
-                  >
-                    ◯ Bubble
-                  </button>
-                ) : null}
-                <button
-                  onClick={() => {
-                    if (!selectedNodeId) return;
-                    void handleContextAddChild(selectedNodeId);
-                    setMobileToolbarOpen(false);
-                  }}
-                  disabled={!selectedNodeId}
-                >
-                  ＋ Child
-                </button>
-                <button
-                  onClick={() => {
-                    if (!selectedNodeId || !selectedNode || selectedNode.kind === "root") return;
-                    const current = selectedNode.taskStatus || "none";
-                    const nextStatus: TaskStatus = current === "done" ? "todo" : "done";
-                    void setNodeTaskStatus(selectedNodeId, nextStatus);
-                    setMobileToolbarOpen(false);
-                  }}
-                  disabled={!selectedNode || selectedNode.kind === "root"}
-                >
-                  {selectedNode?.taskStatus === "done" ? "↩ Todo" : "✓ Done"}
-                </button>
-                <button
-                  onClick={() => {
-                    goGrandmotherView();
-                    setMobileToolbarOpen(false);
-                  }}
-                  disabled={!rootNodeId}
-                >
-                  ⌂ Home
-                </button>
-                <button
-                  onClick={() => {
-                    goUpOneView();
-                    setMobileToolbarOpen(false);
-                  }}
-                  disabled={!currentRootNode?.parentId}
-                >
-                  ↑ Up
-                </button>
-              </div>
-            ) : null}
-          </>
-        ) : null}
+        <MobileCanvasToolbar
+          isMobileLayout={isMobileLayout}
+          mobileToolbarOpen={mobileToolbarOpen}
+          selectedNodeId={selectedNodeId}
+          selectedNode={selectedNode}
+          crossReferencesEnabled={CROSS_REFERENCES_ENABLED}
+          rootNodeId={rootNodeId}
+          currentRootHasParent={!!currentRootNode?.parentId}
+          onToggleOpen={() => setMobileToolbarOpen((previous) => !previous)}
+          onOpenMenu={() => {
+            setMobileSidebarSection(selectedNodeId ? "node" : "project");
+            setMobileSidebarOpen(true);
+            setMobileQuickEditorOpen(false);
+            setMobileQuickBubbleOpen(false);
+            setMobileToolbarOpen(false);
+          }}
+          onOpenEditor={() => {
+            setMobileSidebarOpen(false);
+            setMobileQuickEditorMode("compact");
+            setMobileQuickEditorOpen(true);
+            setMobileQuickBubbleOpen(false);
+            setMobileToolbarOpen(false);
+          }}
+          onOpenBubble={() => {
+            if (!selectedNodeId) return;
+            setActivePortalRefId(null);
+            openMobileQuickBubble(selectedNodeId, true);
+            setMobileToolbarOpen(false);
+          }}
+          onAddChild={() => {
+            if (!selectedNodeId) return;
+            void handleContextAddChild(selectedNodeId);
+            setMobileToolbarOpen(false);
+          }}
+          onToggleTaskStatus={() => {
+            if (!selectedNodeId || !selectedNode || selectedNode.kind === "root") return;
+            const current = selectedNode.taskStatus || "none";
+            const nextStatus: TaskStatus = current === "done" ? "todo" : "done";
+            void setNodeTaskStatus(selectedNodeId, nextStatus);
+            setMobileToolbarOpen(false);
+          }}
+          onGoHome={() => {
+            goGrandmotherView();
+            setMobileToolbarOpen(false);
+          }}
+          onGoUp={() => {
+            goUpOneView();
+            setMobileToolbarOpen(false);
+          }}
+        />
 
         <ReactFlow
           nodes={reactFlowNodes}
@@ -2720,158 +1752,33 @@ export default function PlannerPage({ user }: PlannerPageProps) {
           />
         )}
 
-        {/* Portal orb right-click context menu */}
-        {portalContextMenu && (() => {
-          const menuRef = refs.find((r) => r.id === portalContextMenu.refId);
-          return (
-            <div
-              data-portal-context-menu
-              style={{
-                position: "fixed",
-                left: portalContextMenu.x,
-                top: portalContextMenu.y,
-                zIndex: 9999,
-                minWidth: 180,
-                background: "rgba(18, 20, 28, 0.97)",
-                border: "1px solid rgba(255, 160, 71, 0.35)",
-                borderRadius: 8,
-                boxShadow: "0 8px 24px rgba(0,0,0,0.5)",
-                padding: "6px 0",
-                userSelect: "none",
-              }}
-            >
-              {menuRef && (
-                <div
-                  style={{
-                    padding: "6px 14px 8px",
-                    fontSize: 11,
-                    fontWeight: 600,
-                    letterSpacing: "0.02em",
-                    textTransform: "none",
-                    color: "rgba(255,160,71,0.75)",
-                    borderBottom: "1px solid rgba(255,255,255,0.07)",
-                    marginBottom: 4,
-                  }}
-                >
-                  {menuRef.label} ({menuRef.code})
-                </div>
-              )}
-              <button
-                type="button"
-                onClick={() => void deletePortalByRefId(portalContextMenu.refId)}
-                disabled={busyAction}
-                style={{
-                  display: "flex",
-                  alignItems: "center",
-                  gap: 8,
-                  width: "100%",
-                  padding: "7px 14px",
-                  background: "none",
-                  border: "none",
-                  cursor: busyAction ? "not-allowed" : "pointer",
-                  fontSize: 13,
-                  color: busyAction ? "rgba(239,68,68,0.4)" : "rgba(239,68,68,0.9)",
-                  textAlign: "left",
-                  transition: "background 100ms",
-                }}
-                onMouseEnter={(e) => { (e.currentTarget as HTMLButtonElement).style.background = "rgba(239,68,68,0.12)"; }}
-                onMouseLeave={(e) => { (e.currentTarget as HTMLButtonElement).style.background = "none"; }}
-              >
-                <span style={{ fontSize: 15 }}>🗑</span>
-                {busyAction ? "Deleting…" : "Delete bubble"}
-              </button>
-              <button
-                type="button"
-                onClick={() => setPortalContextMenu(null)}
-                style={{
-                  display: "flex",
-                  alignItems: "center",
-                  gap: 8,
-                  width: "100%",
-                  padding: "7px 14px",
-                  background: "none",
-                  border: "none",
-                  cursor: "pointer",
-                  fontSize: 13,
-                  color: "rgba(255,255,255,0.45)",
-                  textAlign: "left",
-                  transition: "background 100ms",
-                }}
-                onMouseEnter={(e) => { (e.currentTarget as HTMLButtonElement).style.background = "rgba(255,255,255,0.05)"; }}
-                onMouseLeave={(e) => { (e.currentTarget as HTMLButtonElement).style.background = "none"; }}
-              >
-                Cancel
-              </button>
-            </div>
-          );
-        })()}
+        <PortalContextMenu
+          contextMenu={portalContextMenu}
+          refs={refs}
+          busy={busyAction}
+          onDelete={(refId) => {
+            void deletePortalByRefId(refId);
+          }}
+          onClose={() => setPortalContextMenu(null)}
+        />
 
-        {paletteOpen && (
-          <div
-            className="planner-palette-backdrop"
-            onClick={() => {
-              setPaletteOpen(false);
-              setPaletteQuery("");
-              setPaletteIndex(0);
-            }}
-          >
-            <div className="planner-palette" onClick={(event) => event.stopPropagation()}>
-              <input
-                ref={paletteInputRef}
-                value={paletteQuery}
-                onChange={(event) => {
-                  setPaletteQuery(event.target.value);
-                  setPaletteIndex(0);
-                }}
-                placeholder="Type a command, node, or entity..."
-              />
-              <div className="planner-palette-list">
-                {paletteItems.length === 0 ? (
-                  <div className="planner-palette-empty">No matches</div>
-                ) : (
-                  paletteItems.map((item, index) => (
-                    <button
-                      key={item.id}
-                      className={`planner-palette-item ${index === paletteIndex ? "active" : ""}`}
-                      onMouseEnter={() => setPaletteIndex(index)}
-                      onClick={() => runPaletteAction(item)}
-                    >
-                      <span>{item.label}</span>
-                      {item.hint ? <span>{item.hint}</span> : null}
-                    </button>
-                  ))
-                )}
-              </div>
-            </div>
-          </div>
-        )}
+        <CommandPalette
+          open={paletteOpen}
+          query={paletteQuery}
+          paletteIndex={paletteIndex}
+          items={paletteItems}
+          inputRef={paletteInputRef}
+          onClose={() => {
+            setPaletteOpen(false);
+            setPaletteQuery("");
+            setPaletteIndex(0);
+          }}
+          onQueryChange={setPaletteQuery}
+          onSetIndex={setPaletteIndex}
+          onRunItem={runPaletteAction}
+        />
 
-        {/* Save error indicator (successful autosaves are silent). */}
-        {saveStatus === "error" && (
-          <div
-            style={{
-              position: "fixed",
-              top: "16px",
-              right: "16px",
-              zIndex: 9998,
-              padding: "10px 16px",
-              borderRadius: "8px",
-              fontSize: "14px",
-              fontWeight: 600,
-              display: "flex",
-              alignItems: "center",
-              gap: "8px",
-              boxShadow: "0 4px 12px rgba(0, 0, 0, 0.3)",
-              transition: "all 200ms ease",
-              background: "rgba(239, 68, 68, 0.95)",
-              color: "rgba(255, 255, 255, 0.98)",
-              backdropFilter: "blur(8px)",
-            }}
-          >
-            <span style={{ fontSize: "16px" }}>⚠</span>
-            <span>Could not save node position</span>
-          </div>
-        )}
+        <SaveErrorToast open={saveStatus === "error"} message="Could not save node position" />
       </main>
     </div>
   );

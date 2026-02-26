@@ -107,7 +107,6 @@ export function NodeContextMenu({
     <div
       ref={menuRef}
       className="ctx-menu"
-      style={{ left: x, top: y }}
     >
       <div className="ctx-menu-header">
         {nodeTitle}
