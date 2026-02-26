@@ -1,14 +1,10 @@
 /* eslint-disable react-hooks/set-state-in-effect */
-import { memo, useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { useUndoRedo } from "../hooks/useUndoRedo";
 import ReactFlow, {
   Background,
-  Handle,
-  Position,
   SelectionMode,
   type EdgeTypes,
-  type NodeProps,
-  type NodeTypes,
   type ReactFlowInstance,
 } from "reactflow";
 import type { User } from "firebase/auth";
@@ -20,10 +16,29 @@ import {
   buildNodePathTail,
 } from "../utils/treeUtils";
 import {
+  bubbleDisplayToken,
+  chooseAnchorNodeId,
+  crossRefToFirestoreSetData,
+  defaultPortalPositionForAnchor,
+  resolvePortalFollowPosition,
+} from "../utils/crossRefUtils";
+import {
   rgbaFromHex,
 } from "../utils/normalize";
+import {
+  BUBBLES_SIMPLIFIED_MODE,
+  CROSS_REFERENCES_ENABLED,
+  DEFAULT_BUBBLE_COLOR,
+  defaultNodeColor,
+  ENTITY_TYPE_GROUPS,
+  nextNodeKind,
+  STORY_NODE_MAX_HEIGHT,
+  STORY_NODE_MAX_WIDTH,
+  STORY_NODE_MIN_HEIGHT,
+  STORY_NODE_MIN_WIDTH,
+  storyContainerColor,
+} from "../utils/plannerConfig";
 import type {
-  NodeKind,
   TaskStatus,
   EntityType,
   TreeNode,
@@ -62,195 +77,23 @@ import { usePlannerFlowNodes } from "../hooks/usePlannerFlowNodes";
 import { usePlannerFlowGraph } from "../hooks/usePlannerFlowGraph";
 import { usePlannerApplyLocalOps } from "../hooks/usePlannerApplyLocalOps";
 import { usePlannerNodeIndex } from "../hooks/usePlannerNodeIndex";
+import { usePlannerStoryCardState } from "../hooks/usePlannerStoryCardState";
+import { usePlannerBodySaveActions } from "../hooks/usePlannerBodySaveActions";
+import { usePlannerLocalNodePatch } from "../hooks/usePlannerLocalNodePatch";
+import { usePlannerFilteredTreeIdSet } from "../hooks/usePlannerFilteredTreeIdSet";
+import { usePlannerHoverState } from "../hooks/usePlannerHoverState";
+import { usePlannerDefaultPortalPosition } from "../hooks/usePlannerDefaultPortalPosition";
+import { usePlannerSidebarSectionVisibility } from "../hooks/usePlannerSidebarSectionVisibility";
+import { usePlannerCrossRefUiState } from "../hooks/usePlannerCrossRefUiState";
 import { NodeContextMenu } from "../components/Planner/NodeContextMenu";
+import { plannerNodeTypes } from "../components/Planner/PortalNode";
 import "reactflow/dist/style.css";
 
 type PlannerPageProps = {
   user: User;
 };
 
-type RefCategoryFilter = "all" | "people" | "other";
-type RefScopeFilter = "view" | "all";
-
-const DEFAULT_BUBBLE_COLOR = "#40B6FF";
-const STORY_NODE_MIN_WIDTH = 220;
-const STORY_NODE_MAX_WIDTH = 760;
-const STORY_NODE_MIN_HEIGHT = 150;
-const STORY_NODE_MAX_HEIGHT = 940;
-
-function defaultNodeColor(kind: NodeKind): string {
-  if (kind === "root") return "#52340A";
-  if (kind === "project") return "#0A1A50";
-  if (kind === "story") return "#063428";
-  return "#141624";
-}
-
-function storyContainerColor(): string {
-  return "#3A166C";
-}
-
-function nextNodeKind(kind: NodeKind): NodeKind {
-  if (kind === "project") return "item";
-  if (kind === "item") return "story";
-  if (kind === "story") return "project";
-  return "root";
-}
-
-function bubbleDisplayToken(label: string, fallbackCode: string): string {
-  const words = label
-    .trim()
-    .split(/\s+/)
-    .filter(Boolean);
-  if (words.length === 0) return normalizeCode(fallbackCode).slice(0, 3);
-  if (words.length === 1) {
-    const cleaned = words[0].replace(/[^a-zA-Z0-9]/g, "");
-    if (!cleaned) return normalizeCode(fallbackCode).slice(0, 3);
-    return cleaned.slice(0, Math.min(2, cleaned.length)).toUpperCase();
-  }
-  const initials = `${words[0][0] || ""}${words[1][0] || ""}`;
-  return normalizeCode(initials).slice(0, 2);
-}
-
-function crossRefToFirestoreSetData(ref: CrossRef): Record<string, unknown> {
-  return {
-    label: ref.label,
-    code: ref.code,
-    nodeIds: [...ref.nodeIds],
-    ...(ref.anchorNodeId ? { anchorNodeId: ref.anchorNodeId } : {}),
-    ...(ref.color ? { color: ref.color } : {}),
-    ...(typeof ref.portalX === "number" ? { portalX: ref.portalX } : {}),
-    ...(typeof ref.portalY === "number" ? { portalY: ref.portalY } : {}),
-    ...(typeof ref.portalAnchorX === "number" ? { portalAnchorX: ref.portalAnchorX } : {}),
-    ...(typeof ref.portalAnchorY === "number" ? { portalAnchorY: ref.portalAnchorY } : {}),
-    entityType: ref.entityType,
-    tags: [...ref.tags],
-    notes: ref.notes,
-    contact: ref.contact,
-    links: [...ref.links],
-  };
-}
-
-function getNudge(seed: string, xRange = 12, yRange = 8): { x: number; y: number } {
-  let hash = 0;
-  for (let i = 0; i < seed.length; i += 1) {
-    hash = (hash << 5) - hash + seed.charCodeAt(i);
-    hash |= 0;
-  }
-  const x = ((hash % (xRange * 2 + 1)) + (xRange * 2 + 1)) % (xRange * 2 + 1) - xRange;
-  const yHash = ((hash >> 8) % (yRange * 2 + 1) + (yRange * 2 + 1)) % (yRange * 2 + 1) - yRange;
-  return { x, y: yHash };
-}
-
-function chooseAnchorNodeId(nodeIds: string[], ...preferredIds: Array<string | null | undefined>): string | null {
-  for (const preferred of preferredIds) {
-    if (preferred && nodeIds.includes(preferred)) return preferred;
-  }
-  return nodeIds[0] || null;
-}
-
-function defaultPortalPositionForAnchor(anchor: { x: number; y: number } | null, seed: string): { x: number; y: number } {
-  const baseX = anchor?.x ?? 0;
-  const baseY = anchor?.y ?? 0;
-  let hash = 0;
-  for (let i = 0; i < seed.length; i += 1) {
-    hash = (hash << 5) - hash + seed.charCodeAt(i);
-    hash |= 0;
-  }
-  const angle = (((hash >>> 0) % 360) * Math.PI) / 180;
-  const radius = 96 + ((((hash >>> 8) & 0xff) / 255) * 96);
-  const wobble = getNudge(`${seed}:portal`, 16, 16);
-  return {
-    x: baseX + 140 - 23 + Math.cos(angle) * radius + wobble.x,
-    y: baseY + 60 - 23 + Math.sin(angle) * radius + wobble.y,
-  };
-}
-
-function resolvePortalFollowPosition(
-  ref: Pick<CrossRef, "portalX" | "portalY" | "portalAnchorX" | "portalAnchorY">,
-  anchor: { x: number; y: number } | null,
-  seed: string
-): { x: number; y: number } {
-  if (!anchor) {
-    return {
-      x: typeof ref.portalX === "number" ? ref.portalX : 0,
-      y: typeof ref.portalY === "number" ? ref.portalY : 0,
-    };
-  }
-  if (typeof ref.portalX === "number" && typeof ref.portalY === "number") {
-    const savedAnchorX = typeof ref.portalAnchorX === "number" ? ref.portalAnchorX : anchor.x;
-    const savedAnchorY = typeof ref.portalAnchorY === "number" ? ref.portalAnchorY : anchor.y;
-    return {
-      x: ref.portalX + (anchor.x - savedAnchorX),
-      y: ref.portalY + (anchor.y - savedAnchorY),
-    };
-  }
-  return defaultPortalPositionForAnchor(anchor, seed);
-}
-
-// ── Portal bubble node ─────────────────────────────────────────────────────
-// Ventovault-style simple portal node: wrapper carries the orb styles and the
-// node body only renders text + hidden handles for stable edge anchoring.
-const PortalNode = memo(function PortalNode({
-  data,
-}: NodeProps<{
-  display: string;
-  tooltip: string;
-  isActive: boolean;
-}>) {
-  return (
-    <div
-      style={{
-        width: "100%",
-        height: "100%",
-        display: "flex",
-        alignItems: "center",
-        justifyContent: "center",
-        position: "relative",
-      }}
-    >
-      <Handle
-        type="target"
-        position={Position.Top}
-        id="portal-target"
-        isConnectable={false}
-        style={{
-          width: 8,
-          height: 8,
-          opacity: 0,
-          border: "none",
-          background: "transparent",
-          pointerEvents: "none",
-        }}
-      />
-      <Handle
-        type="source"
-        position={Position.Bottom}
-        id="portal-source"
-        isConnectable={false}
-        style={{
-          width: 8,
-          height: 8,
-          opacity: 0,
-          border: "none",
-          background: "transparent",
-          pointerEvents: "none",
-        }}
-      />
-      <div className={`planner-portal-label${data.isActive ? " active" : ""}`} data-tooltip={data.tooltip}>
-        {data.display}
-      </div>
-    </div>
-  );
-});
-
-const nodeTypes: NodeTypes = { portal: PortalNode };
 const edgeTypes: EdgeTypes = Object.freeze({});
-const ENTITY_TYPE_GROUPS: Array<{ label: string; options: EntityType[] }> = [
-  { label: "General", options: ["entity", "organization", "partner", "vendor", "investor"] },
-  { label: "People", options: ["person", "contact", "client"] },
-];
-const CROSS_REFERENCES_ENABLED = true;
-const BUBBLES_SIMPLIFIED_MODE = true;
 
 export default function PlannerPage({ user }: PlannerPageProps) {
   const [profileName, setProfileName] = useState("");
@@ -270,7 +113,6 @@ export default function PlannerPage({ user }: PlannerPageProps) {
   const [mobileQuickBubbleOpen, setMobileQuickBubbleOpen] = useState(false);
   const [mobileToolbarOpen, setMobileToolbarOpen] = useState(false);
   const [mobileQuickEditorMode, setMobileQuickEditorMode] = useState<"compact" | "full">("compact");
-  const [mobileQuickBubbleEditName, setMobileQuickBubbleEditName] = useState("");
   const [searchQuery, setSearchQuery] = useState("");
   const searchInputRef = useRef<HTMLInputElement>(null);
   const renameInputRef = useRef<HTMLInputElement>(null);
@@ -282,27 +124,18 @@ export default function PlannerPage({ user }: PlannerPageProps) {
   const [bodyDraft, setBodyDraft] = useState("");
   const [pendingRenameNodeId, setPendingRenameNodeId] = useState<string | null>(null);
   const [storyLaneMode, setStoryLaneMode] = useState(false);
-  const [expandedStoryNodeIds, setExpandedStoryNodeIds] = useState<Set<string>>(new Set());
-  const [newRefLabel, setNewRefLabel] = useState("");
-  const [newRefCode, setNewRefCode] = useState("");
-  const [newRefColor, setNewRefColor] = useState(DEFAULT_BUBBLE_COLOR);
-  const [newRefType, setNewRefType] = useState<EntityType>("entity");
-  const [refSearchQuery, setRefSearchQuery] = useState("");
-  const [refCategoryFilter, setRefCategoryFilter] = useState<RefCategoryFilter>("all");
-  const [refScopeFilter, setRefScopeFilter] = useState<RefScopeFilter>("view");
-  const [editRefId, setEditRefId] = useState("");
-  const [editRefLabel, setEditRefLabel] = useState("");
-  const [editRefCode, setEditRefCode] = useState("");
-  const [editRefType, setEditRefType] = useState<EntityType>("entity");
-  const [editRefTags, setEditRefTags] = useState("");
-  const [editRefNotes, setEditRefNotes] = useState("");
-  const [editRefContact, setEditRefContact] = useState("");
-  const [editRefLinks, setEditRefLinks] = useState("");
-  const [mergeFromRefId, setMergeFromRefId] = useState("");
-  const [linkNodeQuery, setLinkNodeQuery] = useState("");
-  const [linkTargetNodeId, setLinkTargetNodeId] = useState("");
-  const [activePortalRefId, setActivePortalRefId] = useState<string | null>(null);
-  const [portalContextMenu, setPortalContextMenu] = useState<{ x: number; y: number; refId: string } | null>(null);
+  const {
+    mobileQuickBubbleEditName, setMobileQuickBubbleEditName,
+    newRefLabel, setNewRefLabel, newRefCode, setNewRefCode, newRefColor, setNewRefColor, newRefType, setNewRefType,
+    refSearchQuery, setRefSearchQuery, refCategoryFilter, setRefCategoryFilter, refScopeFilter, setRefScopeFilter,
+    editRefId, setEditRefId, editRefLabel, setEditRefLabel, editRefCode, setEditRefCode, editRefType, setEditRefType,
+    editRefTags, setEditRefTags, editRefNotes, setEditRefNotes, editRefContact, setEditRefContact,
+    editRefLinks, setEditRefLinks, mergeFromRefId, setMergeFromRefId,
+    linkNodeQuery, setLinkNodeQuery, linkTargetNodeId, setLinkTargetNodeId,
+    activePortalRefId, setActivePortalRefId, portalContextMenu, setPortalContextMenu,
+  } = usePlannerCrossRefUiState({
+    defaultBubbleColor: DEFAULT_BUBBLE_COLOR,
+  });
   const [paletteOpen, setPaletteOpen] = useState(false);
   const [paletteQuery, setPaletteQuery] = useState("");
   const [paletteIndex, setPaletteIndex] = useState(0);
@@ -311,26 +144,7 @@ export default function PlannerPage({ user }: PlannerPageProps) {
   const sheetTouchStartY = useRef<number | null>(null);
   const bubbleSheetTouchStartY = useRef<number | null>(null);
   const [collapsedNodeIds, setCollapsedNodeIds] = useState<Set<string>>(new Set());
-  const [hoveredNodeId, setHoveredNodeId] = useState<string | null>(null);
-  const [hoveredEdgeId, setHoveredEdgeId] = useState<string | null>(null);
-  // RAF-batch hover updates so rapid mouse events don't trigger a React
-  // re-render on every frame, and suppress them entirely during drag.
-  const hoverRafRef = useRef<number | null>(null);
-  const hoverPendingRef = useRef<{ nodeId: string | null; edgeId: string | null } | null>(null);
-  const isDraggingRef = useRef(false);
-  const scheduleHoverUpdate = useCallback((nodeId: string | null, edgeId: string | null) => {
-    if (isDraggingRef.current) return;
-    hoverPendingRef.current = { nodeId, edgeId };
-    if (hoverRafRef.current !== null) return;
-    hoverRafRef.current = window.requestAnimationFrame(() => {
-      const pending = hoverPendingRef.current;
-      hoverPendingRef.current = null;
-      hoverRafRef.current = null;
-      if (isDraggingRef.current) return;
-      setHoveredNodeId(pending?.nodeId ?? null);
-      setHoveredEdgeId(pending?.edgeId ?? null);
-    });
-  }, []);
+  const { hoveredNodeId, hoveredEdgeId, isDraggingRef, scheduleHoverUpdate } = usePlannerHoverState();
   const [dropTargetNodeId, setDropTargetNodeId] = useState<string | null>(null);
   // Track drop target via ref during drag — avoids calling setDropTargetNodeId
   // on every mousemove frame which would recompute flowNodes each frame.
@@ -362,6 +176,8 @@ export default function PlannerPage({ user }: PlannerPageProps) {
   });
 
   const { nodesById, childrenByParent } = usePlannerNodeIndex(nodes);
+  const { expandedStoryNodeIds, toggleStoryCardExpand } = usePlannerStoryCardState();
+  const applyLocalNodePatch = usePlannerLocalNodePatch({ setNodes });
 
   usePlannerResponsiveUi({
     isMobileLayout,
@@ -420,16 +236,6 @@ export default function PlannerPage({ user }: PlannerPageProps) {
   const effectiveBubbleTargetId = selectedNodeId || null;
   const bubbleTargetNode = selectedNode;
 
-  const applyLocalNodePatch = useCallback(
-    (
-      nodeId: string,
-      patch: Partial<Pick<TreeNode, "title" | "parentId" | "kind" | "x" | "y" | "width" | "height" | "color" | "taskStatus" | "storySteps" | "body">>
-    ) => {
-      setNodes((prevNodes) => prevNodes.map((entry) => (entry.id === nodeId ? { ...entry, ...patch } : entry)));
-    },
-    []
-  );
-
   const {
     openBubblesPanel,
     focusMobileQuickBubbleInput,
@@ -478,18 +284,6 @@ export default function PlannerPage({ user }: PlannerPageProps) {
     storyLaneMode,
   });
 
-  const toggleStoryCardExpand = useCallback((nodeId: string) => {
-    setExpandedStoryNodeIds((prev) => {
-      const next = new Set(prev);
-      if (next.has(nodeId)) {
-        next.delete(nodeId);
-      } else {
-        next.add(nodeId);
-      }
-      return next;
-    });
-  }, []);
-
   const {
     persistNodeBody,
     resetStoryNodeSize,
@@ -509,7 +303,7 @@ export default function PlannerPage({ user }: PlannerPageProps) {
     storyNodeMaxHeight: STORY_NODE_MAX_HEIGHT,
   });
 
-  const filteredTreeIdSet = useMemo(() => new Set(filteredTreeIds), [filteredTreeIds]);
+  const filteredTreeIdSet = usePlannerFilteredTreeIdSet(filteredTreeIds);
 
   // visiblePortals is computed after baseNodes so it reads live drag positions.
   const { baseTreeNodes, baseEdges } = usePlannerBaseGraphData({
@@ -665,13 +459,10 @@ export default function PlannerPage({ user }: PlannerPageProps) {
     setLinkTargetNodeId,
   });
 
-  const buildDefaultPortalPosition = useCallback(
-    (anchorNodeId: string | null, seed: string) => {
-      if (!anchorNodeId) return null;
-      return defaultPortalPositionForAnchor(resolveNodePosition(anchorNodeId), `${seed}:${anchorNodeId}`);
-    },
-    [resolveNodePosition]
-  );
+  const buildDefaultPortalPosition = usePlannerDefaultPortalPosition({
+    resolveNodePosition,
+    defaultPortalPositionForAnchor,
+  });
 
   const {
     openProjectPage,
@@ -694,17 +485,11 @@ export default function PlannerPage({ user }: PlannerPageProps) {
     setActivePortalRefId,
   });
 
-  const saveNodeBody = useCallback(
-    async (nodeId: string, nextBody: string) => {
-      await persistNodeBody(nodeId, nextBody);
-    },
-    [persistNodeBody]
-  );
-
-  const saveSelectedBody = useCallback(async () => {
-    if (!selectedNodeId) return;
-    await saveNodeBody(selectedNodeId, bodyDraft);
-  }, [bodyDraft, saveNodeBody, selectedNodeId]);
+  const { saveSelectedBody } = usePlannerBodySaveActions({
+    persistNodeBody,
+    selectedNodeId,
+    bodyDraft,
+  });
 
   const { createChild, deleteSelected } = usePlannerCreateDeleteActions({
     firestore: db,
@@ -1069,10 +854,17 @@ export default function PlannerPage({ user }: PlannerPageProps) {
   });
 
   const sidebarIsCollapsed = !isMobileLayout && sidebarCollapsed;
-  const showProjectSection = !isMobileLayout || mobileSidebarSection === "project";
-  const showNodeSection = !isMobileLayout || mobileSidebarSection === "node";
-  const showBubblesSection = CROSS_REFERENCES_ENABLED && !BUBBLES_SIMPLIFIED_MODE && (!isMobileLayout || mobileSidebarSection === "bubbles");
-  const showSimpleBubblesSection = CROSS_REFERENCES_ENABLED && BUBBLES_SIMPLIFIED_MODE && (!isMobileLayout || mobileSidebarSection === "bubbles");
+  const {
+    showProjectSection,
+    showNodeSection,
+    showBubblesSection,
+    showSimpleBubblesSection,
+  } = usePlannerSidebarSectionVisibility({
+    isMobileLayout,
+    mobileSidebarSection,
+    crossReferencesEnabled: CROSS_REFERENCES_ENABLED,
+    bubblesSimplifiedMode: BUBBLES_SIMPLIFIED_MODE,
+  });
 
   if (!db) {
     return (
@@ -2800,7 +2592,7 @@ export default function PlannerPage({ user }: PlannerPageProps) {
         <ReactFlow
           nodes={reactFlowNodes}
           edges={flowEdges}
-          nodeTypes={nodeTypes}
+          nodeTypes={plannerNodeTypes}
           edgeTypes={edgeTypes}
           fitView
           fitViewOptions={{ padding: isMobileLayout ? 0.12 : 0.3, maxZoom: isMobileLayout ? 0.85 : 1 }}
