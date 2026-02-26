@@ -139,7 +139,6 @@ export default function LoginPage() {
                     type="email"
                     autoComplete="email"
                     placeholder="you@email.com"
-                    // eslint-disable-next-line jsx-a11y/no-autofocus
                     autoFocus
                   />
                 </label>

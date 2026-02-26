@@ -27,20 +27,10 @@ const Ctx = createContext<AuthState | null>(null);
 
 export function AuthProvider({ children }: { children: React.ReactNode }) {
   const [user, setUser] = useState<User | null>(offlineMode ? ({ uid: "offline" } as User) : null);
-  const [loading, setLoading] = useState<boolean>(!offlineMode);
+  const [loading, setLoading] = useState<boolean>(!offlineMode && envOk && !!auth);
 
   useEffect(() => {
-    if (offlineMode) {
-      setUser((prev) => prev ?? ({ uid: "offline" } as User));
-      setLoading(false);
-      return;
-    }
-    // If env is missing, we’re “done loading” but cannot auth.
-    if (!envOk || !auth) {
-      setUser(null);
-      setLoading(false);
-      return;
-    }
+    if (offlineMode || !envOk || !auth) return undefined;
 
     const unsub = onAuthStateChanged(auth, (u) => {
       setUser(u);
