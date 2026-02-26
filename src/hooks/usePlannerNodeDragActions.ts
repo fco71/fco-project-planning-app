@@ -1,9 +1,19 @@
 import { useCallback } from "react";
 import type { Dispatch, MouseEvent as ReactMouseEvent, MutableRefObject, SetStateAction } from "react";
-import { doc, serverTimestamp, writeBatch, type Firestore } from "firebase/firestore";
+import type { Firestore } from "firebase/firestore";
 import type { Node, ReactFlowInstance } from "reactflow";
 import type { TreeNode } from "../types/planner";
-import type { FirestoreOp, HistoryEntry, LocalOp } from "./useUndoRedo";
+import type { HistoryEntry } from "./useUndoRedo";
+import {
+  buildMoveOps,
+  buildMovedEntries,
+  buildPositionNodeUpdates,
+  buildReparentOps,
+  buildReparentNodeUpdates,
+  computeCollapsedDescendantMoves,
+  pickNodeDropTarget,
+} from "./plannerDragHelpers";
+import { persistNodeFirestoreUpdates } from "./plannerDragPersistence";
 
 type UsePlannerNodeDragActionsParams = {
   firestore: Firestore | null;
@@ -60,15 +70,11 @@ export function usePlannerNodeDragActions({
       }
       const forbiddenIds = new Set(collectNodeDescendants(node.id));
       const currentParentId = nodesById.get(node.id)?.parentId ?? null;
-      const intersecting = rfInstance.getIntersectingNodes(node).filter((c) => !c.id.startsWith("portal:"));
-      let bestTarget: string | null = null;
-      for (const candidate of intersecting) {
-        if (forbiddenIds.has(candidate.id)) continue;
-        if (candidate.id === currentParentId) continue;
-        bestTarget = candidate.id;
-        break;
-      }
-      dropTargetIdRef.current = bestTarget;
+      const intersectingIds = rfInstance
+        .getIntersectingNodes(node)
+        .filter((candidate) => !candidate.id.startsWith("portal:"))
+        .map((candidate) => candidate.id);
+      dropTargetIdRef.current = pickNodeDropTarget(intersectingIds, forbiddenIds, currentParentId);
     },
     [collectNodeDescendants, dropTargetIdRef, draggedNodeIdRef, isDraggingRef, nodesById, rfInstance]
   );
@@ -93,55 +99,30 @@ export function usePlannerNodeDragActions({
       const newY = node.position.y;
       const deltaX = newX - oldX;
       const deltaY = newY - oldY;
-      const shouldMoveCollapsedDescendants = collapsedNodeIds.has(node.id) && (deltaX !== 0 || deltaY !== 0);
-      const descendantMoves = shouldMoveCollapsedDescendants
-        ? collectNodeDescendants(node.id)
-            .slice(1)
-            .map((descendantId) => {
-              const descendant = nodesById.get(descendantId);
-              if (!descendant) return null;
-              const descendantOldX = typeof descendant.x === "number" ? descendant.x : 0;
-              const descendantOldY = typeof descendant.y === "number" ? descendant.y : 0;
-              return {
-                id: descendantId,
-                oldX: descendantOldX,
-                oldY: descendantOldY,
-                newX: descendantOldX + deltaX,
-                newY: descendantOldY + deltaY,
-              };
-            })
-            .filter((entry): entry is { id: string; oldX: number; oldY: number; newX: number; newY: number } => !!entry)
-        : [];
+      const descendantMoves = computeCollapsedDescendantMoves({
+        nodeId: node.id,
+        deltaX,
+        deltaY,
+        collapsedNodeIds,
+        collectNodeDescendants,
+        nodesById,
+      });
 
       if (capturedDropTarget) {
         if (prevNode && prevNode.id !== rootNodeId) {
           const oldParentId = prevNode.parentId;
           const newParentId = capturedDropTarget;
           const newParentTitle = nodesById.get(newParentId)?.title ?? newParentId;
-          const forwardLocal: LocalOp[] = [
-            { target: "nodes", op: "patch", nodeId: node.id, patch: { parentId: newParentId, x: newX, y: newY } },
-            ...descendantMoves.map(
-              (entry): LocalOp => ({ target: "nodes", op: "patch", nodeId: entry.id, patch: { x: entry.newX, y: entry.newY } })
-            ),
-          ];
-          const inverseLocal: LocalOp[] = [
-            { target: "nodes", op: "patch", nodeId: node.id, patch: { parentId: oldParentId, x: oldX, y: oldY } },
-            ...descendantMoves.map(
-              (entry): LocalOp => ({ target: "nodes", op: "patch", nodeId: entry.id, patch: { x: entry.oldX, y: entry.oldY } })
-            ),
-          ];
-          const forwardFirestore: FirestoreOp[] = [
-            { kind: "updateNode", nodeId: node.id, data: { parentId: newParentId, x: newX, y: newY } },
-            ...descendantMoves.map(
-              (entry): FirestoreOp => ({ kind: "updateNode", nodeId: entry.id, data: { x: entry.newX, y: entry.newY } })
-            ),
-          ];
-          const inverseFirestore: FirestoreOp[] = [
-            { kind: "updateNode", nodeId: node.id, data: { parentId: oldParentId, x: oldX, y: oldY } },
-            ...descendantMoves.map(
-              (entry): FirestoreOp => ({ kind: "updateNode", nodeId: entry.id, data: { x: entry.oldX, y: entry.oldY } })
-            ),
-          ];
+          const { forwardLocal, forwardFirestore, inverseLocal, inverseFirestore } = buildReparentOps({
+            nodeId: node.id,
+            oldParentId,
+            newParentId,
+            oldX,
+            oldY,
+            newX,
+            newY,
+            descendantMoves,
+          });
           pushHistory({
             id: crypto.randomUUID(),
             label: `Re-parent "${prevNode.title}" \u2192 "${newParentTitle}"`,
@@ -159,21 +140,17 @@ export function usePlannerNodeDragActions({
             })
           );
           try {
-            const batch = writeBatch(firestore);
-            batch.update(doc(firestore, "users", userUid, "nodes", node.id), {
-              parentId: newParentId,
-              x: newX,
-              y: newY,
-              updatedAt: serverTimestamp(),
+            await persistNodeFirestoreUpdates({
+              firestore,
+              userUid,
+              updates: buildReparentNodeUpdates({
+                nodeId: node.id,
+                newParentId,
+                newX,
+                newY,
+                descendantMoves,
+              }),
             });
-            descendantMoves.forEach((entry) => {
-              batch.update(doc(firestore, "users", userUid, "nodes", entry.id), {
-                x: entry.newX,
-                y: entry.newY,
-                updatedAt: serverTimestamp(),
-              });
-            });
-            await batch.commit();
           } catch (actionError: unknown) {
             showSaveError();
             setError(actionError instanceof Error ? actionError.message : "Could not re-parent node.");
@@ -182,36 +159,25 @@ export function usePlannerNodeDragActions({
         }
       }
 
-      const movedEntries = [
-        { id: node.id, title: prevNode.title || node.id, oldX, oldY, newX, newY },
-        ...descendantMoves.map((entry) => ({
-          id: entry.id,
-          title: nodesById.get(entry.id)?.title || entry.id,
-          oldX: entry.oldX,
-          oldY: entry.oldY,
-          newX: entry.newX,
-          newY: entry.newY,
-        })),
-      ].filter((entry) => entry.oldX !== entry.newX || entry.oldY !== entry.newY);
+      const movedEntries = buildMovedEntries({
+        nodeId: node.id,
+        nodeTitle: prevNode.title,
+        oldX,
+        oldY,
+        newX,
+        newY,
+        descendantMoves,
+        nodesById,
+      });
       if (movedEntries.length > 0) {
+        const moveOps = buildMoveOps(movedEntries);
         pushHistory({
           id: crypto.randomUUID(),
           label:
             movedEntries.length === 1
               ? `Move "${movedEntries[0].title}"`
               : `Move "${prevNode.title || node.id}" subtree`,
-          forwardLocal: movedEntries.map(
-            (entry): LocalOp => ({ target: "nodes", op: "patch", nodeId: entry.id, patch: { x: entry.newX, y: entry.newY } })
-          ),
-          forwardFirestore: movedEntries.map(
-            (entry): FirestoreOp => ({ kind: "updateNode", nodeId: entry.id, data: { x: entry.newX, y: entry.newY } })
-          ),
-          inverseLocal: movedEntries.map(
-            (entry): LocalOp => ({ target: "nodes", op: "patch", nodeId: entry.id, patch: { x: entry.oldX, y: entry.oldY } })
-          ),
-          inverseFirestore: movedEntries.map(
-            (entry): FirestoreOp => ({ kind: "updateNode", nodeId: entry.id, data: { x: entry.oldX, y: entry.oldY } })
-          ),
+          ...moveOps,
         });
       }
       const movedMap = new Map(movedEntries.map((entry) => [entry.id, { x: entry.newX, y: entry.newY }] as const));
@@ -224,17 +190,11 @@ export function usePlannerNodeDragActions({
         );
       }
       try {
-        if (movedEntries.length > 0) {
-          const batch = writeBatch(firestore);
-          movedEntries.forEach((entry) => {
-            batch.update(doc(firestore, "users", userUid, "nodes", entry.id), {
-              x: entry.newX,
-              y: entry.newY,
-              updatedAt: serverTimestamp(),
-            });
-          });
-          await batch.commit();
-        }
+        await persistNodeFirestoreUpdates({
+          firestore,
+          userUid,
+          updates: buildPositionNodeUpdates(movedEntries),
+        });
       } catch (actionError: unknown) {
         showSaveError();
         setError(actionError instanceof Error ? actionError.message : "Could not save node position.");

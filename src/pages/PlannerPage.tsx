@@ -36,19 +36,11 @@ import { usePlannerViewDerivedState } from "../hooks/usePlannerViewDerivedState"
 import { useStoryNodeContentActions } from "../hooks/useStoryNodeContentActions";
 import { usePlannerNodeMutationActions } from "../hooks/usePlannerNodeMutationActions";
 import { usePlannerLayoutActions } from "../hooks/usePlannerLayoutActions";
-import { useCrossRefMaintenanceActions } from "../hooks/useCrossRefMaintenanceActions";
-import { useCrossRefCreationActions } from "../hooks/useCrossRefCreationActions";
-import { useCrossRefEditActions } from "../hooks/useCrossRefEditActions";
-import { useCrossRefDeleteDetachActions } from "../hooks/useCrossRefDeleteDetachActions";
-import { useCrossRefMergeActions } from "../hooks/useCrossRefMergeActions";
 import { usePlannerDragActions } from "../hooks/usePlannerDragActions";
 import { usePlannerContextNodeActions } from "../hooks/usePlannerContextNodeActions";
 import { usePlannerContextUiActions } from "../hooks/usePlannerContextUiActions";
-import { usePlannerKeyboardShortcuts } from "../hooks/usePlannerKeyboardShortcuts";
-import { usePlannerPaletteItems } from "../hooks/usePlannerPaletteItems";
 import { usePlannerCreateDeleteActions } from "../hooks/usePlannerCreateDeleteActions";
 import { usePlannerCrossRefUiSync } from "../hooks/usePlannerCrossRefUiSync";
-import { usePlannerCommandActions } from "../hooks/usePlannerCommandActions";
 import { usePlannerBubbleUiActions } from "../hooks/usePlannerBubbleUiActions";
 import { usePlannerFlowUiFeedback } from "../hooks/usePlannerFlowUiFeedback";
 import { usePlannerTreeViewState } from "../hooks/usePlannerTreeViewState";
@@ -73,6 +65,8 @@ import { usePlannerMobileToolbarActions } from "../hooks/usePlannerMobileToolbar
 import { usePlannerCanvasSurfaceProps } from "../hooks/usePlannerCanvasSurfaceProps";
 import { usePlannerMobilePanelsProps } from "../hooks/usePlannerMobilePanelsProps";
 import { usePlannerSidebarPanelsProps } from "../hooks/usePlannerSidebarPanelsProps";
+import { usePlannerCommandPalette } from "../hooks/usePlannerCommandPalette";
+import { usePlannerCrossRefActions } from "../hooks/usePlannerCrossRefActions";
 import { PlannerSidebarChrome } from "../components/Planner/PlannerSidebarChrome";
 import { PlannerCanvasSurface } from "../components/Planner/PlannerCanvasSurface";
 import { PlannerSidebarPanels } from "../components/Planner/PlannerSidebarPanels";
@@ -547,7 +541,20 @@ export default function PlannerPage({ user }: PlannerPageProps) {
     setNodes,
   });
 
-  const { cleanUpCrossRefs } = useCrossRefMaintenanceActions({
+  const {
+    cleanUpCrossRefs,
+    linkCrossRefToNode,
+    applyBubbleSuggestion,
+    createCrossRef,
+    duplicateCrossRef,
+    mergeCrossRefIntoEdited,
+    saveCrossRefEdits,
+    saveMobileQuickBubbleName,
+    updateCrossRefColor,
+    deleteCrossRefBubble,
+    deletePortalByRefId,
+    detachCrossRef,
+  } = usePlannerCrossRefActions({
     firestore: db,
     userUid: user.uid,
     refs,
@@ -561,16 +568,6 @@ export default function PlannerPage({ user }: PlannerPageProps) {
     setActivePortalRefId,
     setBusyAction,
     setError,
-  });
-
-  const {
-    linkCrossRefToNode,
-    applyBubbleSuggestion,
-    createCrossRef,
-  } = useCrossRefCreationActions({
-    firestore: db,
-    userUid: user.uid,
-    refs,
     effectiveBubbleTargetId,
     newRefCode,
     newRefLabel,
@@ -581,14 +578,7 @@ export default function PlannerPage({ user }: PlannerPageProps) {
     defaultBubbleColor: DEFAULT_BUBBLE_COLOR,
     newRefLabelInputRef,
     pushHistory,
-    chooseAnchorNodeId,
-    resolveNodePosition,
-    resolvePortalFollowPosition,
     buildDefaultPortalPosition,
-    hydrateRefEditor,
-    setBusyAction,
-    setError,
-    setActivePortalRefId,
     setLinkNodeQuery,
     setLinkTargetNodeId,
     setNewRefLabel,
@@ -596,37 +586,8 @@ export default function PlannerPage({ user }: PlannerPageProps) {
     setNewRefColor,
     setNewRefType,
     setRefs,
-  });
-
-  const {
-    duplicateCrossRef,
-    mergeCrossRefIntoEdited,
-  } = useCrossRefMergeActions({
-    firestore: db,
-    userUid: user.uid,
-    refs,
-    editRefId,
     mergeFromRefId,
-    activePortalRefId,
-    buildDefaultPortalPosition,
-    chooseAnchorNodeId,
-    resolveNodePosition,
-    resolvePortalFollowPosition,
-    hydrateRefEditor,
-    setBusyAction,
-    setError,
     setMergeFromRefId,
-    setActivePortalRefId,
-  });
-
-  const {
-    saveCrossRefEdits,
-    saveMobileQuickBubbleName,
-    updateCrossRefColor,
-  } = useCrossRefEditActions({
-    firestore: db,
-    userUid: user.uid,
-    editRefId,
     editRefLabel,
     editRefCode,
     editRefType,
@@ -636,39 +597,12 @@ export default function PlannerPage({ user }: PlannerPageProps) {
     editRefLinks,
     activePortalRef,
     mobileQuickBubbleEditName,
-    setBusyAction,
-    setError,
-    setActivePortalRefId,
     setEditRefCode,
     setEditRefTags,
     setEditRefLinks,
     setEditRefLabel,
-    setRefs,
-  });
-
-  const {
-    deleteCrossRefBubble,
-    deletePortalByRefId,
-    detachCrossRef,
-  } = useCrossRefDeleteDetachActions({
-    firestore: db,
-    userUid: user.uid,
-    refs,
-    editRefId,
-    activePortalRefId,
-    pushHistory,
     crossRefToFirestoreSetData,
-    hydrateRefEditor,
-    chooseAnchorNodeId,
-    resolveNodePosition,
-    resolvePortalFollowPosition,
     closePortalContextMenu: () => setPortalContextMenu(null),
-    setBusyAction,
-    setError,
-    setRefs,
-    setActivePortalRefId,
-    setLinkNodeQuery,
-    setLinkTargetNodeId,
   });
 
   const {
@@ -759,10 +693,9 @@ export default function PlannerPage({ user }: PlannerPageProps) {
 
   const {
     jumpToReferencedNode,
-    toggleStoryLane,
-    focusNodeSearch,
     runPaletteAction,
-  } = usePlannerCommandActions({
+    paletteItems,
+  } = usePlannerCommandPalette({
     rootNodeId,
     nodesById,
     setCurrentRootId,
@@ -776,23 +709,21 @@ export default function PlannerPage({ user }: PlannerPageProps) {
     setPaletteOpen,
     setPaletteQuery,
     setPaletteIndex,
-  });
-
-  const paletteItems = usePlannerPaletteItems({
+    paletteOpen,
     paletteQuery,
+    paletteIndex,
+    paletteInputRef,
     crossReferencesEnabled: CROSS_REFERENCES_ENABLED,
     bubblesSimplifiedMode: BUBBLES_SIMPLIFIED_MODE,
     currentRootKind,
     storyLaneMode,
     selectedNodeId,
-    nodesById,
     nodes,
     refs,
     goGrandmotherView,
     goUpOneView,
     organizeVisibleTree,
     cleanUpCrossRefs,
-    toggleStoryLane,
     openSelectedAsMaster,
     organizeSelectedBranch,
     openSelectedAsStoryLane,
@@ -800,39 +731,20 @@ export default function PlannerPage({ user }: PlannerPageProps) {
     handleContextAddChild,
     handleContextChangeType,
     handleContextToggleTaskStatus,
-    focusNodeSearch,
-    jumpToReferencedNode,
     openBubblesPanel,
     selectRefForEditing,
     linkCrossRefToNode,
     nextNodeKind,
-  });
-
-  usePlannerKeyboardShortcuts({
-    paletteOpen,
-    setPaletteOpen,
-    paletteIndex,
-    setPaletteIndex,
-    setPaletteQuery,
-    paletteItems,
-    paletteInputRef,
-    runPaletteAction,
     contextMenuOpen: !!contextMenu,
     activePortalRefId,
     deletePortalByRefId,
-    handleContextAddChild,
     handleContextDelete,
     handleContextDuplicate,
-    selectedNodeId,
     mobileQuickEditorOpen,
     setMobileQuickEditorOpen,
     mobileSidebarOpen,
-    setMobileSidebarOpen,
     searchQuery,
     setSearchQuery,
-    setSelectedNodeId,
-    setActivePortalRefId,
-    searchInputRef,
     canUndo,
     canRedo,
     undo,
