@@ -22,9 +22,6 @@ import {
   deleteField,
   deleteDoc,
   doc,
-  getDoc,
-  onSnapshot,
-  query,
   serverTimestamp,
   setDoc,
   updateDoc,
@@ -42,12 +39,6 @@ import {
 } from "../utils/treeUtils";
 import {
   normalizeHexColor,
-  normalizeNodeKind,
-  normalizeTaskStatus,
-  normalizeStorySteps,
-  normalizeNodeBody,
-  asStringArray,
-  timestampToMs,
   rgbaFromHex,
 } from "../utils/normalize";
 import type {
@@ -60,7 +51,10 @@ import type {
   CrossRefDoc,
   CrossRef,
 } from "../types/planner";
-import { ENTITY_TYPES, isPeopleEntityType } from "../types/planner";
+import { isPeopleEntityType } from "../types/planner";
+import { usePlannerRealtimeSync } from "../hooks/usePlannerRealtimeSync";
+import { usePlannerResponsiveUi } from "../hooks/usePlannerResponsiveUi";
+import { useStoryNodeContentActions } from "../hooks/useStoryNodeContentActions";
 import { NodeContextMenu } from "../components/Planner/NodeContextMenu";
 import "reactflow/dist/style.css";
 
@@ -314,10 +308,6 @@ const ENTITY_TYPE_GROUPS: Array<{ label: string; options: EntityType[] }> = [
 const CROSS_REFERENCES_ENABLED = true;
 const BUBBLES_SIMPLIFIED_MODE = true;
 
-function collapsedKeyFromIds(ids: Iterable<string>): string {
-  return Array.from(ids).sort().join("|");
-}
-
 export default function PlannerPage({ user }: PlannerPageProps) {
   const [profileName, setProfileName] = useState("");
   const [rootNodeId, setRootNodeId] = useState<string | null>(null);
@@ -476,293 +466,36 @@ export default function PlannerPage({ user }: PlannerPageProps) {
     return map;
   }, [nodes, nodesById]);
 
-  const ensureWorkspace = useCallback(async () => {
-    if (!db) {
-      setError("Firestore is not available. Check Firebase configuration.");
-      setLoading(false);
-      return;
-    }
-    const userRef = doc(db, "users", user.uid);
-    const userSnap = await getDoc(userRef);
-    const existing = userSnap.exists() ? userSnap.data() : {};
-    const preferredName =
-      typeof existing.displayName === "string" && existing.displayName.trim()
-        ? existing.displayName.trim()
-        : (user.displayName || user.email?.split("@")[0] || "Main Node").trim();
-    const rootId =
-      typeof existing.rootNodeId === "string" && existing.rootNodeId.trim()
-        ? existing.rootNodeId
-        : doc(collection(db, "users", user.uid, "nodes")).id;
+  usePlannerResponsiveUi({
+    isMobileLayout,
+    mobileSidebarOpen,
+    mobileQuickEditorOpen,
+    mobileQuickBubbleOpen,
+    selectedNodeId,
+    setIsMobileLayout,
+    setSidebarCollapsed,
+    setMobileSidebarOpen,
+    setMobileQuickEditorOpen,
+    setMobileQuickBubbleOpen,
+    setMobileToolbarOpen,
+  });
 
-    const rootRef = doc(db, "users", user.uid, "nodes", rootId);
-    const rootSnap = await getDoc(rootRef);
-    const batch = writeBatch(db);
-    let changed = false;
-
-    if (!userSnap.exists()) {
-      batch.set(userRef, {
-        displayName: preferredName,
-        email: user.email || "",
-        rootNodeId: rootId,
-        createdAt: serverTimestamp(),
-        updatedAt: serverTimestamp(),
-      });
-      changed = true;
-    } else if (existing.displayName !== preferredName || existing.rootNodeId !== rootId) {
-      batch.set(
-        userRef,
-        {
-          displayName: preferredName,
-          rootNodeId: rootId,
-          updatedAt: serverTimestamp(),
-        },
-        { merge: true }
-      );
-      changed = true;
-    }
-
-    if (!rootSnap.exists()) {
-      batch.set(rootRef, {
-        title: preferredName,
-        parentId: null,
-        kind: "root",
-        x: 0,
-        y: 0,
-        createdAt: serverTimestamp(),
-        updatedAt: serverTimestamp(),
-      } satisfies TreeNodeDoc & { createdAt: unknown; updatedAt: unknown });
-      changed = true;
-    }
-
-    if (changed) await batch.commit();
-  }, [user.displayName, user.email, user.uid]);
-
-  useEffect(() => {
-    if (typeof window === "undefined") return undefined;
-    const media = window.matchMedia("(max-width: 980px)");
-    const applyState = () => setIsMobileLayout(media.matches);
-    applyState();
-
-    const handleChange = (event: MediaQueryListEvent) => {
-      setIsMobileLayout(event.matches);
-    };
-
-    if (typeof media.addEventListener === "function") {
-      media.addEventListener("change", handleChange);
-      return () => media.removeEventListener("change", handleChange);
-    }
-
-    media.addListener(handleChange);
-    return () => media.removeListener(handleChange);
-  }, []);
-
-  useEffect(() => {
-    if (isMobileLayout) {
-      setSidebarCollapsed(false);
-      return;
-    }
-    setMobileSidebarOpen(false);
-    setMobileQuickEditorOpen(false);
-    setMobileQuickBubbleOpen(false);
-    setMobileToolbarOpen(false);
-  }, [isMobileLayout]);
-
-  useEffect(() => {
-    if (!isMobileLayout || (!mobileSidebarOpen && !mobileQuickEditorOpen && !mobileQuickBubbleOpen) || typeof document === "undefined") return undefined;
-    const previousOverflow = document.body.style.overflow;
-    document.body.style.overflow = "hidden";
-    return () => {
-      document.body.style.overflow = previousOverflow;
-    };
-  }, [isMobileLayout, mobileQuickBubbleOpen, mobileQuickEditorOpen, mobileSidebarOpen]);
-
-  useEffect(() => {
-    if (!mobileSidebarOpen) return;
-    setMobileQuickEditorOpen(false);
-    setMobileQuickBubbleOpen(false);
-    setMobileToolbarOpen(false);
-  }, [mobileSidebarOpen]);
-
-  useEffect(() => {
-    if (selectedNodeId) return;
-    setMobileQuickEditorOpen(false);
-    setMobileQuickBubbleOpen(false);
-  }, [selectedNodeId]);
-
-  useEffect(() => {
-    if (!isMobileLayout) return;
-    if (!mobileSidebarOpen && !mobileQuickEditorOpen && !mobileQuickBubbleOpen) return;
-    setMobileToolbarOpen(false);
-  }, [isMobileLayout, mobileQuickBubbleOpen, mobileQuickEditorOpen, mobileSidebarOpen]);
-
-  useEffect(() => {
-    const firestore = db;
-    if (!firestore) {
-      setLoading(false);
-      setError("Firestore is not available. Check Firebase configuration.");
-      return;
-    }
-    let unsubProfile: (() => void) | null = null;
-    let unsubNodes: (() => void) | null = null;
-    let unsubRefs: (() => void) | null = null;
-    let cancelled = false;
-    let gotProfile = false;
-    let gotNodes = false;
-    let gotRefs = false;
-    const markReady = () => {
-      if (!cancelled && gotProfile && gotNodes && gotRefs) setLoading(false);
-    };
-
-    setLoading(true);
-    setError(null);
-    setCollapsedHydrated(false);
-    syncedCollapsedKeyRef.current = "";
-
-    ensureWorkspace()
-      .then(() => {
-        if (cancelled) return;
-
-        unsubProfile = onSnapshot(
-          doc(firestore, "users", user.uid),
-          (snapshot) => {
-            const data = snapshot.data();
-            const nextProfileName =
-              typeof data?.displayName === "string" && data.displayName.trim()
-                ? data.displayName.trim()
-                : (user.displayName || user.email?.split("@")[0] || "Main Node");
-            const nextRootId =
-              typeof data?.rootNodeId === "string" && data.rootNodeId.trim() ? data.rootNodeId : null;
-
-            // Load collapsed nodes from Firebase
-            const savedCollapsedNodes = Array.isArray(data?.collapsedNodes)
-              ? data.collapsedNodes.filter((id): id is string => typeof id === "string")
-              : [];
-            const savedSet = new Set(savedCollapsedNodes);
-            const savedKey = collapsedKeyFromIds(savedSet);
-            syncedCollapsedKeyRef.current = savedKey;
-            setCollapsedHydrated(true);
-            setCollapsedNodeIds((prev) => {
-              if (collapsedKeyFromIds(prev) === savedKey) return prev;
-              return savedSet;
-            });
-
-            setProfileName(nextProfileName);
-            setRootNodeId(nextRootId);
-            gotProfile = true;
-            markReady();
-          },
-          (snapshotError) => {
-            setError(snapshotError.message);
-            gotProfile = true;
-            markReady();
-          }
-        );
-
-        unsubNodes = onSnapshot(
-          query(collection(firestore, "users", user.uid, "nodes")),
-          (snapshot) => {
-            // Don't overwrite local state while an undo/redo Firestore write is in flight.
-            if (suppressSnapshotRef.current > 0) return;
-            const nextNodes = snapshot.docs.map((entry) => {
-              const value = entry.data() as Partial<TreeNodeDoc>;
-              return {
-                id: entry.id,
-                title: typeof value.title === "string" ? value.title : "Untitled",
-                parentId: typeof value.parentId === "string" ? value.parentId : null,
-                kind: normalizeNodeKind(value.kind),
-                x: typeof value.x === "number" ? value.x : undefined,
-                y: typeof value.y === "number" ? value.y : undefined,
-                width: typeof value.width === "number" ? value.width : undefined,
-                height: typeof value.height === "number" ? value.height : undefined,
-                color: normalizeHexColor(value.color),
-                taskStatus: normalizeTaskStatus(value.taskStatus),
-                storySteps: normalizeStorySteps(value.storySteps),
-                body: normalizeNodeBody(value.body),
-              } satisfies TreeNode;
-            });
-            nextNodes.sort((a, b) => a.title.localeCompare(b.title));
-            setNodes(nextNodes);
-            gotNodes = true;
-            markReady();
-          },
-          (snapshotError) => {
-            setError(snapshotError.message);
-            gotNodes = true;
-            markReady();
-          }
-        );
-
-        if (!CROSS_REFERENCES_ENABLED) {
-          setRefs([]);
-          gotRefs = true;
-          markReady();
-        } else {
-          unsubRefs = onSnapshot(
-            query(collection(firestore, "users", user.uid, "crossRefs")),
-            (snapshot) => {
-              // Don't overwrite local state while an undo/redo Firestore write is in flight.
-              if (suppressSnapshotRef.current > 0) return;
-              const nextRefs = snapshot.docs.map((entry) => {
-                const value = entry.data() as Partial<CrossRefDoc> & { createdAt?: unknown; updatedAt?: unknown };
-                const entityType = ENTITY_TYPES.includes(value.entityType as EntityType)
-                  ? (value.entityType as EntityType)
-                  : "entity";
-                const parsedNodeIds = asStringArray(value.nodeIds);
-                const parsedAnchorNodeId = typeof value.anchorNodeId === "string" ? value.anchorNodeId : null;
-                const singleNodeId =
-                  parsedNodeIds[0] ||
-                  parsedAnchorNodeId ||
-                  null;
-                return {
-                  id: entry.id,
-                  label: typeof value.label === "string" ? value.label : entry.id,
-                  code: typeof value.code === "string" ? normalizeCode(value.code) : "REF",
-                  nodeIds: BUBBLES_SIMPLIFIED_MODE ? (singleNodeId ? [singleNodeId] : []) : parsedNodeIds,
-                  anchorNodeId: BUBBLES_SIMPLIFIED_MODE ? singleNodeId : parsedAnchorNodeId,
-                  color: normalizeHexColor(value.color) ?? null,
-                  portalX: typeof value.portalX === "number" ? value.portalX : null,
-                  portalY: typeof value.portalY === "number" ? value.portalY : null,
-                  portalAnchorX: typeof value.portalAnchorX === "number" ? value.portalAnchorX : null,
-                  portalAnchorY: typeof value.portalAnchorY === "number" ? value.portalAnchorY : null,
-                  portalOffsetX: typeof value.portalOffsetX === "number" ? value.portalOffsetX : null,
-                  portalOffsetY: typeof value.portalOffsetY === "number" ? value.portalOffsetY : null,
-                  entityType,
-                  tags: asStringArray(value.tags),
-                  notes: typeof value.notes === "string" ? value.notes : "",
-                  contact: typeof value.contact === "string" ? value.contact : "",
-                  links: asStringArray(value.links),
-                  createdAtMs: timestampToMs(value.createdAt),
-                  updatedAtMs: timestampToMs(value.updatedAt),
-                } satisfies CrossRef;
-              });
-              nextRefs.sort(
-                (a, b) => b.updatedAtMs - a.updatedAtMs || a.code.localeCompare(b.code) || a.label.localeCompare(b.label)
-              );
-              setRefs(nextRefs);
-              gotRefs = true;
-              markReady();
-            },
-            (snapshotError) => {
-              setError(snapshotError.message);
-              gotRefs = true;
-              markReady();
-            }
-          );
-        }
-      })
-      .catch((workspaceError: unknown) => {
-        if (cancelled) return;
-        setError(workspaceError instanceof Error ? workspaceError.message : "Failed to initialize workspace.");
-        setLoading(false);
-      });
-
-    return () => {
-      cancelled = true;
-      unsubProfile?.();
-      unsubNodes?.();
-      unsubRefs?.();
-    };
-  }, [ensureWorkspace, suppressSnapshotRef, user.displayName, user.email, user.uid]);
+  usePlannerRealtimeSync({
+    user,
+    firestore: db,
+    suppressSnapshotRef,
+    setLoading,
+    setError,
+    setCollapsedHydrated,
+    syncedCollapsedKeyRef,
+    setCollapsedNodeIds,
+    setProfileName,
+    setRootNodeId,
+    setNodes,
+    setRefs,
+    crossReferencesEnabled: CROSS_REFERENCES_ENABLED,
+    bubblesSimplifiedMode: BUBBLES_SIMPLIFIED_MODE,
+  });
 
   useEffect(() => {
     if (!rootNodeId || loading) return;
@@ -1137,193 +870,24 @@ export default function PlannerPage({ user }: PlannerPageProps) {
     });
   }, []);
 
-  const persistNodeBody = useCallback(
-    async (nodeId: string, nextBody: string) => {
-      if (!db) return;
-      const previousBody = nodesById.get(nodeId)?.body || "";
-      const normalizedBody = nextBody.replace(/\r\n/g, "\n");
-      const canonicalBody = normalizedBody.trim().length === 0 ? "" : normalizedBody;
-      if (canonicalBody === previousBody) return;
-      pushHistory({
-        id: crypto.randomUUID(),
-        label: `Edit body`,
-        forwardLocal:    [{ target: "nodes", op: "patch", nodeId, patch: { body: canonicalBody } }],
-        forwardFirestore:[{ kind: "updateNode", nodeId, data: { body: canonicalBody || firestoreDeleteField() } }],
-        inverseLocal:    [{ target: "nodes", op: "patch", nodeId, patch: { body: previousBody } }],
-        inverseFirestore:[{ kind: "updateNode", nodeId, data: { body: previousBody || firestoreDeleteField() } }],
-      });
-      setBusyAction(true);
-      setError(null);
-      applyLocalNodePatch(nodeId, { body: canonicalBody });
-      try {
-        await updateDoc(doc(db, "users", user.uid, "nodes", nodeId), {
-          body: canonicalBody ? canonicalBody : deleteField(),
-          updatedAt: serverTimestamp(),
-        });
-      } catch (actionError: unknown) {
-        applyLocalNodePatch(nodeId, { body: previousBody });
-        setError(actionError instanceof Error ? actionError.message : "Could not save node body text.");
-      } finally {
-        setBusyAction(false);
-      }
-    },
-    [applyLocalNodePatch, nodesById, pushHistory, user.uid]
-  );
-
-  const saveStoryNodeSize = useCallback(
-    async (
-      nodeId: string,
-      previousWidth: number | undefined,
-      previousHeight: number | undefined,
-      nextWidth: number,
-      nextHeight: number
-    ) => {
-      if (!db) return;
-      const node = nodesById.get(nodeId);
-      if (!node) return;
-      const width = clamp(Math.round(nextWidth), STORY_NODE_MIN_WIDTH, STORY_NODE_MAX_WIDTH);
-      const height = clamp(Math.round(nextHeight), STORY_NODE_MIN_HEIGHT, STORY_NODE_MAX_HEIGHT);
-      const prevWidthRounded = typeof previousWidth === "number" ? Math.round(previousWidth) : undefined;
-      const prevHeightRounded = typeof previousHeight === "number" ? Math.round(previousHeight) : undefined;
-      if (prevWidthRounded === width && prevHeightRounded === height) return;
-      pushHistory({
-        id: crypto.randomUUID(),
-        label: `Resize "${node.title}"`,
-        forwardLocal: [{ target: "nodes", op: "patch", nodeId, patch: { width, height } }],
-        forwardFirestore: [{ kind: "updateNode", nodeId, data: { width, height } }],
-        inverseLocal: [{ target: "nodes", op: "patch", nodeId, patch: { width: previousWidth, height: previousHeight } }],
-        inverseFirestore: [{
-          kind: "updateNode",
-          nodeId,
-          data: {
-            width: typeof previousWidth === "number" ? previousWidth : firestoreDeleteField(),
-            height: typeof previousHeight === "number" ? previousHeight : firestoreDeleteField(),
-          },
-        }],
-      });
-      setBusyAction(true);
-      setError(null);
-      applyLocalNodePatch(nodeId, { width, height });
-      try {
-        await updateDoc(doc(db, "users", user.uid, "nodes", nodeId), {
-          width,
-          height,
-          updatedAt: serverTimestamp(),
-        });
-      } catch (actionError: unknown) {
-        applyLocalNodePatch(nodeId, { width: previousWidth, height: previousHeight });
-        setError(actionError instanceof Error ? actionError.message : "Could not resize story node.");
-      } finally {
-        setBusyAction(false);
-      }
-    },
-    [applyLocalNodePatch, nodesById, pushHistory, user.uid]
-  );
-
-  const resetStoryNodeSize = useCallback(
-    async (nodeId: string) => {
-      if (!db) return;
-      const node = nodesById.get(nodeId);
-      if (!node) return;
-      const previousWidth = node.width;
-      const previousHeight = node.height;
-      if (typeof previousWidth !== "number" && typeof previousHeight !== "number") return;
-      pushHistory({
-        id: crypto.randomUUID(),
-        label: `Reset size "${node.title}"`,
-        forwardLocal: [{ target: "nodes", op: "patch", nodeId, patch: { width: undefined, height: undefined } }],
-        forwardFirestore: [{
-          kind: "updateNode",
-          nodeId,
-          data: { width: firestoreDeleteField(), height: firestoreDeleteField() },
-        }],
-        inverseLocal: [{ target: "nodes", op: "patch", nodeId, patch: { width: previousWidth, height: previousHeight } }],
-        inverseFirestore: [{
-          kind: "updateNode",
-          nodeId,
-          data: {
-            width: typeof previousWidth === "number" ? previousWidth : firestoreDeleteField(),
-            height: typeof previousHeight === "number" ? previousHeight : firestoreDeleteField(),
-          },
-        }],
-      });
-      setBusyAction(true);
-      setError(null);
-      applyLocalNodePatch(nodeId, { width: undefined, height: undefined });
-      try {
-        await updateDoc(doc(db, "users", user.uid, "nodes", nodeId), {
-          width: deleteField(),
-          height: deleteField(),
-          updatedAt: serverTimestamp(),
-        });
-      } catch (actionError: unknown) {
-        applyLocalNodePatch(nodeId, { width: previousWidth, height: previousHeight });
-        setError(actionError instanceof Error ? actionError.message : "Could not reset story node size.");
-      } finally {
-        setBusyAction(false);
-      }
-    },
-    [applyLocalNodePatch, nodesById, pushHistory, user.uid]
-  );
-
-  const startStoryNodeResize = useCallback(
-    (
-      nodeId: string,
-      initialWidth: number,
-      initialHeight: number,
-      previousStoredWidth: number | undefined,
-      previousStoredHeight: number | undefined,
-      event: React.PointerEvent<HTMLButtonElement>
-    ) => {
-      event.preventDefault();
-      event.stopPropagation();
-      const startX = event.clientX;
-      const startY = event.clientY;
-      let latestWidth = initialWidth;
-      let latestHeight = initialHeight;
-      try {
-        event.currentTarget.setPointerCapture(event.pointerId);
-      } catch {
-        // Some browsers/input types can throw if capture is unavailable.
-      }
-      const applyPreview = (width: number, height: number) => {
-        setNodes((prev) => prev.map((entry) => (
-          entry.id === nodeId ? { ...entry, width, height } : entry
-        )));
-      };
-      const handlePointerMove = (moveEvent: PointerEvent) => {
-        const nextWidth = clamp(
-          Math.round(initialWidth + (moveEvent.clientX - startX)),
-          STORY_NODE_MIN_WIDTH,
-          STORY_NODE_MAX_WIDTH
-        );
-        const nextHeight = clamp(
-          Math.round(initialHeight + (moveEvent.clientY - startY)),
-          STORY_NODE_MIN_HEIGHT,
-          STORY_NODE_MAX_HEIGHT
-        );
-        if (nextWidth === latestWidth && nextHeight === latestHeight) return;
-        latestWidth = nextWidth;
-        latestHeight = nextHeight;
-        applyPreview(nextWidth, nextHeight);
-      };
-      const stopResize = () => {
-        window.removeEventListener("pointermove", handlePointerMove);
-        window.removeEventListener("pointerup", handlePointerUp);
-        window.removeEventListener("pointercancel", handlePointerUp);
-        if (latestWidth !== initialWidth || latestHeight !== initialHeight) {
-          void saveStoryNodeSize(nodeId, previousStoredWidth, previousStoredHeight, latestWidth, latestHeight);
-        }
-      };
-      const handlePointerUp = () => {
-        stopResize();
-      };
-      window.addEventListener("pointermove", handlePointerMove);
-      window.addEventListener("pointerup", handlePointerUp);
-      window.addEventListener("pointercancel", handlePointerUp);
-    },
-    [saveStoryNodeSize]
-  );
+  const {
+    persistNodeBody,
+    resetStoryNodeSize,
+    startStoryNodeResize,
+  } = useStoryNodeContentActions({
+    firestore: db,
+    userUid: user.uid,
+    nodesById,
+    pushHistory,
+    applyLocalNodePatch,
+    setBusyAction,
+    setError,
+    setNodes,
+    storyNodeMinWidth: STORY_NODE_MIN_WIDTH,
+    storyNodeMaxWidth: STORY_NODE_MAX_WIDTH,
+    storyNodeMinHeight: STORY_NODE_MIN_HEIGHT,
+    storyNodeMaxHeight: STORY_NODE_MAX_HEIGHT,
+  });
 
   const filteredTreeIdSet = useMemo(() => new Set(filteredTreeIds), [filteredTreeIds]);
 
