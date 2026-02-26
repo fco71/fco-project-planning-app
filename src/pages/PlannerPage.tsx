@@ -1,7 +1,6 @@
-/* eslint-disable react-hooks/set-state-in-effect */
-import { useEffect, useRef, useState } from "react";
+import { useEffect } from "react";
 import { useUndoRedo } from "../hooks/useUndoRedo";
-import type { EdgeTypes, ReactFlowInstance } from "reactflow";
+import type { EdgeTypes } from "reactflow";
 import type { User } from "firebase/auth";
 import { db } from "../firebase";
 import {
@@ -24,53 +23,33 @@ import {
   STORY_NODE_MIN_HEIGHT,
   STORY_NODE_MIN_WIDTH,
 } from "../utils/plannerConfig";
-import type {
-  TreeNode,
-  CrossRef,
-} from "../types/planner";
 import { usePlannerRealtimeSync } from "../hooks/usePlannerRealtimeSync";
 import { usePlannerResponsiveUi } from "../hooks/usePlannerResponsiveUi";
-import { usePlannerNavigationActions } from "../hooks/usePlannerNavigationActions";
 import { usePlannerCrossRefDerivedState } from "../hooks/usePlannerCrossRefDerivedState";
 import { usePlannerViewDerivedState } from "../hooks/usePlannerViewDerivedState";
 import { useStoryNodeContentActions } from "../hooks/useStoryNodeContentActions";
 import { usePlannerNodeMutationActions } from "../hooks/usePlannerNodeMutationActions";
-import { usePlannerLayoutActions } from "../hooks/usePlannerLayoutActions";
 import { usePlannerDragActions } from "../hooks/usePlannerDragActions";
-import { usePlannerContextNodeActions } from "../hooks/usePlannerContextNodeActions";
-import { usePlannerContextUiActions } from "../hooks/usePlannerContextUiActions";
 import { usePlannerCreateDeleteActions } from "../hooks/usePlannerCreateDeleteActions";
 import { usePlannerCrossRefUiSync } from "../hooks/usePlannerCrossRefUiSync";
 import { usePlannerBubbleUiActions } from "../hooks/usePlannerBubbleUiActions";
 import { usePlannerFlowUiFeedback } from "../hooks/usePlannerFlowUiFeedback";
-import { usePlannerTreeViewState } from "../hooks/usePlannerTreeViewState";
 import { usePlannerRootSelectionSync } from "../hooks/usePlannerRootSelectionSync";
-import { usePlannerEdgeHoverState } from "../hooks/usePlannerEdgeHoverState";
-import { usePlannerBaseGraphData } from "../hooks/usePlannerBaseGraphData";
-import { usePlannerBaseNodeState } from "../hooks/usePlannerBaseNodeState";
-import { usePlannerVisiblePortals } from "../hooks/usePlannerVisiblePortals";
-import { usePlannerFlowNodes } from "../hooks/usePlannerFlowNodes";
-import { usePlannerFlowGraph } from "../hooks/usePlannerFlowGraph";
+import { usePlannerCanvasGraphState } from "../hooks/usePlannerCanvasGraphState";
 import { usePlannerApplyLocalOps } from "../hooks/usePlannerApplyLocalOps";
 import { usePlannerNodeIndex } from "../hooks/usePlannerNodeIndex";
 import { usePlannerStoryCardState } from "../hooks/usePlannerStoryCardState";
 import { usePlannerBodySaveActions } from "../hooks/usePlannerBodySaveActions";
 import { usePlannerLocalNodePatch } from "../hooks/usePlannerLocalNodePatch";
-import { usePlannerFilteredTreeIdSet } from "../hooks/usePlannerFilteredTreeIdSet";
-import { usePlannerHoverState } from "../hooks/usePlannerHoverState";
 import { usePlannerDefaultPortalPosition } from "../hooks/usePlannerDefaultPortalPosition";
-import { usePlannerSidebarSectionVisibility } from "../hooks/usePlannerSidebarSectionVisibility";
-import { usePlannerCrossRefUiState } from "../hooks/usePlannerCrossRefUiState";
-import { usePlannerMobileToolbarActions } from "../hooks/usePlannerMobileToolbarActions";
 import { usePlannerCanvasSurfaceProps } from "../hooks/usePlannerCanvasSurfaceProps";
-import { usePlannerMobilePanelsProps } from "../hooks/usePlannerMobilePanelsProps";
-import { usePlannerSidebarPanelsProps } from "../hooks/usePlannerSidebarPanelsProps";
-import { usePlannerCommandPalette } from "../hooks/usePlannerCommandPalette";
+import { usePlannerSidebarMobilePanelsBundle } from "../hooks/usePlannerSidebarMobilePanelsBundle";
 import { usePlannerCrossRefActions } from "../hooks/usePlannerCrossRefActions";
-import { PlannerSidebarChrome } from "../components/Planner/PlannerSidebarChrome";
-import { PlannerCanvasSurface } from "../components/Planner/PlannerCanvasSurface";
-import { PlannerSidebarPanels } from "../components/Planner/PlannerSidebarPanels";
-import { PlannerMobilePanels } from "../components/Planner/PlannerMobilePanels";
+import { usePlannerContextActions } from "../hooks/usePlannerContextActions";
+import { usePlannerNavigationCommandBundle } from "../hooks/usePlannerNavigationCommandBundle";
+import { usePlannerSidebarChromeProps } from "../hooks/usePlannerSidebarChromeProps";
+import { usePlannerPageState } from "../hooks/usePlannerPageState";
+import { PlannerWorkspaceLayout } from "../components/Planner/PlannerWorkspaceLayout";
 import { plannerNodeTypes } from "../components/Planner/PortalNode";
 import "reactflow/dist/style.css";
 
@@ -81,35 +60,30 @@ type PlannerPageProps = {
 const edgeTypes: EdgeTypes = Object.freeze({});
 
 export default function PlannerPage({ user }: PlannerPageProps) {
-  const [profileName, setProfileName] = useState("");
-  const [rootNodeId, setRootNodeId] = useState<string | null>(null);
-  const [nodes, setNodes] = useState<TreeNode[]>([]);
-  const [refs, setRefs] = useState<CrossRef[]>([]);
-  const [currentRootId, setCurrentRootId] = useState<string | null>(null);
-  const [selectedNodeId, setSelectedNodeId] = useState<string | null>(null);
-  const [pendingSelectedNodeId, setPendingSelectedNodeId] = useState<string | null>(null);
-  const [sidebarCollapsed, setSidebarCollapsed] = useState(false);
-  const [isMobileLayout, setIsMobileLayout] = useState(() =>
-    typeof window !== "undefined" ? window.matchMedia("(max-width: 980px)").matches : false
-  );
-  const [mobileSidebarOpen, setMobileSidebarOpen] = useState(false);
-  const [mobileSidebarSection, setMobileSidebarSection] = useState<"project" | "node" | "bubbles">("project");
-  const [mobileQuickEditorOpen, setMobileQuickEditorOpen] = useState(false);
-  const [mobileQuickBubbleOpen, setMobileQuickBubbleOpen] = useState(false);
-  const [mobileToolbarOpen, setMobileToolbarOpen] = useState(false);
-  const [mobileQuickEditorMode, setMobileQuickEditorMode] = useState<"compact" | "full">("compact");
-  const [searchQuery, setSearchQuery] = useState("");
-  const searchInputRef = useRef<HTMLInputElement>(null);
-  const renameInputRef = useRef<HTMLInputElement>(null);
-  const newRefLabelInputRef = useRef<HTMLInputElement>(null);
-  const mobileQuickBubbleInputRef = useRef<HTMLInputElement>(null);
-  const [newChildTitle, setNewChildTitle] = useState("");
-  const [newStoryStepText, setNewStoryStepText] = useState("");
-  const [renameTitle, setRenameTitle] = useState("");
-  const [bodyDraft, setBodyDraft] = useState("");
-  const [pendingRenameNodeId, setPendingRenameNodeId] = useState<string | null>(null);
-  const [storyLaneMode, setStoryLaneMode] = useState(false);
   const {
+    profileName, setProfileName,
+    rootNodeId, setRootNodeId,
+    nodes, setNodes,
+    refs, setRefs,
+    currentRootId, setCurrentRootId,
+    selectedNodeId, setSelectedNodeId,
+    pendingSelectedNodeId, setPendingSelectedNodeId,
+    sidebarCollapsed, setSidebarCollapsed,
+    isMobileLayout, setIsMobileLayout,
+    mobileSidebarOpen, setMobileSidebarOpen,
+    mobileSidebarSection, setMobileSidebarSection,
+    mobileQuickEditorOpen, setMobileQuickEditorOpen,
+    mobileQuickBubbleOpen, setMobileQuickBubbleOpen,
+    mobileToolbarOpen, setMobileToolbarOpen,
+    mobileQuickEditorMode, setMobileQuickEditorMode,
+    searchQuery, setSearchQuery,
+    searchInputRef, renameInputRef, newRefLabelInputRef, mobileQuickBubbleInputRef,
+    newChildTitle, setNewChildTitle,
+    newStoryStepText, setNewStoryStepText,
+    renameTitle, setRenameTitle,
+    bodyDraft, setBodyDraft,
+    pendingRenameNodeId, setPendingRenameNodeId,
+    storyLaneMode, setStoryLaneMode,
     mobileQuickBubbleEditName, setMobileQuickBubbleEditName,
     newRefLabel, setNewRefLabel, newRefCode, setNewRefCode, newRefColor, setNewRefColor, newRefType, setNewRefType,
     refSearchQuery, setRefSearchQuery, refCategoryFilter, setRefCategoryFilter, refScopeFilter, setRefScopeFilter,
@@ -118,26 +92,19 @@ export default function PlannerPage({ user }: PlannerPageProps) {
     editRefLinks, setEditRefLinks, mergeFromRefId, setMergeFromRefId,
     linkNodeQuery, setLinkNodeQuery, linkTargetNodeId, setLinkTargetNodeId,
     activePortalRefId, setActivePortalRefId, portalContextMenu, setPortalContextMenu,
-  } = usePlannerCrossRefUiState({
+    paletteOpen, setPaletteOpen, paletteQuery, setPaletteQuery, paletteIndex, setPaletteIndex, paletteInputRef,
+    collapsedNodeIds, setCollapsedNodeIds,
+    hoveredNodeId, hoveredEdgeId, isDraggingRef, scheduleHoverUpdate,
+    dropTargetNodeId, setDropTargetNodeId, dropTargetIdRef,
+    contextMenu, setContextMenu,
+    busyAction, setBusyAction,
+    loading, setLoading,
+    error, setError,
+    rfInstance, setRfInstance,
+    collapsedHydrated, setCollapsedHydrated, syncedCollapsedKeyRef,
+  } = usePlannerPageState({
     defaultBubbleColor: DEFAULT_BUBBLE_COLOR,
   });
-  const [paletteOpen, setPaletteOpen] = useState(false);
-  const [paletteQuery, setPaletteQuery] = useState("");
-  const [paletteIndex, setPaletteIndex] = useState(0);
-  const paletteInputRef = useRef<HTMLInputElement>(null);
-  const [collapsedNodeIds, setCollapsedNodeIds] = useState<Set<string>>(new Set());
-  const { hoveredNodeId, hoveredEdgeId, isDraggingRef, scheduleHoverUpdate } = usePlannerHoverState();
-  const [dropTargetNodeId, setDropTargetNodeId] = useState<string | null>(null);
-  // Track drop target via ref during drag — avoids calling setDropTargetNodeId
-  // on every mousemove frame which would recompute flowNodes each frame.
-  const dropTargetIdRef = useRef<string | null>(null);
-  const [contextMenu, setContextMenu] = useState<{ x: number; y: number; nodeId: string } | null>(null);
-  const [busyAction, setBusyAction] = useState(false);
-  const [loading, setLoading] = useState(true);
-  const [error, setError] = useState<string | null>(null);
-  const [rfInstance, setRfInstance] = useState<ReactFlowInstance | null>(null);
-  const [collapsedHydrated, setCollapsedHydrated] = useState(false);
-  const syncedCollapsedKeyRef = useRef("");
 
   // ── Undo / Redo ──────────────────────────────────────────────────────────
   const {
@@ -242,29 +209,7 @@ export default function PlannerPage({ user }: PlannerPageProps) {
 
   useEffect(() => {
     setNewStoryStepText("");
-  }, [selectedNode?.id]);
-
-  const {
-    visibleTreeIdSet,
-    toggleNodeCollapse,
-    filteredTreeIds,
-    searchMatchingIds,
-    currentRootKind,
-    treeLayout,
-    resolveNodePosition,
-  } = usePlannerTreeViewState({
-    firestore: db,
-    userUid: user.uid,
-    currentRootId,
-    nodesById,
-    childrenByParent,
-    collapsedNodeIds,
-    setCollapsedNodeIds,
-    collapsedHydrated,
-    syncedCollapsedKeyRef,
-    searchQuery,
-    storyLaneMode,
-  });
+  }, [selectedNode?.id, setNewStoryStepText]);
 
   const {
     persistNodeBody,
@@ -285,80 +230,81 @@ export default function PlannerPage({ user }: PlannerPageProps) {
     storyNodeMaxHeight: STORY_NODE_MAX_HEIGHT,
   });
 
-  const filteredTreeIdSet = usePlannerFilteredTreeIdSet(filteredTreeIds);
-
-  // visiblePortals is computed after baseNodes so it reads live drag positions.
-  const { baseTreeNodes, baseEdges } = usePlannerBaseGraphData({
-    filteredTreeIds,
-    nodesById,
-    childrenByParent,
-    collapsedNodeIds,
-    treeLayout,
-    rootNodeId,
-    searchMatchingIds,
-    storyLaneMode,
-    currentRootKind,
-    currentRootId,
-    expandedStoryNodeIds,
-    isMobileLayout,
-    refs,
-    filteredTreeIdSet,
-    crossReferencesEnabled: CROSS_REFERENCES_ENABLED,
-    storyNodeMinWidth: STORY_NODE_MIN_WIDTH,
-    storyNodeMaxWidth: STORY_NODE_MAX_WIDTH,
-    storyNodeMinHeight: STORY_NODE_MIN_HEIGHT,
-    storyNodeMaxHeight: STORY_NODE_MAX_HEIGHT,
-  });
-
-  const { hoverNodeIds, hoverEdgeIds, activeLinkedNodeIds } = usePlannerEdgeHoverState({
-    baseEdges,
-    hoveredNodeId,
-    hoveredEdgeId,
-    activePortalRefId,
-    refs,
-  });
-
-  const { baseNodes, handleNodesChange, draggedNodeIdRef } = usePlannerBaseNodeState({
-    baseTreeNodes,
-  });
-
-  const flowNodes = usePlannerFlowNodes({
-    baseNodes,
-    selectedNodeId,
-    activeLinkedNodeIds,
-    hoverNodeIds,
-    dropTargetNodeId,
-    hoveredNodeId,
-    hoveredEdgeId,
-    isMobileLayout,
+  const {
+    visibleTreeIdSet,
     toggleNodeCollapse,
-    setSelectedNodeId,
-    persistNodeBody,
-    toggleStoryCardExpand,
-    startStoryNodeResize,
-    resetStoryNodeSize,
-  });
-
-  const visiblePortals = usePlannerVisiblePortals({
-    crossReferencesEnabled: CROSS_REFERENCES_ENABLED,
-    refs,
+    filteredTreeIds,
+    searchMatchingIds,
+    currentRootKind,
+    treeLayout,
+    resolveNodePosition,
     filteredTreeIdSet,
-    baseNodes,
-    isMobileLayout,
-    activePortalRefId,
-    defaultBubbleColor: DEFAULT_BUBBLE_COLOR,
-    chooseAnchorNodeId,
-    bubbleDisplayToken,
-    rgbaFromHex,
-  });
-
-  const { flowEdges, reactFlowNodes } = usePlannerFlowGraph({
-    baseEdges,
-    hoverEdgeIds,
-    hoveredEdgeId,
-    hoveredNodeId,
-    flowNodes,
-    visiblePortals,
+    handleNodesChange,
+    draggedNodeIdRef,
+    flowEdges,
+    reactFlowNodes,
+  } = usePlannerCanvasGraphState({
+    treeView: {
+      firestore: db,
+      userUid: user.uid,
+      currentRootId,
+      nodesById,
+      childrenByParent,
+      collapsedNodeIds,
+      setCollapsedNodeIds,
+      collapsedHydrated,
+      syncedCollapsedKeyRef,
+      searchQuery,
+      storyLaneMode,
+    },
+    baseGraph: {
+      nodesById,
+      childrenByParent,
+      collapsedNodeIds,
+      rootNodeId,
+      storyLaneMode,
+      currentRootId,
+      expandedStoryNodeIds,
+      isMobileLayout,
+      refs,
+      crossReferencesEnabled: CROSS_REFERENCES_ENABLED,
+      storyNodeMinWidth: STORY_NODE_MIN_WIDTH,
+      storyNodeMaxWidth: STORY_NODE_MAX_WIDTH,
+      storyNodeMinHeight: STORY_NODE_MIN_HEIGHT,
+      storyNodeMaxHeight: STORY_NODE_MAX_HEIGHT,
+    },
+    edgeHover: {
+      hoveredNodeId,
+      hoveredEdgeId,
+      activePortalRefId,
+      refs,
+    },
+    flowNodes: {
+      selectedNodeId,
+      dropTargetNodeId,
+      hoveredNodeId,
+      hoveredEdgeId,
+      isMobileLayout,
+      setSelectedNodeId,
+      persistNodeBody,
+      toggleStoryCardExpand,
+      startStoryNodeResize,
+      resetStoryNodeSize,
+    },
+    visiblePortals: {
+      crossReferencesEnabled: CROSS_REFERENCES_ENABLED,
+      refs,
+      isMobileLayout,
+      activePortalRefId,
+      defaultBubbleColor: DEFAULT_BUBBLE_COLOR,
+      chooseAnchorNodeId,
+      bubbleDisplayToken,
+      rgbaFromHex,
+    },
+    flowGraph: {
+      hoveredEdgeId,
+      hoveredNodeId,
+    },
   });
 
   const { saveStatus, showSaveError, onNodeDoubleClick } = usePlannerFlowUiFeedback(rfInstance);
@@ -446,27 +392,6 @@ export default function PlannerPage({ user }: PlannerPageProps) {
     defaultPortalPositionForAnchor,
   });
 
-  const {
-    openProjectPage,
-    goPrevProjectPage,
-    goNextProjectPage,
-    goGrandmotherView,
-    goUpOneView,
-    openSelectedAsMaster,
-    openSelectedAsStoryLane,
-  } = usePlannerNavigationActions({
-    nodesById,
-    rootNodeId,
-    currentRootParentId: currentRootNode?.parentId || null,
-    selectedNodeId,
-    projectPages,
-    activeProjectPageIndex,
-    setCurrentRootId,
-    setSelectedNodeId,
-    setStoryLaneMode,
-    setActivePortalRefId,
-  });
-
   const { saveSelectedBody } = usePlannerBodySaveActions({
     persistNodeBody,
     selectedNodeId,
@@ -521,24 +446,6 @@ export default function PlannerPage({ user }: PlannerPageProps) {
     applyLocalNodePatch,
     setBusyAction,
     setError,
-  });
-
-  const {
-    organizeVisibleTree,
-    organizeSelectedBranch,
-  } = usePlannerLayoutActions({
-    firestore: db,
-    userUid: user.uid,
-    treeLayout,
-    filteredTreeIds,
-    filteredTreeIdSet,
-    selectedNodeId,
-    nodesById,
-    childrenByParent,
-    pushHistory,
-    setBusyAction,
-    setError,
-    setNodes,
   });
 
   const {
@@ -635,7 +542,10 @@ export default function PlannerPage({ user }: PlannerPageProps) {
     handleContextDuplicate,
     handleContextChangeType,
     handleContextToggleTaskStatus,
-  } = usePlannerContextNodeActions({
+    handleContextAddCrossRef,
+    handleContextRename,
+    selectRefForEditing,
+  } = usePlannerContextActions({
     firestore: db,
     userUid: user.uid,
     rootNodeId,
@@ -660,27 +570,16 @@ export default function PlannerPage({ user }: PlannerPageProps) {
     setActivePortalRefId,
     setPendingSelectedNodeId,
     setPendingRenameNodeId,
-  });
-
-  const {
-    handleContextAddCrossRef,
-    handleContextRename,
-    selectRefForEditing,
-  } = usePlannerContextUiActions({
     crossReferencesEnabled: CROSS_REFERENCES_ENABLED,
     isMobileLayout,
     newRefCode,
     newRefColor,
     nextAutoBubbleCode,
     defaultBubbleColor: DEFAULT_BUBBLE_COLOR,
-    nodesById,
-    refs,
     renameInputRef,
     openBubblesPanel,
     openMobileQuickBubble,
     hydrateRefEditor,
-    setSelectedNodeId,
-    setActivePortalRefId,
     setNewRefLabel,
     setNewRefCode,
     setNewRefColor,
@@ -692,81 +591,19 @@ export default function PlannerPage({ user }: PlannerPageProps) {
   });
 
   const {
-    jumpToReferencedNode,
-    runPaletteAction,
-    paletteItems,
-  } = usePlannerCommandPalette({
-    rootNodeId,
-    nodesById,
-    setCurrentRootId,
-    setSelectedNodeId,
-    setActivePortalRefId,
-    setStoryLaneMode,
-    setSidebarCollapsed,
-    setMobileSidebarSection,
-    setMobileSidebarOpen,
-    searchInputRef,
-    setPaletteOpen,
-    setPaletteQuery,
-    setPaletteIndex,
-    paletteOpen,
-    paletteQuery,
-    paletteIndex,
-    paletteInputRef,
-    crossReferencesEnabled: CROSS_REFERENCES_ENABLED,
-    bubblesSimplifiedMode: BUBBLES_SIMPLIFIED_MODE,
-    currentRootKind,
-    storyLaneMode,
-    selectedNodeId,
-    nodes,
-    refs,
+    openProjectPage,
+    goPrevProjectPage,
+    goNextProjectPage,
     goGrandmotherView,
     goUpOneView,
-    organizeVisibleTree,
-    cleanUpCrossRefs,
     openSelectedAsMaster,
-    organizeSelectedBranch,
     openSelectedAsStoryLane,
-    handleContextAddStorySibling,
-    handleContextAddChild,
-    handleContextChangeType,
-    handleContextToggleTaskStatus,
-    openBubblesPanel,
-    selectRefForEditing,
-    linkCrossRefToNode,
-    nextNodeKind,
-    contextMenuOpen: !!contextMenu,
-    activePortalRefId,
-    deletePortalByRefId,
-    handleContextDelete,
-    handleContextDuplicate,
-    mobileQuickEditorOpen,
-    setMobileQuickEditorOpen,
-    mobileSidebarOpen,
-    searchQuery,
-    setSearchQuery,
-    canUndo,
-    canRedo,
-    undo,
-    redo,
-    applyLocalOps,
-    busyAction,
-  });
-
-  const sidebarIsCollapsed = !isMobileLayout && sidebarCollapsed;
-  const {
+    organizeVisibleTree,
+    organizeSelectedBranch,
     showProjectSection,
     showNodeSection,
     showBubblesSection,
     showSimpleBubblesSection,
-  } = usePlannerSidebarSectionVisibility({
-    isMobileLayout,
-    mobileSidebarSection,
-    crossReferencesEnabled: CROSS_REFERENCES_ENABLED,
-    bubblesSimplifiedMode: BUBBLES_SIMPLIFIED_MODE,
-  });
-
-  const {
     onToolbarToggleOpen,
     onToolbarOpenMenu,
     onToolbarOpenEditor,
@@ -775,22 +612,112 @@ export default function PlannerPage({ user }: PlannerPageProps) {
     onToolbarToggleTaskStatus,
     onToolbarGoHome,
     onToolbarGoUp,
-  } = usePlannerMobileToolbarActions({
-    selectedNodeId,
-    selectedNode,
-    setMobileToolbarOpen,
-    setMobileSidebarSection,
-    setMobileSidebarOpen,
-    setMobileQuickEditorMode,
-    setMobileQuickEditorOpen,
-    setMobileQuickBubbleOpen,
-    setActivePortalRefId,
-    openMobileQuickBubble,
-    handleContextAddChild,
-    setNodeTaskStatus,
-    goGrandmotherView,
-    goUpOneView,
+    jumpToReferencedNode,
+    runPaletteAction,
+    paletteItems,
+  } = usePlannerNavigationCommandBundle({
+    navigationLayoutToolbar: {
+      navigation: {
+        nodesById,
+        rootNodeId,
+        currentRootParentId: currentRootNode?.parentId || null,
+        selectedNodeId,
+        projectPages,
+        activeProjectPageIndex,
+        setCurrentRootId,
+        setSelectedNodeId,
+        setStoryLaneMode,
+        setActivePortalRefId,
+      },
+      layout: {
+        firestore: db,
+        userUid: user.uid,
+        treeLayout,
+        filteredTreeIds,
+        filteredTreeIdSet,
+        selectedNodeId,
+        nodesById,
+        childrenByParent,
+        pushHistory,
+        setBusyAction,
+        setError,
+        setNodes,
+      },
+      sidebarVisibility: {
+        isMobileLayout,
+        mobileSidebarSection,
+        crossReferencesEnabled: CROSS_REFERENCES_ENABLED,
+        bubblesSimplifiedMode: BUBBLES_SIMPLIFIED_MODE,
+      },
+      toolbar: {
+        selectedNodeId,
+        selectedNode,
+        setMobileToolbarOpen,
+        setMobileSidebarSection,
+        setMobileSidebarOpen,
+        setMobileQuickEditorMode,
+        setMobileQuickEditorOpen,
+        setMobileQuickBubbleOpen,
+        setActivePortalRefId,
+        openMobileQuickBubble,
+        handleContextAddChild,
+        setNodeTaskStatus,
+      },
+    },
+    commandPalette: {
+      rootNodeId,
+      nodesById,
+      setCurrentRootId,
+      setSelectedNodeId,
+      setActivePortalRefId,
+      setStoryLaneMode,
+      setSidebarCollapsed,
+      setMobileSidebarSection,
+      setMobileSidebarOpen,
+      searchInputRef,
+      setPaletteOpen,
+      setPaletteQuery,
+      setPaletteIndex,
+      paletteOpen,
+      paletteQuery,
+      paletteIndex,
+      paletteInputRef,
+      crossReferencesEnabled: CROSS_REFERENCES_ENABLED,
+      bubblesSimplifiedMode: BUBBLES_SIMPLIFIED_MODE,
+      currentRootKind,
+      storyLaneMode,
+      selectedNodeId,
+      nodes,
+      refs,
+      cleanUpCrossRefs,
+      handleContextAddStorySibling,
+      handleContextAddChild,
+      handleContextChangeType,
+      handleContextToggleTaskStatus,
+      openBubblesPanel,
+      selectRefForEditing,
+      linkCrossRefToNode,
+      nextNodeKind,
+      contextMenuOpen: !!contextMenu,
+      activePortalRefId,
+      deletePortalByRefId,
+      handleContextDelete,
+      handleContextDuplicate,
+      mobileQuickEditorOpen,
+      setMobileQuickEditorOpen,
+      mobileSidebarOpen,
+      searchQuery,
+      setSearchQuery,
+      canUndo,
+      canRedo,
+      undo,
+      redo,
+      applyLocalOps,
+      busyAction,
+    },
   });
+
+  const sidebarIsCollapsed = !isMobileLayout && sidebarCollapsed;
 
   const plannerCanvasSurfaceProps = usePlannerCanvasSurfaceProps({
     isMobileLayout,
@@ -863,7 +790,7 @@ export default function PlannerPage({ user }: PlannerPageProps) {
     onDeletePortalByRefIdAsync: deletePortalByRefId,
   });
 
-  const plannerMobilePanelsProps = usePlannerMobilePanelsProps({
+  const { plannerMobilePanelsProps, plannerSidebarPanelsProps } = usePlannerSidebarMobilePanelsBundle({
     isMobileLayout,
     mobileSidebarOpen,
     mobileQuickEditorOpen,
@@ -919,9 +846,6 @@ export default function PlannerPage({ user }: PlannerPageProps) {
     setMobileQuickEditorOpen,
     setMobileQuickBubbleOpen,
     setMobileQuickBubbleEditName,
-  });
-
-  const plannerSidebarPanelsProps = usePlannerSidebarPanelsProps({
     showProjectSection,
     showNodeSection,
     showSimpleBubblesSection,
@@ -935,14 +859,11 @@ export default function PlannerPage({ user }: PlannerPageProps) {
     projectPages,
     activeProjectPageId,
     activeProjectPageIndex,
-    selectedNodeId,
     selectedNodeKind: selectedNode?.kind,
     currentRootHasParent: !!currentRootNode?.parentId,
     currentRootKind,
     storyLaneMode,
-    busyAction,
     visibleTreeCount: filteredTreeIds.length,
-    crossReferencesEnabled: CROSS_REFERENCES_ENABLED,
     bubblesSimplifiedMode: BUBBLES_SIMPLIFIED_MODE,
     newChildTitle,
     setNewChildTitle,
@@ -952,65 +873,28 @@ export default function PlannerPage({ user }: PlannerPageProps) {
     goGrandmotherView,
     goUpOneView,
     openSelectedAsMaster,
-    openSelectedAsStoryLane,
     setStoryLaneMode,
     organizeVisibleTree,
     organizeSelectedBranch,
     cleanUpCrossRefs,
     createChild,
-    selectedNode,
-    nodesById,
     renameInputRef,
-    renameTitle,
-    setRenameTitle,
-    bodyDraft,
-    setBodyDraft,
     selectedNodeHasStoryChildren,
     selectedNodeChildren,
-    selectedNodeCollapsed,
     newStoryStepText,
     setNewStoryStepText,
-    handleContextChangeType,
-    setNodeTaskStatus,
     setNodeColor,
-    renameSelected,
     deleteSelected,
-    saveSelectedBody,
     setSelectedNodeId,
     setActivePortalRefId,
-    toggleNodeCollapse,
     handleContextAddCrossRef,
-    handleContextAddChild,
     toggleStoryStepDone,
     moveStoryStep,
     deleteStoryStep,
     addStoryStep,
     bubbleTargetNode,
-    isMobileLayout,
-    selectedNodeRefs,
-    activePortalRef,
     effectiveBubbleTargetId,
     newRefLabelInputRef,
-    newRefLabel,
-    setNewRefLabel,
-    newRefColor,
-    setNewRefColor,
-    newRefCode,
-    setNewRefCode,
-    nextAutoBubbleCode,
-    effectiveNewBubbleCode,
-    canCreateBubbleFromInput,
-    bubblePrefixSuggestions,
-    defaultBubbleColor: DEFAULT_BUBBLE_COLOR,
-    createCrossRef,
-    openMobileQuickBubble,
-    setMobileQuickBubbleOpen,
-    setMobileSidebarOpen,
-    setMobileQuickEditorOpen,
-    blurActiveInput,
-    applyBubbleSuggestion,
-    deletePortalByRefId,
-    updateCrossRefColor,
     refs,
     activePortalTargets,
     newRefType,
@@ -1018,7 +902,6 @@ export default function PlannerPage({ user }: PlannerPageProps) {
     newRefSuggestions,
     describeRefTargets,
     linkCrossRefToNode,
-    selectRefForEditing,
     detachCrossRef,
     jumpToReferencedNode,
     refScopeFilter,
@@ -1060,6 +943,36 @@ export default function PlannerPage({ user }: PlannerPageProps) {
     deleteCrossRefBubble,
   });
 
+  const plannerSidebarChromeProps = usePlannerSidebarChromeProps({
+    sidebarIsCollapsed,
+    isMobileLayout,
+    canUndo,
+    canRedo,
+    busyAction,
+    undoLabel,
+    redoLabel,
+    searchInputRef,
+    searchQuery,
+    searchMatchCount: searchMatchingIds.size,
+    selectedNodeId,
+    crossReferencesEnabled: CROSS_REFERENCES_ENABLED,
+    bubblesSimplifiedMode: BUBBLES_SIMPLIFIED_MODE,
+    mobileSidebarSection,
+    undo,
+    redo,
+    applyLocalOps,
+    organizeSelectedBranch,
+    cleanUpCrossRefs,
+    openBubblesPanel,
+    setMobileSidebarOpen,
+    setSidebarCollapsed,
+    setSearchQuery,
+    setPaletteOpen,
+    setPaletteQuery,
+    setPaletteIndex,
+    setMobileSidebarSection,
+  });
+
   if (!db) {
     return (
       <div className="planner-empty-state">
@@ -1073,48 +986,14 @@ export default function PlannerPage({ user }: PlannerPageProps) {
   }
 
   return (
-    <div className={`planner-shell ${sidebarIsCollapsed ? "sidebar-collapsed" : ""} ${isMobileLayout ? "mobile" : ""}`}>
-      <aside
-        className={`planner-sidebar ${sidebarIsCollapsed ? "collapsed" : ""} ${isMobileLayout ? (mobileSidebarOpen ? "mobile-open" : "mobile-hidden") : ""}`}
-      >
-        <PlannerSidebarChrome
-          sidebarIsCollapsed={sidebarIsCollapsed}
-          isMobileLayout={isMobileLayout}
-          canUndo={canUndo}
-          canRedo={canRedo}
-          busyAction={busyAction}
-          undoLabel={undoLabel}
-          redoLabel={redoLabel}
-          searchInputRef={searchInputRef}
-          searchQuery={searchQuery}
-          searchMatchCount={searchMatchingIds.size}
-          selectedNodeId={selectedNodeId}
-          crossReferencesEnabled={CROSS_REFERENCES_ENABLED}
-          bubblesSimplifiedMode={BUBBLES_SIMPLIFIED_MODE}
-          mobileSidebarSection={mobileSidebarSection}
-          onUndo={() => undo(applyLocalOps)}
-          onRedo={() => redo(applyLocalOps)}
-          onCloseMobileSidebar={() => setMobileSidebarOpen(false)}
-          onToggleSidebarCollapse={() => setSidebarCollapsed((prev) => !prev)}
-          onSearchQueryChange={setSearchQuery}
-          onOpenPalette={() => {
-            setPaletteOpen(true);
-            setPaletteQuery("");
-            setPaletteIndex(0);
-          }}
-          onOrganizeSelectedBranch={organizeSelectedBranch}
-          onCleanUpCrossRefs={cleanUpCrossRefs}
-          onSetMobileSidebarSection={setMobileSidebarSection}
-          onOpenBubblesPanel={() => openBubblesPanel(true)}
-        >
-
-        <PlannerSidebarPanels {...plannerSidebarPanelsProps} />
-        </PlannerSidebarChrome>
-      </aside>
-
-      <PlannerMobilePanels {...plannerMobilePanelsProps} />
-
-      <PlannerCanvasSurface {...plannerCanvasSurfaceProps} />
-    </div>
+    <PlannerWorkspaceLayout
+      sidebarIsCollapsed={sidebarIsCollapsed}
+      isMobileLayout={isMobileLayout}
+      mobileSidebarOpen={mobileSidebarOpen}
+      sidebarChromeProps={plannerSidebarChromeProps}
+      sidebarPanelsProps={plannerSidebarPanelsProps}
+      mobilePanelsProps={plannerMobilePanelsProps}
+      canvasSurfaceProps={plannerCanvasSurfaceProps}
+    />
   );
 }
