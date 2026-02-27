@@ -86,7 +86,7 @@ export function usePlannerFlowNodes({
           <div className="planner-node-label">
             {data.childCount > 0 ? (
               <button
-                className="nodrag nopan planner-collapse-toggle"
+                className={`nodrag nopan planner-collapse-toggle${isMobileLayout ? " mobile" : ""}`}
                 type="button"
                 aria-label={data.isCollapsed ? "Expand children" : "Collapse children"}
                 data-testid={`planner-node-collapse-toggle-${data.nodeId}`}
@@ -96,27 +96,6 @@ export function usePlannerFlowNodes({
                 }}
                 onTouchStart={(event) => {
                   event.stopPropagation();
-                }}
-                style={{
-                  marginRight: "6px",
-                  minWidth: isMobileLayout ? 30 : 24,
-                  minHeight: isMobileLayout ? 28 : 22,
-                  padding: isMobileLayout ? "4px 8px" : "2px 6px",
-                  border: "none",
-                  background: "rgba(255, 255, 255, 0.1)",
-                  color: "rgba(255, 255, 255, 0.8)",
-                  borderRadius: "4px",
-                  cursor: "pointer",
-                  fontSize: isMobileLayout ? "12px" : "10px",
-                  fontWeight: 700,
-                  touchAction: "manipulation",
-                  transition: "background 150ms ease",
-                }}
-                onMouseEnter={(event) => {
-                  (event.target as HTMLButtonElement).style.background = "rgba(255, 255, 255, 0.2)";
-                }}
-                onMouseLeave={(event) => {
-                  (event.target as HTMLButtonElement).style.background = "rgba(255, 255, 255, 0.1)";
                 }}
               >
                 {data.isCollapsed ? "▶" : "▼"}
