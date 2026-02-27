@@ -212,16 +212,6 @@ export default function PlannerPage({ user }: PlannerPageProps) {
     })
   );
 
-  const {
-    currentRootNode,
-    projectPages,
-    activeProjectPageIndex,
-    nextAutoBubbleCode,
-    activePortalRef,
-    hydrateRefEditor,
-    buildDefaultPortalPosition,
-  } = derivedBundle;
-
   const mutationBundle = usePlannerMutationContextBundle(
     buildPlannerMutationBundleParams({
       firestore: db,
@@ -238,10 +228,10 @@ export default function PlannerPage({ user }: PlannerPageProps) {
       resolvePortalFollowPosition,
       crossRefToFirestoreSetData,
       applyLocalNodePatch,
-      hydrateRefEditor,
-      buildDefaultPortalPosition,
-      nextAutoBubbleCode,
-      activePortalRef,
+      hydrateRefEditor: derivedBundle.hydrateRefEditor,
+      buildDefaultPortalPosition: derivedBundle.buildDefaultPortalPosition,
+      nextAutoBubbleCode: derivedBundle.nextAutoBubbleCode,
+      activePortalRef: derivedBundle.activePortalRef,
       showSaveError,
       draggedNodeIdRef,
       crossReferencesEnabled: CROSS_REFERENCES_ENABLED,
@@ -253,20 +243,6 @@ export default function PlannerPage({ user }: PlannerPageProps) {
     })
   );
 
-  const {
-    setNodeTaskStatus,
-    cleanUpCrossRefs,
-    linkCrossRefToNode,
-    deletePortalByRefId,
-    handleContextAddChild,
-    handleContextAddStorySibling,
-    handleContextDelete,
-    handleContextDuplicate,
-    handleContextChangeType,
-    handleContextToggleTaskStatus,
-    selectRefForEditing,
-  } = mutationBundle;
-
   const navigationBundle = usePlannerNavigationCommandBundle(
     buildPlannerNavigationBundleParams({
       plannerState,
@@ -275,9 +251,9 @@ export default function PlannerPage({ user }: PlannerPageProps) {
       selectedNode,
       nodesById,
       childrenByParent,
-      currentRootParentId: currentRootNode?.parentId || null,
-      projectPages,
-      activeProjectPageIndex,
+      currentRootParentId: derivedBundle.currentRootNode?.parentId || null,
+      projectPages: derivedBundle.projectPages,
+      activeProjectPageIndex: derivedBundle.activeProjectPageIndex,
       treeLayout,
       filteredTreeIds,
       filteredTreeIdSet,
@@ -285,22 +261,22 @@ export default function PlannerPage({ user }: PlannerPageProps) {
       crossReferencesEnabled: CROSS_REFERENCES_ENABLED,
       bubblesSimplifiedMode: BUBBLES_SIMPLIFIED_MODE,
       openMobileQuickBubble,
-      handleContextAddChild,
-      setNodeTaskStatus,
+      handleContextAddChild: mutationBundle.handleContextAddChild,
+      setNodeTaskStatus: mutationBundle.setNodeTaskStatus,
       currentRootKind,
-      cleanUpCrossRefs,
-      handleContextAddStorySibling,
-      handleContextChangeType,
-      handleContextToggleTaskStatus,
+      cleanUpCrossRefs: mutationBundle.cleanUpCrossRefs,
+      handleContextAddStorySibling: mutationBundle.handleContextAddStorySibling,
+      handleContextChangeType: mutationBundle.handleContextChangeType,
+      handleContextToggleTaskStatus: mutationBundle.handleContextToggleTaskStatus,
       openBubblesPanel,
-      selectRefForEditing,
-      linkCrossRefToNode,
+      selectRefForEditing: mutationBundle.selectRefForEditing,
+      linkCrossRefToNode: mutationBundle.linkCrossRefToNode,
       nextNodeKind,
       contextMenuOpen: !!contextMenu,
       activePortalRefId,
-      deletePortalByRefId,
-      handleContextDelete,
-      handleContextDuplicate,
+      deletePortalByRefId: mutationBundle.deletePortalByRefId,
+      handleContextDelete: mutationBundle.handleContextDelete,
+      handleContextDuplicate: mutationBundle.handleContextDuplicate,
       canUndo,
       canRedo,
       undo,
@@ -320,7 +296,7 @@ export default function PlannerPage({ user }: PlannerPageProps) {
     buildPlannerWorkspaceBundleParamsFromBundles({
       plannerState,
       selectedNode,
-      currentRootHasParent: !!currentRootNode?.parentId,
+      currentRootHasParent: !!derivedBundle.currentRootNode?.parentId,
       canvasGraph: {
         reactFlowNodes,
         flowEdges,
