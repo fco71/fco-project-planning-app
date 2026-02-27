@@ -71,14 +71,18 @@ export function SelectedNodePanel({
   onAddStoryStep,
 }: SelectedNodePanelProps) {
   return (
-    <div className="planner-panel-block">
+    <div className="planner-panel-block" data-testid="planner-selected-node-panel">
       <h3>Selected Node</h3>
       {selectedNode ? (
         <>
           <div className="planner-row-label">Path</div>
           <div className="planner-path">{buildNodePath(selectedNode.id, nodesById)}</div>
           <div className="planner-inline-buttons">
-            <button onClick={onOrganizeSelectedBranch} disabled={busyAction}>
+            <button
+              onClick={onOrganizeSelectedBranch}
+              disabled={busyAction}
+              data-testid="planner-selected-node-cleanup-branch-button"
+            >
               Clean up this branch
             </button>
           </div>
@@ -146,15 +150,21 @@ export function SelectedNodePanel({
               if (busyAction) return;
               void onRenameSelected();
             }}
+            data-testid="planner-selected-node-rename-input"
           />
           <div className="planner-inline-buttons">
-            <button onClick={onRenameSelected} disabled={busyAction || renameTitle.trim().length === 0}>
+            <button
+              onClick={onRenameSelected}
+              disabled={busyAction || renameTitle.trim().length === 0}
+              data-testid="planner-selected-node-rename-button"
+            >
               Rename
             </button>
             <button
               className="danger"
               onClick={onDeleteSelected}
               disabled={busyAction || selectedNode.id === rootNodeId}
+              data-testid="planner-selected-node-delete-button"
             >
               Delete subtree
             </button>
@@ -209,6 +219,7 @@ export function SelectedNodePanel({
                   onClick={() => {
                     void onAddBubbleToNode(selectedNode.id);
                   }}
+                  data-testid="planner-selected-node-add-bubble-button"
                 >
                   Add bubble to this node
                 </button>

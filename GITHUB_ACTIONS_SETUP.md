@@ -6,6 +6,10 @@ GitHub Actions workflows have been created for automatic deployment using Fireba
 
 ✅ `.github/workflows/firebase-hosting-merge.yml` - Auto-deploy on push to `main`  
 ✅ `.github/workflows/firebase-hosting-pull-request.yml` - Preview deployments for PRs
+✅ CI secret guard that blocks tracked sensitive `.env` files (except `.env.example` and `.env.offline`)
+✅ CI high-signal secret pattern scan on tracked files (Google API key/private key/GitHub token/Firebase CI token-like patterns)
+✅ CI secret scan modes: PRs scan changed files, `main`/manual runs scan all tracked files
+✅ Optional local hook installer: `npm run hooks:install` (pre-commit secret guard + pre-push lint/typecheck, with optional `PRE_PUSH_FAST=1` changed-file lint mode)
 
 ## Setup Steps (Simplified!)
 
@@ -41,11 +45,13 @@ Add these repository secrets in the same GitHub Secrets page:
 - `VITE_FIREBASE_STORAGE_BUCKET`
 - `VITE_FIREBASE_MESSAGING_SENDER_ID`
 - `VITE_FIREBASE_APP_ID`
-- `E2E_EMAIL` (optional but recommended for authenticated smoke tests)
-- `E2E_PASSWORD` (optional but recommended for authenticated smoke tests)
+- `E2E_EMAIL` (required for full authenticated Playwright smoke coverage)
+- `E2E_PASSWORD` (required for full authenticated Playwright smoke coverage)
 
 These are required for `npm run build` in GitHub Actions.
 `E2E_EMAIL` and `E2E_PASSWORD` allow the CI Playwright workflow to run signed-in planner smoke coverage instead of skipping auth-required tests.
+On `push` to `main` and `workflow_dispatch`, CI now fails if those two secrets are missing.
+On pull requests, CI warns and continues, but auth-required tests are skipped when credentials are absent.
 
 ### 4. Push Workflow Files to GitHub
 

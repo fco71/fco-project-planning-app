@@ -162,7 +162,7 @@ export function PlannerCanvasSurface({
   onToolbarGoUp,
 }: PlannerCanvasSurfaceProps) {
   return (
-    <main className="planner-canvas">
+    <main className="planner-canvas" data-testid="planner-canvas">
       <MobileCanvasToolbar
         isMobileLayout={isMobileLayout}
         mobileToolbarOpen={mobileToolbarOpen}
@@ -182,6 +182,7 @@ export function PlannerCanvasSurface({
       />
 
       <ReactFlow
+        data-testid="planner-reactflow-surface"
         nodes={reactFlowNodes}
         edges={flowEdges}
         nodeTypes={nodeTypes}

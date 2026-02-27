@@ -44,32 +44,37 @@ export function MobileCanvasToolbar({
         className="planner-mobile-toolbar-launcher"
         aria-label={mobileToolbarOpen ? "Hide controls" : "Show controls"}
         onClick={onToggleOpen}
+        data-testid="planner-mobile-toolbar-launcher"
       >
         {mobileToolbarOpen ? "×" : "☰"}
       </button>
       {mobileToolbarOpen ? (
-        <div className="planner-mobile-toolbar">
-          <button onClick={onOpenMenu}>
+        <div className="planner-mobile-toolbar" data-testid="planner-mobile-toolbar">
+          <button onClick={onOpenMenu} data-testid="planner-mobile-toolbar-menu">
             ☰ Menu
           </button>
-          <button onClick={onOpenEditor} disabled={!selectedNode}>
+          <button onClick={onOpenEditor} disabled={!selectedNode} data-testid="planner-mobile-toolbar-edit">
             Edit
           </button>
           {crossReferencesEnabled ? (
-            <button onClick={onOpenBubble} disabled={!selectedNodeId}>
+            <button onClick={onOpenBubble} disabled={!selectedNodeId} data-testid="planner-mobile-toolbar-bubble">
               ◯ Bubble
             </button>
           ) : null}
-          <button onClick={onAddChild} disabled={!selectedNodeId}>
+          <button onClick={onAddChild} disabled={!selectedNodeId} data-testid="planner-mobile-toolbar-add-child">
             ＋ Child
           </button>
-          <button onClick={onToggleTaskStatus} disabled={!selectedNode || selectedNode.kind === "root"}>
+          <button
+            onClick={onToggleTaskStatus}
+            disabled={!selectedNode || selectedNode.kind === "root"}
+            data-testid="planner-mobile-toolbar-toggle-task"
+          >
             {selectedNode?.taskStatus === "done" ? "↩ Todo" : "✓ Done"}
           </button>
-          <button onClick={onGoHome} disabled={!rootNodeId}>
+          <button onClick={onGoHome} disabled={!rootNodeId} data-testid="planner-mobile-toolbar-home">
             ⌂ Home
           </button>
-          <button onClick={onGoUp} disabled={!currentRootHasParent}>
+          <button onClick={onGoUp} disabled={!currentRootHasParent} data-testid="planner-mobile-toolbar-up">
             ↑ Up
           </button>
         </div>

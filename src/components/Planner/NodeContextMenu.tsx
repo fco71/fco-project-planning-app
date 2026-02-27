@@ -107,6 +107,7 @@ export function NodeContextMenu({
     <div
       ref={menuRef}
       className="ctx-menu"
+      data-testid="planner-node-context-menu"
     >
       <div className="ctx-menu-header">
         {nodeTitle}
@@ -117,22 +118,26 @@ export function NodeContextMenu({
           icon={addIcon}
           label={addLabel}
           onClick={() => handleAction(() => addAction(nodeId))}
+          testId="planner-node-menu-add"
         />
         <MenuItem
           icon="⎘"
           label="Duplicate Node"
           onClick={() => handleAction(() => onDuplicate(nodeId))}
+          testId="planner-node-menu-duplicate"
         />
         <MenuItem
           icon="✎"
           label="Rename Node"
           onClick={() => handleAction(() => onRename(nodeId))}
+          testId="planner-node-menu-rename"
         />
         {onAddCrossRef ? (
           <MenuItem
             icon="🔗"
             label="Add / Manage Bubbles"
             onClick={() => handleAction(() => onAddCrossRef(nodeId))}
+            testId="planner-node-menu-bubbles"
           />
         ) : null}
         {typeTargets.map((typeTarget) => (
@@ -149,6 +154,7 @@ export function NodeContextMenu({
                   ? `Already ${typeTarget.label.toLowerCase()}`
                   : undefined
             }
+            testId={`planner-node-menu-type-${typeTarget.kind}`}
           />
         ))}
         <MenuItem
@@ -157,6 +163,7 @@ export function NodeContextMenu({
           onClick={() => handleAction(() => onToggleTaskStatus(nodeId))}
           disabled={nodeKind === "root"}
           title={nodeKind === "root" ? "Root node cannot be a task" : undefined}
+          testId="planner-node-menu-task"
         />
 
         <div className="ctx-menu-separator" />
@@ -168,6 +175,7 @@ export function NodeContextMenu({
           danger
           disabled={hasChildren}
           title={hasChildren ? "Cannot delete node with children" : undefined}
+          testId="planner-node-menu-delete"
         />
       </div>
     </div>
@@ -181,9 +189,10 @@ type MenuItemProps = {
   danger?: boolean;
   disabled?: boolean;
   title?: string;
+  testId?: string;
 };
 
-function MenuItem({ icon, label, onClick, danger, disabled, title }: MenuItemProps) {
+function MenuItem({ icon, label, onClick, danger, disabled, title, testId }: MenuItemProps) {
   const className = [
     "ctx-menu-item",
     danger ? "ctx-menu-item--danger" : "",
@@ -196,6 +205,7 @@ function MenuItem({ icon, label, onClick, danger, disabled, title }: MenuItemPro
       disabled={disabled}
       title={title}
       className={className}
+      data-testid={testId}
     >
       <span className="ctx-menu-item-icon">{icon}</span>
       <span className="ctx-menu-item-label">{label}</span>

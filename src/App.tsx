@@ -31,6 +31,7 @@ export default function App() {
               // Ignore sign-out errors in UI.
             });
           }}
+          data-testid="app-signout-button"
         >
           Sign out
         </button>

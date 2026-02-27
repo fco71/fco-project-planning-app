@@ -1,0 +1,19 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+start_ts="$(date +%s)"
+
+if [ "${PRE_PUSH_FAST:-0}" = "1" ]; then
+  echo "[pre-push] FAST mode enabled (PRE_PUSH_FAST=1): linting changed files only..."
+  npm run --silent check:changed
+else
+  echo "[pre-push] Running lint + typecheck..."
+  npm run --silent check
+
+  end_ts="$(date +%s)"
+  elapsed="$((end_ts - start_ts))"
+  hint_threshold="${PRE_PUSH_HINT_THRESHOLD:-12}"
+  if [ "${elapsed}" -ge "${hint_threshold}" ]; then
+    echo "[pre-push] Tip: use PRE_PUSH_FAST=1 git push for a faster local loop (changed-file lint only)."
+  fi
+fi

@@ -74,7 +74,7 @@ export function SimpleBubblesPanel({
   onUpdateCrossRefColor,
 }: SimpleBubblesPanelProps) {
   return (
-    <div id="cross-ref-bubbles-panel" className="planner-panel-block">
+    <div id="cross-ref-bubbles-panel" className="planner-panel-block" data-testid="planner-bubbles-panel">
       <h3>Bubbles</h3>
       <p className="planner-subtle">
         Local visual bubbles for each node. No cross-linking between nodes.
@@ -86,6 +86,7 @@ export function SimpleBubblesPanel({
             className="chip"
             onClick={() => onSelectBubbleTarget(bubbleTargetNode.id)}
             title={buildNodePath(bubbleTargetNode.id, nodesById)}
+            data-testid="planner-bubble-target-chip"
           >
             {bubbleTargetNode.title}
           </button>
@@ -114,10 +115,11 @@ export function SimpleBubblesPanel({
               type="button"
               onClick={() => onOpenMobileQuickBubble(effectiveBubbleTargetId || undefined, true)}
               disabled={!effectiveBubbleTargetId}
+              data-testid="planner-bubble-quick-add-button"
             >
               Quick Add Bubble
             </button>
-            <button type="button" onClick={onCloseMobilePanels}>
+            <button type="button" onClick={onCloseMobilePanels} data-testid="planner-bubble-pick-node-button">
               Pick Node
             </button>
           </div>
@@ -139,12 +141,14 @@ export function SimpleBubblesPanel({
                     void onCreateCrossRef();
                   }}
                   placeholder="Bubble name"
+                  data-testid="planner-bubble-name-input"
                 />
                 <button
                   onClick={() => {
                     void onCreateCrossRef();
                   }}
                   disabled={busyAction || !effectiveBubbleTargetId || !canCreateBubbleFromInput}
+                  data-testid="planner-bubble-add-button"
                 >
                   Add
                 </button>
@@ -157,6 +161,7 @@ export function SimpleBubblesPanel({
                   type="button"
                   onClick={() => onOpenMobileQuickBubble(effectiveBubbleTargetId || undefined, true)}
                   disabled={!effectiveBubbleTargetId}
+                  data-testid="planner-bubble-open-quick-add-button"
                 >
                   Open Quick Add
                 </button>
@@ -169,6 +174,7 @@ export function SimpleBubblesPanel({
                     type="color"
                     value={newRefColor}
                     onChange={(event) => onNewRefColorChange(event.target.value)}
+                    data-testid="planner-bubble-color-input"
                   />
                 </label>
                 <div className="planner-grid-gap-4 planner-flex-1">
@@ -177,6 +183,7 @@ export function SimpleBubblesPanel({
                     onChange={(event) => onNewRefCodeChange(event.target.value)}
                     placeholder={`Code (auto ${nextAutoBubbleCode})`}
                     className="planner-flex-1"
+                    data-testid="planner-bubble-code-input"
                   />
                   <span className="planner-subtle planner-subtle-11">
                     New bubble code: <strong>{effectiveNewBubbleCode}</strong>
@@ -194,6 +201,7 @@ export function SimpleBubblesPanel({
                         onClick={() => onApplyBubbleSuggestion(ref)}
                         title={`Use style from ${ref.label} (${ref.code})`}
                         style={bubbleChipStyle(ref.color)}
+                        data-testid="planner-bubble-suggestion-chip"
                       >
                         {ref.label}
                       </button>
@@ -220,12 +228,14 @@ export function SimpleBubblesPanel({
               void onCreateCrossRef();
             }}
             placeholder="Bubble name"
+            data-testid="planner-bubble-name-input"
           />
           <button
             onClick={() => {
               void onCreateCrossRef();
             }}
             disabled={busyAction || !effectiveBubbleTargetId || !canCreateBubbleFromInput}
+            data-testid="planner-bubble-add-button"
           >
             {effectiveBubbleTargetId ? "Add Bubble to Selected Node" : "Select Node to Add Bubble"}
           </button>
@@ -237,6 +247,7 @@ export function SimpleBubblesPanel({
                 type="color"
                 value={newRefColor}
                 onChange={(event) => onNewRefColorChange(event.target.value)}
+                data-testid="planner-bubble-color-input"
               />
             </label>
             <div className="planner-grid-gap-4 planner-flex-1">
@@ -245,6 +256,7 @@ export function SimpleBubblesPanel({
                 onChange={(event) => onNewRefCodeChange(event.target.value)}
                 placeholder={`Code (auto ${nextAutoBubbleCode})`}
                 className="planner-flex-1"
+                data-testid="planner-bubble-code-input"
               />
               <span className="planner-subtle planner-subtle-11">
                 New bubble code: <strong>{effectiveNewBubbleCode}</strong>
@@ -262,6 +274,7 @@ export function SimpleBubblesPanel({
                     onClick={() => onApplyBubbleSuggestion(ref)}
                     title={`Use style from ${ref.label} (${ref.code})`}
                     style={bubbleChipStyle(ref.color)}
+                    data-testid="planner-bubble-suggestion-chip"
                   >
                     {ref.label}
                   </button>
@@ -284,6 +297,7 @@ export function SimpleBubblesPanel({
                 onClick={() => onToggleActivePortalRef(ref.id)}
                 title={ref.label}
                 style={bubbleChipStyle(ref.color)}
+                data-testid="planner-bubble-existing-chip"
               >
                 {ref.label}
               </button>
@@ -291,6 +305,7 @@ export function SimpleBubblesPanel({
                 className="chip-action"
                 onClick={() => onDeletePortalByRefId(ref.id)}
                 title="Delete bubble"
+                data-testid="planner-bubble-delete-chip-button"
               >
                 ×
               </button>
@@ -310,6 +325,7 @@ export function SimpleBubblesPanel({
               onChange={(event) => {
                 void onUpdateCrossRefColor(activePortalRef.id, event.target.value);
               }}
+              data-testid="planner-bubble-selected-color-input"
             />
           </div>
         </div>

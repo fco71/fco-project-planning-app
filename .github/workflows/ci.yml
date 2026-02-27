@@ -24,6 +24,16 @@ jobs:
     steps:
       - name: Checkout
         uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Secret guard (changed files on PRs)
+        if: ${{ github.event_name == 'pull_request' }}
+        run: ./scripts/ci/check-tracked-secrets.sh --scope=changed --base-ref=${{ github.base_ref }}
+
+      - name: Secret guard (full scan on main/manual)
+        if: ${{ github.event_name != 'pull_request' }}
+        run: ./scripts/ci/check-tracked-secrets.sh --scope=all
 
       - name: Setup Node.js
         uses: actions/setup-node@v4
@@ -46,5 +56,32 @@ jobs:
       - name: Install Playwright Chromium
         run: npx playwright install --with-deps chromium
 
+      - name: Determine E2E auth mode
+        id: e2e_auth
+        run: |
+          if [ -n "${E2E_EMAIL}" ] && [ -n "${E2E_PASSWORD}" ]; then
+            echo "enabled=true" >> "$GITHUB_OUTPUT"
+            echo "Authenticated E2E mode is enabled."
+          else
+            echo "enabled=false" >> "$GITHUB_OUTPUT"
+            echo "::warning::E2E_EMAIL/E2E_PASSWORD are missing. Auth-required smoke tests will be skipped."
+          fi
+
+      - name: Require E2E auth secrets on main/manual runs
+        if: ${{ (github.event_name == 'push' || github.event_name == 'workflow_dispatch') && steps.e2e_auth.outputs.enabled != 'true' }}
+        run: |
+          echo "E2E_EMAIL and E2E_PASSWORD are required for push/manual CI runs."
+          exit 1
+
       - name: E2E smoke tests
         run: npm run e2e
+
+      - name: Upload Playwright artifacts
+        if: ${{ always() }}
+        uses: actions/upload-artifact@v4
+        with:
+          name: playwright-report
+          path: |
+            playwright-report
+            test-results
+          if-no-files-found: ignore

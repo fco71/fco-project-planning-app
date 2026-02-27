@@ -79,13 +79,17 @@ export function usePlannerFlowNodes({
       const isInlineStoryEditor = data.showStoryBody && data.isExpandedStoryCard;
 
       const labelContent = (
-        <div className={`planner-node-card${data.showStoryBody ? " story" : ""}`}>
+        <div
+          className={`planner-node-card${data.showStoryBody ? " story" : ""}`}
+          data-testid={`planner-node-card-${data.nodeId}`}
+        >
           <div className="planner-node-label">
             {data.childCount > 0 ? (
               <button
                 className="nodrag nopan planner-collapse-toggle"
                 type="button"
                 aria-label={data.isCollapsed ? "Expand children" : "Collapse children"}
+                data-testid={`planner-node-collapse-toggle-${data.nodeId}`}
                 onClick={(event) => {
                   event.stopPropagation();
                   toggleNodeCollapse(data.nodeId);
@@ -136,6 +140,7 @@ export function usePlannerFlowNodes({
                   defaultValue={data.bodyText}
                   placeholder="Write story text directly on the node..."
                   rows={1}
+                  data-testid={`planner-story-node-editor-${data.nodeId}`}
                   onPointerDown={(event) => {
                     event.stopPropagation();
                   }}
@@ -168,6 +173,7 @@ export function usePlannerFlowNodes({
                   toggleStoryCardExpand(data.nodeId);
                 }}
                 type="button"
+                data-testid={`planner-story-node-expand-toggle-${data.nodeId}`}
               >
                 {data.isExpandedStoryCard ? "Collapse text" : "Expand text"}
               </button>
@@ -177,6 +183,7 @@ export function usePlannerFlowNodes({
                   type="button"
                   title="Drag corner to resize. Double-click to reset size."
                   aria-label="Resize story card"
+                  data-testid={`planner-story-node-resize-handle-${data.nodeId}`}
                   onPointerDown={(event) => {
                     startStoryNodeResize(
                       data.nodeId,

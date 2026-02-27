@@ -9,17 +9,17 @@ async function ensureSignedIn(page: Page) {
   const password = process.env.E2E_PASSWORD;
   test.skip(!email || !password, "Set E2E_EMAIL and E2E_PASSWORD to run authenticated smoke tests.");
 
-  if (await page.getByRole("button", { name: "Sign out" }).isVisible().catch(() => false)) {
+  if (await page.getByTestId("app-signout-button").isVisible().catch(() => false)) {
     return;
   }
 
-  const loginForm = page.locator("form.auth-form").first();
+  const loginForm = page.getByTestId("auth-signin-form");
   await expect(loginForm).toBeVisible();
 
   await loginForm.getByLabel("Email").fill(email ?? "");
   await loginForm.getByLabel("Password").fill(password ?? "");
-  await loginForm.getByRole("button", { name: /^Sign in$/ }).click();
-  await expect(page.getByRole("button", { name: "Sign out" })).toBeVisible();
+  await page.getByTestId("auth-submit-button").click();
+  await expect(page.getByTestId("app-signout-button")).toBeVisible();
 }
 
 test("app bootstraps without crash", async ({ page }) => {
@@ -27,8 +27,8 @@ test("app bootstraps without crash", async ({ page }) => {
 
   await expect(page.getByText("Something went wrong")).toHaveCount(0);
 
-  const hasAuthCard = await isVisible(page, ".auth-card");
-  const hasPlannerShell = await isVisible(page, ".planner-shell");
+  const hasAuthCard = await isVisible(page, "[data-testid='auth-card']");
+  const hasPlannerShell = await isVisible(page, "[data-testid='planner-shell']");
   const hasEmptyState = await isVisible(page, ".planner-empty-state");
   expect(hasAuthCard || hasPlannerShell || hasEmptyState).toBeTruthy();
 });
@@ -40,21 +40,19 @@ test("forgot password screen is reachable from sign in", async ({ page }) => {
     test.skip(true, "Firebase env is missing in this environment.");
   }
 
-  if (await page.getByRole("button", { name: "Sign out" }).isVisible().catch(() => false)) {
+  if (await page.getByTestId("app-signout-button").isVisible().catch(() => false)) {
     test.skip(true, "Session is already authenticated.");
   }
 
-  const forgotButton = page.getByRole("button", { name: "Forgot password?" });
+  const forgotButton = page.getByTestId("auth-forgot-password-button");
   if (!(await forgotButton.isVisible().catch(() => false))) {
     test.skip(true, "Sign-in form is not visible in this environment.");
   }
 
   await forgotButton.click();
-  await expect(page.getByRole("button", { name: "Send reset link" })).toBeVisible();
-  await page.getByRole("button", { name: /Back to sign in/ }).click();
-  await expect(
-    page.locator("form.auth-form").first().getByRole("button", { name: /^Sign in$/ })
-  ).toBeVisible();
+  await expect(page.getByTestId("auth-send-reset-button")).toBeVisible();
+  await page.getByTestId("auth-back-to-signin-button").click();
+  await expect(page.getByTestId("auth-signin-form")).toBeVisible();
 });
 
 test("authenticated planner smoke (desktop/mobile)", async ({ page }) => {
@@ -66,14 +64,96 @@ test("authenticated planner smoke (desktop/mobile)", async ({ page }) => {
     test.skip(true, "Firestore is unavailable in this environment.");
   }
 
-  await expect(page.locator(".planner-shell")).toBeVisible();
+  await expect(page.getByTestId("planner-shell")).toBeVisible();
 
-  const hasMobileTabs = await isVisible(page, ".planner-mobile-section-tabs");
+  const hasMobileTabs = await isVisible(page, "[data-testid='planner-mobile-tab-project']");
   if (hasMobileTabs) {
-    await expect(page.getByRole("button", { name: "Project" })).toBeVisible();
-    await expect(page.getByRole("button", { name: "Node" })).toBeVisible();
+    await expect(page.getByTestId("planner-mobile-tab-project")).toBeVisible();
+    await expect(page.getByTestId("planner-mobile-tab-node")).toBeVisible();
   } else {
-    await expect(page.getByRole("button", { name: /Command palette/i })).toBeVisible();
-    await expect(page.locator(".planner-search-input")).toBeVisible();
+    await expect(page.getByTestId("planner-command-palette-button")).toBeVisible();
+    await expect(page.getByTestId("planner-search-input")).toBeVisible();
   }
+});
+
+test("authenticated desktop bubble add and delete flow", async ({ page }, testInfo) => {
+  test.skip(testInfo.project.name !== "desktop-chromium", "Desktop-only flow.");
+
+  await page.goto("/");
+  await ensureSignedIn(page);
+
+  const firestoreUnavailable = page.getByText("Firestore is not available");
+  if (await firestoreUnavailable.isVisible().catch(() => false)) {
+    test.skip(true, "Firestore is unavailable in this environment.");
+  }
+
+  await expect(page.getByTestId("planner-shell")).toBeVisible();
+
+  const searchInput = page.getByTestId("planner-search-input");
+  if (!(await searchInput.isVisible().catch(() => false))) {
+    await page.getByTestId("planner-sidebar-toggle").click();
+    await expect(searchInput).toBeVisible();
+  }
+
+  const firstNodeCard = page.locator("[data-testid^='planner-node-card-']").first();
+  await expect(firstNodeCard).toBeVisible();
+  await firstNodeCard.click();
+
+  const bubbleTargetButton = page.getByTestId("planner-selected-node-add-bubble-button");
+  await expect(bubbleTargetButton).toBeVisible();
+  await bubbleTargetButton.click();
+
+  const bubbleName = `E2E Desktop Bubble ${Date.now()}`;
+  const bubbleInput = page.getByTestId("planner-bubble-name-input");
+  await expect(bubbleInput).toBeVisible();
+  await bubbleInput.fill(bubbleName);
+  await page.getByTestId("planner-bubble-add-button").click();
+
+  const bubbleChipRow = page.locator(".chip.with-action").filter({ hasText: bubbleName }).first();
+  await expect(bubbleChipRow).toBeVisible();
+
+  await bubbleChipRow.getByTestId("planner-bubble-delete-chip-button").click();
+  await expect(page.getByTestId("planner-bubble-existing-chip").filter({ hasText: bubbleName })).toHaveCount(0);
+});
+
+test("authenticated mobile bubble quick add and delete flow", async ({ page }, testInfo) => {
+  test.skip(testInfo.project.name !== "mobile-chromium", "Mobile-only flow.");
+
+  await page.goto("/");
+  await ensureSignedIn(page);
+
+  const firestoreUnavailable = page.getByText("Firestore is not available");
+  if (await firestoreUnavailable.isVisible().catch(() => false)) {
+    test.skip(true, "Firestore is unavailable in this environment.");
+  }
+
+  await expect(page.getByTestId("planner-shell")).toBeVisible();
+  await expect(page.getByTestId("planner-mobile-toolbar-launcher")).toBeVisible();
+
+  const firstNodeCard = page.locator("[data-testid^='planner-node-card-']").first();
+  await expect(firstNodeCard).toBeVisible();
+  await firstNodeCard.click();
+
+  await page.getByTestId("planner-mobile-toolbar-launcher").click();
+  const bubbleAction = page.getByTestId("planner-mobile-toolbar-bubble");
+  if (!(await bubbleAction.isVisible().catch(() => false))) {
+    test.skip(true, "Bubble action is not available in current config.");
+  }
+  await bubbleAction.click();
+
+  await expect(page.getByTestId("planner-mobile-quick-bubble-sheet")).toBeVisible();
+  const bubbleName = `E2E Bubble ${Date.now()}`;
+  await page.getByTestId("planner-mobile-quick-bubble-name-input").fill(bubbleName);
+  await page.getByTestId("planner-mobile-quick-bubble-add-button").click();
+
+  const bubbleChip = page
+    .getByTestId("planner-mobile-quick-bubble-node-chip")
+    .filter({ hasText: bubbleName })
+    .first();
+  await expect(bubbleChip).toBeVisible();
+
+  await bubbleChip.click();
+  await expect(page.getByTestId("planner-mobile-quick-bubble-delete-button")).toBeVisible();
+  await page.getByTestId("planner-mobile-quick-bubble-delete-button").click();
+  await expect(bubbleChip).toHaveCount(0);
 });

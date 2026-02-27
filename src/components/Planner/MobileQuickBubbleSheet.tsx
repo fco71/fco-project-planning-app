@@ -77,12 +77,14 @@ export function MobileQuickBubbleSheet({
       className="planner-mobile-sheet compact planner-mobile-bubble-sheet"
       role="dialog"
       aria-label="Quick bubble add"
+      data-testid="planner-mobile-quick-bubble-sheet"
     >
       <div
         className="planner-mobile-sheet-handle"
         onClick={onClose}
         role="button"
         aria-label="Close"
+        data-testid="planner-mobile-quick-bubble-close-handle"
         onTouchStart={(event) => { touchStartY.current = event.touches[0]?.clientY ?? null; }}
         onTouchEnd={(event) => {
           const startY = touchStartY.current;
@@ -116,6 +118,7 @@ export function MobileQuickBubbleSheet({
                 });
               }}
               placeholder="Bubble name"
+              data-testid="planner-mobile-quick-bubble-name-input"
             />
             <button
               type="button"
@@ -125,15 +128,16 @@ export function MobileQuickBubbleSheet({
                 });
               }}
               disabled={busyAction || !canCreateBubbleFromInput}
+              data-testid="planner-mobile-quick-bubble-add-button"
             >
               Add
             </button>
           </div>
           <div className="planner-inline-buttons planner-mobile-bubble-aux-row">
-            <button type="button" onClick={blurActiveInput}>
+            <button type="button" onClick={blurActiveInput} data-testid="planner-mobile-quick-bubble-done-button">
               Done
             </button>
-            <button type="button" onClick={() => openBubblesPanel(false)}>
+            <button type="button" onClick={() => openBubblesPanel(false)} data-testid="planner-mobile-quick-bubble-manage-button">
               Manage
             </button>
           </div>
@@ -148,6 +152,7 @@ export function MobileQuickBubbleSheet({
                     type="color"
                     value={newRefColor}
                     onChange={(event) => onNewRefColorChange(event.target.value)}
+                    data-testid="planner-mobile-quick-bubble-color-input"
                   />
                 </label>
                 <div className="planner-grid-gap-4">
@@ -156,6 +161,7 @@ export function MobileQuickBubbleSheet({
                     value={newRefCode}
                     onChange={(event) => onNewRefCodeChange(event.target.value)}
                     placeholder={`Internal code (auto ${nextAutoBubbleCode})`}
+                    data-testid="planner-mobile-quick-bubble-code-input"
                   />
                   <span className="planner-subtle planner-subtle-11">
                     Internal code: <strong>{effectiveNewBubbleCode}</strong>
@@ -200,9 +206,10 @@ export function MobileQuickBubbleSheet({
                     boxShadow: `0 0 0 1px ${rgbaFromHex(ref.color, 0.25, "rgba(64,182,255,0.2)")}`,
                     background:
                       activePortalRef?.id === ref.id
-                        ? rgbaFromHex(ref.color, 0.22, "rgba(64,182,255,0.2)")
-                        : undefined,
+                      ? rgbaFromHex(ref.color, 0.22, "rgba(64,182,255,0.2)")
+                      : undefined,
                   }}
+                  data-testid="planner-mobile-quick-bubble-node-chip"
                 >
                   {ref.label}
                 </button>
@@ -222,6 +229,7 @@ export function MobileQuickBubbleSheet({
                   void onSaveMobileQuickBubbleName();
                 }}
                 placeholder="Bubble name"
+                data-testid="planner-mobile-quick-bubble-edit-name-input"
               />
               <div className="planner-inline-buttons planner-mobile-bubble-edit-row">
                 <input
@@ -231,6 +239,7 @@ export function MobileQuickBubbleSheet({
                   onChange={(event) => {
                     void onUpdateCrossRefColor(activePortalRef.id, event.target.value);
                   }}
+                  data-testid="planner-mobile-quick-bubble-edit-color-input"
                 />
                 <button
                   type="button"
@@ -238,6 +247,7 @@ export function MobileQuickBubbleSheet({
                     void onSaveMobileQuickBubbleName();
                   }}
                   disabled={busyAction || mobileQuickBubbleEditName.trim().length === 0}
+                  data-testid="planner-mobile-quick-bubble-save-name-button"
                 >
                   Save Name
                 </button>
@@ -247,6 +257,7 @@ export function MobileQuickBubbleSheet({
                     void onDeletePortalByRefId(activePortalRef.id);
                   }}
                   disabled={busyAction}
+                  data-testid="planner-mobile-quick-bubble-delete-button"
                 >
                   Delete
                 </button>
@@ -254,14 +265,14 @@ export function MobileQuickBubbleSheet({
             </>
           ) : null}
           <div className="planner-mobile-sheet-actions">
-            <button onClick={onClose}>Close</button>
+            <button onClick={onClose} data-testid="planner-mobile-quick-bubble-close-button">Close</button>
           </div>
         </>
       ) : (
         <>
           <div className="planner-subtle">Select a node first, then use Bubble.</div>
           <div className="planner-mobile-sheet-actions">
-            <button onClick={onClose}>Close</button>
+            <button onClick={onClose} data-testid="planner-mobile-quick-bubble-close-button">Close</button>
           </div>
         </>
       )}

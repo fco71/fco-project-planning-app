@@ -30,6 +30,42 @@ npm install
 
 Never commit real `.env` or `.env.production` files to git.
 
+Run the local guard before pushing if you changed env/config files:
+
+```bash
+npm run guard:secrets
+```
+
+This guard blocks:
+- tracked `.env*` files except `.env.example` and `.env.offline`
+- high-risk secret patterns (Google API keys, private keys, GitHub tokens, Firebase CI token-like strings)
+
+Optional PR-style scan against `main` (changed files only):
+
+```bash
+npm run guard:secrets:changed
+```
+
+Install local git hooks (recommended):
+
+```bash
+npm run hooks:install
+```
+
+This installs repo-managed hooks:
+- `pre-commit` runs `guard:secrets`
+- `pre-push` runs `check` (lint + typecheck)
+
+Optional faster push loop for local-only work:
+
+```bash
+PRE_PUSH_FAST=1 git push
+```
+
+Fast mode runs `check:changed` (eslint on changed JS/TS files only).
+If full pre-push checks are slow, the hook prints this hint automatically.
+You can tune when the hint appears with `PRE_PUSH_HINT_THRESHOLD` (seconds).
+
 3. Run locally:
 
 ```bash

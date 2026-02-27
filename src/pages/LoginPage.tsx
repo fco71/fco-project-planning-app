@@ -91,7 +91,7 @@ export default function LoginPage() {
   if (!envOk) {
     return (
       <div className="auth-page">
-        <div className="auth-card">
+        <div className="auth-card" data-testid="auth-card">
           <h1>Firebase is not configured</h1>
           <p>Missing env keys:</p>
           <ul>
@@ -108,7 +108,7 @@ export default function LoginPage() {
   if (mode === "forgot") {
     return (
       <div className="auth-page">
-        <div className="auth-card">
+        <div className="auth-card" data-testid="auth-card">
           <h1>FCO Planning App</h1>
 
           {resetSent ? (
@@ -123,6 +123,7 @@ export default function LoginPage() {
                 type="button"
                 className="auth-submit"
                 onClick={() => switchMode("signin")}
+                data-testid="auth-back-to-signin-button"
               >
                 Back to sign in
               </button>
@@ -130,7 +131,7 @@ export default function LoginPage() {
           ) : (
             <>
               <p>Enter your email address and we'll send you a link to reset your password.</p>
-              <form onSubmit={onSubmit} className="auth-form">
+              <form onSubmit={onSubmit} className="auth-form" data-testid="auth-forgot-form">
                 <label>
                   Email
                   <input
@@ -145,7 +146,12 @@ export default function LoginPage() {
 
                 {err ? <div className="auth-error">{err}</div> : null}
 
-                <button disabled={!canSubmit} type="submit" className="auth-submit">
+                <button
+                  disabled={!canSubmit}
+                  type="submit"
+                  className="auth-submit"
+                  data-testid="auth-send-reset-button"
+                >
                   {busy ? "Sending…" : "Send reset link"}
                 </button>
 
@@ -153,6 +159,7 @@ export default function LoginPage() {
                   type="button"
                   className="auth-link-btn"
                   onClick={() => switchMode("signin")}
+                  data-testid="auth-back-to-signin-button"
                 >
                   ← Back to sign in
                 </button>
@@ -167,7 +174,7 @@ export default function LoginPage() {
   /* ── Sign in / Sign up view ───────────────────────────────── */
   return (
     <div className="auth-page">
-      <div className="auth-card">
+      <div className="auth-card" data-testid="auth-card">
         <h1>FCO Planning App</h1>
         <p>Sign in or create your account to build your project trees.</p>
 
@@ -188,7 +195,7 @@ export default function LoginPage() {
           </button>
         </div>
 
-        <form onSubmit={onSubmit} className="auth-form">
+        <form onSubmit={onSubmit} className="auth-form" data-testid="auth-signin-form">
           {mode === "signup" && (
             <label>
               Full name
@@ -229,6 +236,7 @@ export default function LoginPage() {
               type="button"
               className="auth-forgot-link"
               onClick={() => switchMode("forgot")}
+              data-testid="auth-forgot-password-button"
             >
               Forgot password?
             </button>
@@ -236,7 +244,7 @@ export default function LoginPage() {
 
           {err ? <div className="auth-error">{err}</div> : null}
 
-          <button disabled={!canSubmit} type="submit" className="auth-submit">
+          <button disabled={!canSubmit} type="submit" className="auth-submit" data-testid="auth-submit-button">
             {busy ? "Please wait…" : mode === "signup" ? "Create account" : "Sign in"}
           </button>
         </form>

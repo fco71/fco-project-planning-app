@@ -68,6 +68,7 @@ export function PlannerSidebarChrome({
               disabled={!canUndo || busyAction}
               title={undoLabel ? `Undo: ${undoLabel}` : "Undo (⌘Z)"}
               aria-label="Undo"
+              data-testid="planner-undo-button"
             >
               ↩
             </button>
@@ -77,6 +78,7 @@ export function PlannerSidebarChrome({
               disabled={!canRedo || busyAction}
               title={redoLabel ? `Redo: ${redoLabel}` : "Redo (⌘⇧Z)"}
               aria-label="Redo"
+              data-testid="planner-redo-button"
             >
               ↪
             </button>
@@ -92,6 +94,7 @@ export function PlannerSidebarChrome({
           }}
           className="planner-sidebar-toggle"
           aria-label={isMobileLayout ? "Close controls" : sidebarIsCollapsed ? "Expand sidebar" : "Collapse sidebar"}
+          data-testid="planner-sidebar-toggle"
         >
           {isMobileLayout ? "✕" : sidebarIsCollapsed ? "→" : "←"}
         </button>
@@ -113,22 +116,27 @@ export function PlannerSidebarChrome({
               placeholder={isMobileLayout ? "Search nodes..." : "Search nodes... (Ctrl+F)"}
               value={searchQuery}
               onChange={(event) => onSearchQueryChange(event.target.value)}
+              data-testid="planner-search-input"
             />
             {searchMatchCount > 0 ? (
               <div className="planner-search-match">
                 {searchMatchCount} match{searchMatchCount !== 1 ? "es" : ""} found
               </div>
             ) : null}
-            <button className="planner-palette-launcher" onClick={onOpenPalette}>
+            <button className="planner-palette-launcher" onClick={onOpenPalette} data-testid="planner-command-palette-button">
               Command palette (Cmd/Ctrl+K)
             </button>
             {!isMobileLayout ? (
               <div className="planner-top-actions">
-                <button onClick={onOrganizeSelectedBranch} disabled={busyAction || !selectedNodeId}>
+                <button
+                  onClick={onOrganizeSelectedBranch}
+                  disabled={busyAction || !selectedNodeId}
+                  data-testid="planner-cleanup-selected-branch-button"
+                >
                   Clean up selected branch
                 </button>
                 {crossReferencesEnabled && !bubblesSimplifiedMode ? (
-                  <button onClick={onCleanUpCrossRefs} disabled={busyAction}>
+                  <button onClick={onCleanUpCrossRefs} disabled={busyAction} data-testid="planner-cleanup-stale-bubbles-button">
                     Clean stale bubbles
                   </button>
                 ) : null}
@@ -141,12 +149,14 @@ export function PlannerSidebarChrome({
               <button
                 className={mobileSidebarSection === "project" ? "active" : ""}
                 onClick={() => onSetMobileSidebarSection("project")}
+                data-testid="planner-mobile-tab-project"
               >
                 Project
               </button>
               <button
                 className={mobileSidebarSection === "node" ? "active" : ""}
                 onClick={() => onSetMobileSidebarSection("node")}
+                data-testid="planner-mobile-tab-node"
               >
                 Node
               </button>
@@ -154,6 +164,7 @@ export function PlannerSidebarChrome({
                 <button
                   className={mobileSidebarSection === "bubbles" ? "active" : ""}
                   onClick={onOpenBubblesPanel}
+                  data-testid="planner-mobile-tab-bubbles"
                 >
                   Bubbles
                 </button>

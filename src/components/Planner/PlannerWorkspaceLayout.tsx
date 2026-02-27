@@ -24,9 +24,13 @@ export function PlannerWorkspaceLayout({
   canvasSurfaceProps,
 }: PlannerWorkspaceLayoutProps) {
   return (
-    <div className={`planner-shell ${sidebarIsCollapsed ? "sidebar-collapsed" : ""} ${isMobileLayout ? "mobile" : ""}`}>
+    <div
+      className={`planner-shell ${sidebarIsCollapsed ? "sidebar-collapsed" : ""} ${isMobileLayout ? "mobile" : ""}`}
+      data-testid="planner-shell"
+    >
       <aside
         className={`planner-sidebar ${sidebarIsCollapsed ? "collapsed" : ""} ${isMobileLayout ? (mobileSidebarOpen ? "mobile-open" : "mobile-hidden") : ""}`}
+        data-testid="planner-sidebar"
       >
         <PlannerSidebarChrome {...sidebarChromeProps}>
           <PlannerSidebarPanels {...sidebarPanelsProps} />
