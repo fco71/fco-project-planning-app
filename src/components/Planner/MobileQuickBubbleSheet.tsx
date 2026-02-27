@@ -71,6 +71,8 @@ export function MobileQuickBubbleSheet({
 }: MobileQuickBubbleSheetProps) {
   const touchStartY = useRef<number | null>(null);
   const successTimeoutRef = useRef<number | null>(null);
+  const shouldFocusEditAfterAddRef = useRef(false);
+  const mobileQuickBubbleEditInputRef = useRef<HTMLInputElement | null>(null);
   const [mobileQuickAddSuccess, setMobileQuickAddSuccess] = useState<string | null>(null);
 
   useEffect(() => {
@@ -88,6 +90,7 @@ export function MobileQuickBubbleSheet({
       successTimeoutRef.current = null;
     }
     setMobileQuickAddSuccess(newRefLabel.trim() || "Bubble");
+    shouldFocusEditAfterAddRef.current = true;
     successTimeoutRef.current = window.setTimeout(() => {
       setMobileQuickAddSuccess(null);
       successTimeoutRef.current = null;
@@ -96,6 +99,23 @@ export function MobileQuickBubbleSheet({
       focusMobileQuickBubbleInput(30);
     });
   };
+
+  useEffect(() => {
+    if (!open || !selectedNode) return;
+    if (!shouldFocusEditAfterAddRef.current || !activePortalRef) return;
+    if (!activePortalRef.nodeIds.includes(selectedNode.id)) return;
+    const editInput = mobileQuickBubbleEditInputRef.current;
+    if (!editInput) return;
+    shouldFocusEditAfterAddRef.current = false;
+    window.setTimeout(() => {
+      try {
+        editInput.focus({ preventScroll: true });
+      } catch {
+        editInput.focus();
+      }
+      editInput.select();
+    }, 80);
+  }, [activePortalRef, open, selectedNode]);
 
   if (!open) return null;
 
@@ -131,7 +151,7 @@ export function MobileQuickBubbleSheet({
             Selected node · {buildNodePathTail(selectedNode.id, nodesById, 2)}
           </div>
           <div className="planner-row-label">Bubble name</div>
-          <div className="planner-inline-buttons planner-mobile-bubble-input-row">
+          <div className="planner-inline-buttons planner-mobile-bubble-input-row planner-mobile-bubble-input-only-row">
             <input
               ref={mobileQuickBubbleInputRef}
               value={newRefLabel}
@@ -144,14 +164,6 @@ export function MobileQuickBubbleSheet({
               placeholder="Bubble name"
               data-testid="planner-mobile-quick-bubble-name-input"
             />
-            <button
-              type="button"
-              onClick={handleAddBubble}
-              disabled={busyAction || !canCreateBubbleFromInput}
-              data-testid="planner-mobile-quick-bubble-add-button"
-            >
-              Add
-            </button>
           </div>
           {mobileQuickAddSuccess ? (
             <div className="planner-mobile-bubble-success" data-testid="planner-mobile-quick-bubble-success">
@@ -163,9 +175,6 @@ export function MobileQuickBubbleSheet({
             </div>
           )}
           <div className="planner-inline-buttons planner-mobile-bubble-aux-row">
-            <button type="button" onClick={blurActiveInput} data-testid="planner-mobile-quick-bubble-done-button">
-              Done
-            </button>
             <button type="button" onClick={() => openBubblesPanel(false)} data-testid="planner-mobile-quick-bubble-manage-button">
               Full manager
             </button>
@@ -236,6 +245,7 @@ export function MobileQuickBubbleSheet({
             <>
               <div className="planner-row-label">Edit selected bubble</div>
               <input
+                ref={mobileQuickBubbleEditInputRef}
                 value={mobileQuickBubbleEditName}
                 onChange={(event) => onMobileQuickBubbleEditNameChange(event.target.value)}
                 onKeyDown={(event) => {
@@ -280,6 +290,19 @@ export function MobileQuickBubbleSheet({
               </div>
             </>
           ) : null}
+          <div className="planner-mobile-bubble-sticky-actions">
+            <button
+              type="button"
+              onClick={handleAddBubble}
+              disabled={busyAction || !canCreateBubbleFromInput}
+              data-testid="planner-mobile-quick-bubble-add-button"
+            >
+              Add
+            </button>
+            <button type="button" onClick={blurActiveInput} data-testid="planner-mobile-quick-bubble-done-button">
+              Done
+            </button>
+          </div>
           <div className="planner-mobile-sheet-actions">
             <button onClick={onClose} data-testid="planner-mobile-quick-bubble-close-button">Close</button>
           </div>

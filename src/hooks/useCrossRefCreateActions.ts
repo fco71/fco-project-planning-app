@@ -112,6 +112,20 @@ export function useCrossRefCreateActions({
           const newDoc = doc(collection(firestore, "users", userUid, "crossRefs"));
           const anchorPosition = resolveNodePosition(targetNodeId);
           const portalPosition = buildDefaultPortalPosition(targetNodeId, newDoc.id);
+          const newRef: CrossRef = buildLocalCrossRef({
+            id: newDoc.id,
+            label,
+            code,
+            targetNodeId,
+            color,
+            portalPosition,
+            anchorPosition,
+            entityType,
+            tags,
+            notes,
+            contact,
+            links,
+          });
           await setDoc(doc(firestore, "users", userUid, "crossRefs", newDoc.id), {
             ...buildCrossRefDocData({
               label,
@@ -129,6 +143,11 @@ export function useCrossRefCreateActions({
             createdAt: serverTimestamp(),
             updatedAt: serverTimestamp(),
           } satisfies CrossRefDoc & { createdAt: unknown; updatedAt: unknown });
+          setRefs((previous) => {
+            if (previous.some((entry) => entry.id === newRef.id)) return previous;
+            return [...previous, newRef];
+          });
+          hydrateRefEditor(newRef);
           setActivePortalRefId(newDoc.id);
           setNewRefLabel("");
           setNewRefCode(nextBubbleCode([code, ...refs.map((entry) => entry.code)]));

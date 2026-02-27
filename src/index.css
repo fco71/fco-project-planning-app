@@ -962,12 +962,20 @@ button {
   align-items: center;
 }
 
+.planner-mobile-bubble-input-only-row {
+  grid-template-columns: minmax(0, 1fr);
+}
+
 .planner-mobile-bubble-input-row button {
   min-width: 88px;
 }
 
 .planner-mobile-bubble-aux-row {
   grid-template-columns: repeat(2, minmax(0, 1fr));
+}
+
+.planner-mobile-bubble-aux-row > button:only-child {
+  grid-column: 1 / -1;
 }
 
 .planner-mobile-bubble-success {
@@ -994,9 +1002,24 @@ button {
   align-items: center;
 }
 
+.planner-mobile-bubble-sticky-actions {
+  position: sticky;
+  bottom: 0;
+  z-index: 2;
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 6px;
+  padding-top: 8px;
+  padding-bottom: calc(4px + env(safe-area-inset-bottom));
+  margin-top: 4px;
+  background: linear-gradient(180deg, rgba(10, 14, 22, 0), rgba(10, 14, 22, 0.98) 30%);
+  border-top: 1px solid rgba(255, 255, 255, 0.12);
+}
+
 .planner-mobile-sheet-grid button,
 .planner-mobile-sheet-actions button,
-.planner-mobile-sheet-story button {
+.planner-mobile-sheet-story button,
+.planner-mobile-bubble-sticky-actions button {
   border: 1px solid rgba(255, 255, 255, 0.16);
   background: rgba(255, 255, 255, 0.08);
   color: rgba(245, 248, 255, 0.95);
@@ -1011,13 +1034,15 @@ button {
 
 .planner-mobile-sheet-grid button:active,
 .planner-mobile-sheet-actions button:active,
-.planner-mobile-sheet-story button:active {
+.planner-mobile-sheet-story button:active,
+.planner-mobile-bubble-sticky-actions button:active {
   background: rgba(255, 255, 255, 0.16);
 }
 
 .planner-mobile-sheet-grid button:disabled,
 .planner-mobile-sheet-actions button:disabled,
-.planner-mobile-sheet-story button:disabled {
+.planner-mobile-sheet-story button:disabled,
+.planner-mobile-bubble-sticky-actions button:disabled {
   opacity: 0.5;
 }
 

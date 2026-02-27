@@ -151,6 +151,7 @@ test("authenticated mobile bubble quick add and delete flow", async ({ page }, t
   const bubbleName = `E2E Bubble ${Date.now()}`;
   await page.getByTestId("planner-mobile-quick-bubble-name-input").fill(bubbleName);
   await page.getByTestId("planner-mobile-quick-bubble-add-button").click();
+  await expect(page.getByTestId("planner-mobile-quick-bubble-success")).toContainText("Added:");
 
   const bubbleChip = page
     .getByTestId("planner-mobile-quick-bubble-node-chip")
