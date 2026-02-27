@@ -15,15 +15,11 @@ type UsePlannerSidebarChromePropsParams = {
   searchInputRef: MutableRefObject<HTMLInputElement | null>;
   searchQuery: string;
   searchMatchCount: number;
-  selectedNodeId: string | null;
   crossReferencesEnabled: boolean;
-  bubblesSimplifiedMode: boolean;
   mobileSidebarSection: "project" | "node" | "bubbles";
   undo: (applyLocalOps: (ops: LocalOp[]) => void) => void;
   redo: (applyLocalOps: (ops: LocalOp[]) => void) => void;
   applyLocalOps: (ops: LocalOp[]) => void;
-  organizeSelectedBranch: () => void | Promise<void>;
-  cleanUpCrossRefs: () => void | Promise<void>;
   openBubblesPanel: (focusInput?: boolean) => void;
   setMobileSidebarOpen: Dispatch<SetStateAction<boolean>>;
   setSidebarCollapsed: Dispatch<SetStateAction<boolean>>;
@@ -45,15 +41,11 @@ export function usePlannerSidebarChromeProps({
   searchInputRef,
   searchQuery,
   searchMatchCount,
-  selectedNodeId,
   crossReferencesEnabled,
-  bubblesSimplifiedMode,
   mobileSidebarSection,
   undo,
   redo,
   applyLocalOps,
-  organizeSelectedBranch,
-  cleanUpCrossRefs,
   openBubblesPanel,
   setMobileSidebarOpen,
   setSidebarCollapsed,
@@ -74,9 +66,7 @@ export function usePlannerSidebarChromeProps({
     searchInputRef,
     searchQuery,
     searchMatchCount,
-    selectedNodeId,
     crossReferencesEnabled,
-    bubblesSimplifiedMode,
     mobileSidebarSection,
     onUndo: () => undo(applyLocalOps),
     onRedo: () => redo(applyLocalOps),
@@ -87,12 +77,6 @@ export function usePlannerSidebarChromeProps({
       setPaletteOpen(true);
       setPaletteQuery("");
       setPaletteIndex(0);
-    },
-    onOrganizeSelectedBranch: () => {
-      void organizeSelectedBranch();
-    },
-    onCleanUpCrossRefs: () => {
-      void cleanUpCrossRefs();
     },
     onSetMobileSidebarSection: setMobileSidebarSection,
     onOpenBubblesPanel: () => openBubblesPanel(true),

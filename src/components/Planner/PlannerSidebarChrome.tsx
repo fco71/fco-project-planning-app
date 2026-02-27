@@ -13,9 +13,7 @@ type PlannerSidebarChromeProps = {
   searchInputRef: RefObject<HTMLInputElement | null>;
   searchQuery: string;
   searchMatchCount: number;
-  selectedNodeId: string | null;
   crossReferencesEnabled: boolean;
-  bubblesSimplifiedMode: boolean;
   mobileSidebarSection: MobileSidebarSection;
   children: ReactNode;
   onUndo: () => void;
@@ -24,8 +22,6 @@ type PlannerSidebarChromeProps = {
   onToggleSidebarCollapse: () => void;
   onSearchQueryChange: (value: string) => void;
   onOpenPalette: () => void;
-  onOrganizeSelectedBranch: () => void;
-  onCleanUpCrossRefs: () => void;
   onSetMobileSidebarSection: (section: MobileSidebarSection) => void;
   onOpenBubblesPanel: () => void;
 };
@@ -41,9 +37,7 @@ export function PlannerSidebarChrome({
   searchInputRef,
   searchQuery,
   searchMatchCount,
-  selectedNodeId,
   crossReferencesEnabled,
-  bubblesSimplifiedMode,
   mobileSidebarSection,
   children,
   onUndo,
@@ -52,8 +46,6 @@ export function PlannerSidebarChrome({
   onToggleSidebarCollapse,
   onSearchQueryChange,
   onOpenPalette,
-  onOrganizeSelectedBranch,
-  onCleanUpCrossRefs,
   onSetMobileSidebarSection,
   onOpenBubblesPanel,
 }: PlannerSidebarChromeProps) {
@@ -126,22 +118,6 @@ export function PlannerSidebarChrome({
             <button className="planner-palette-launcher" onClick={onOpenPalette} data-testid="planner-command-palette-button">
               Command palette (Cmd/Ctrl+K) · Shortcuts (Cmd/Ctrl+?)
             </button>
-            {!isMobileLayout ? (
-              <div className="planner-top-actions">
-                <button
-                  onClick={onOrganizeSelectedBranch}
-                  disabled={busyAction || !selectedNodeId}
-                  data-testid="planner-cleanup-selected-branch-button"
-                >
-                  Clean up selected branch
-                </button>
-                {crossReferencesEnabled && !bubblesSimplifiedMode ? (
-                  <button onClick={onCleanUpCrossRefs} disabled={busyAction} data-testid="planner-cleanup-stale-bubbles-button">
-                    Clean stale bubbles
-                  </button>
-                ) : null}
-              </div>
-            ) : null}
           </div>
 
           {isMobileLayout ? (

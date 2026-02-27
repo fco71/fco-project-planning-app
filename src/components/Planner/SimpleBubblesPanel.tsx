@@ -1,7 +1,7 @@
 import type { RefObject } from "react";
 import { buildNodePath, buildNodePathTail } from "../../utils/treeUtils";
-import { rgbaFromHex } from "../../utils/normalize";
 import type { CrossRef, TreeNode } from "../../types/planner";
+import { buildBubbleChipStyle } from "../../utils/bubbleChipStyle";
 
 type SimpleBubblesPanelProps = {
   bubbleTargetNode: TreeNode | null | undefined;
@@ -34,13 +34,6 @@ type SimpleBubblesPanelProps = {
   onDeletePortalByRefId: (refId: string) => void;
   onUpdateCrossRefColor: (refId: string, color: string) => Promise<void>;
 };
-
-function bubbleChipStyle(color?: string | null) {
-  return {
-    borderColor: rgbaFromHex(color, 0.9, "rgba(64,182,255,0.88)"),
-    boxShadow: `0 0 0 1px ${rgbaFromHex(color, 0.25, "rgba(64,182,255,0.2)")}`,
-  };
-}
 
 export function SimpleBubblesPanel({
   bubbleTargetNode,
@@ -197,10 +190,10 @@ export function SimpleBubblesPanel({
                     {bubblePrefixSuggestions.map((ref) => (
                       <button
                         key={`template:${ref.id}`}
-                        className="chip"
+                        className="chip bubble-chip"
                         onClick={() => onApplyBubbleSuggestion(ref)}
                         title={`Use style from ${ref.label} (${ref.code})`}
-                        style={bubbleChipStyle(ref.color)}
+                        style={buildBubbleChipStyle(ref.color)}
                         data-testid="planner-bubble-suggestion-chip"
                       >
                         {ref.label}
@@ -270,10 +263,10 @@ export function SimpleBubblesPanel({
                 {bubblePrefixSuggestions.map((ref) => (
                   <button
                     key={`template:${ref.id}`}
-                    className="chip"
+                    className="chip bubble-chip"
                     onClick={() => onApplyBubbleSuggestion(ref)}
                     title={`Use style from ${ref.label} (${ref.code})`}
-                    style={bubbleChipStyle(ref.color)}
+                    style={buildBubbleChipStyle(ref.color)}
                     data-testid="planner-bubble-suggestion-chip"
                   >
                     {ref.label}
@@ -296,7 +289,8 @@ export function SimpleBubblesPanel({
               <button
                 onClick={() => onToggleActivePortalRef(ref.id)}
                 title={ref.label}
-                style={bubbleChipStyle(ref.color)}
+                className="bubble-chip"
+                style={buildBubbleChipStyle(ref.color)}
                 data-testid="planner-bubble-existing-chip"
               >
                 {ref.label}

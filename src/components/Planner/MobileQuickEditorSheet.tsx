@@ -1,8 +1,8 @@
 import { useRef } from "react";
 import type { CrossRef, TaskStatus, TreeNode } from "../../types/planner";
 import { buildNodePath } from "../../utils/treeUtils";
-import { rgbaFromHex } from "../../utils/normalize";
 import { nextNodeKind } from "../../utils/plannerConfig";
+import { buildBubbleChipStyle } from "../../utils/bubbleChipStyle";
 
 type MobileQuickEditorMode = "compact" | "full";
 
@@ -264,13 +264,10 @@ export function MobileQuickEditorSheet({
                       {bubblePrefixSuggestions.slice(0, 3).map((ref) => (
                         <button
                           key={`mobile-template:${ref.id}`}
-                          className="chip"
+                          className="chip bubble-chip"
                           onClick={() => onApplyBubbleSuggestion(ref)}
                           title={`Use style from ${ref.label} (${ref.code})`}
-                          style={{
-                            borderColor: rgbaFromHex(ref.color, 0.9, "rgba(64,182,255,0.88)"),
-                            boxShadow: `0 0 0 1px ${rgbaFromHex(ref.color, 0.25, "rgba(64,182,255,0.2)")}`,
-                          }}
+                          style={buildBubbleChipStyle(ref.color)}
                         >
                           {ref.label}
                         </button>

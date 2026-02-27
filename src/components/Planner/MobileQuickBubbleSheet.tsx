@@ -2,7 +2,7 @@ import { useRef } from "react";
 import type { RefObject } from "react";
 import type { CrossRef, TreeNode } from "../../types/planner";
 import { buildNodePathTail } from "../../utils/treeUtils";
-import { rgbaFromHex } from "../../utils/normalize";
+import { buildBubbleChipStyle } from "../../utils/bubbleChipStyle";
 
 type MobileQuickBubbleSheetProps = {
   open: boolean;
@@ -175,13 +175,10 @@ export function MobileQuickBubbleSheet({
               {bubblePrefixSuggestions.slice(0, 4).map((ref) => (
                 <button
                   key={`mobile-quick-template:${ref.id}`}
-                  className="chip"
+                  className="chip bubble-chip"
                   onClick={() => applyBubbleSuggestion(ref)}
                   title={`Use style from ${ref.label} (${ref.code})`}
-                  style={{
-                    borderColor: rgbaFromHex(ref.color, 0.9, "rgba(64,182,255,0.88)"),
-                    boxShadow: `0 0 0 1px ${rgbaFromHex(ref.color, 0.25, "rgba(64,182,255,0.2)")}`,
-                  }}
+                  style={buildBubbleChipStyle(ref.color)}
                 >
                   {ref.label}
                 </button>
@@ -199,16 +196,9 @@ export function MobileQuickBubbleSheet({
               selectedNodeRefs.map((ref) => (
                 <button
                   key={`mobile-quick-node-ref:${ref.id}`}
-                  className="chip"
+                  className="chip bubble-chip"
                   onClick={() => onSelectRefForEditing(ref.id)}
-                  style={{
-                    borderColor: rgbaFromHex(ref.color, 0.9, "rgba(64,182,255,0.88)"),
-                    boxShadow: `0 0 0 1px ${rgbaFromHex(ref.color, 0.25, "rgba(64,182,255,0.2)")}`,
-                    background:
-                      activePortalRef?.id === ref.id
-                      ? rgbaFromHex(ref.color, 0.22, "rgba(64,182,255,0.2)")
-                      : undefined,
-                  }}
+                  style={buildBubbleChipStyle(ref.color, activePortalRef?.id === ref.id)}
                   data-testid="planner-mobile-quick-bubble-node-chip"
                 >
                   {ref.label}

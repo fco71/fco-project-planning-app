@@ -171,7 +171,7 @@ export default function CrossRefPanel({
       )}
 
       {!selectedNodeId && (
-        <p className="planner-subtle" style={{ marginTop: '12px', fontStyle: 'italic' }}>
+        <p className="planner-subtle crossref-tip">
           💡 Tip: Click on a node in the tree to create or attach bubbles
         </p>
       )}

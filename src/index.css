@@ -628,6 +628,7 @@ button {
   white-space: nowrap;
   overflow: hidden;
   text-overflow: ellipsis;
+  text-align: right;
 }
 
 .planner-chip-list {
@@ -647,6 +648,13 @@ button {
 
 .planner-chip-list .chip {
   padding: 5px 8px;
+}
+
+.planner-chip-list .chip.bubble-chip,
+.planner-chip-list .chip.with-action > .bubble-chip {
+  border-color: var(--planner-bubble-chip-border, rgba(64, 182, 255, 0.88));
+  box-shadow: var(--planner-bubble-chip-shadow, 0 0 0 1px rgba(64, 182, 255, 0.2));
+  background: var(--planner-bubble-chip-bg, rgba(255, 255, 255, 0.06));
 }
 
 .planner-chip-list .chip.with-action {
@@ -674,6 +682,11 @@ button {
   display: flex;
   flex-direction: column;
   gap: 6px;
+}
+
+.crossref-tip {
+  margin-top: 12px;
+  font-style: italic;
 }
 
 .planner-reference-list button {
@@ -855,6 +868,7 @@ button {
   white-space: nowrap;
   overflow: hidden;
   text-overflow: ellipsis;
+  text-align: right;
 }
 
 .planner-mobile-bubble-sheet {
