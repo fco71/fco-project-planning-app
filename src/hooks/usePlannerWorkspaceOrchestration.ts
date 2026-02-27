@@ -28,6 +28,7 @@ import { buildPlannerResponsiveUiParams } from "./buildPlannerResponsiveUiParams
 import { buildPlannerRootSelectionSyncParams } from "./buildPlannerRootSelectionSyncParams";
 import { buildStoryNodeContentActionsParams } from "./buildStoryNodeContentActionsParams";
 import { buildPlannerWorkspaceBundleParamsFromBundles } from "./buildPlannerWorkspaceBundleParamsFromBundles";
+import { plannerWorkspaceConstants } from "./plannerWorkspaceConstants";
 import {
   bubbleDisplayToken,
   chooseAnchorNodeId,
@@ -37,14 +38,7 @@ import {
 } from "../utils/crossRefUtils";
 import { rgbaFromHex } from "../utils/normalize";
 import {
-  BUBBLES_SIMPLIFIED_MODE,
-  CROSS_REFERENCES_ENABLED,
-  DEFAULT_BUBBLE_COLOR,
   nextNodeKind,
-  STORY_NODE_MAX_HEIGHT,
-  STORY_NODE_MAX_WIDTH,
-  STORY_NODE_MIN_HEIGHT,
-  STORY_NODE_MIN_WIDTH,
 } from "../utils/plannerConfig";
 import { plannerNodeTypes } from "../components/Planner/PortalNode";
 import { db } from "../firebase";
@@ -109,8 +103,8 @@ export function usePlannerWorkspaceOrchestration({
       user,
       firestore: db,
       suppressSnapshotRef,
-      crossReferencesEnabled: CROSS_REFERENCES_ENABLED,
-      bubblesSimplifiedMode: BUBBLES_SIMPLIFIED_MODE,
+      crossReferencesEnabled: plannerWorkspaceConstants.crossReferencesEnabled,
+      bubblesSimplifiedMode: plannerWorkspaceConstants.bubblesSimplifiedMode,
     })
   );
 
@@ -150,10 +144,10 @@ export function usePlannerWorkspaceOrchestration({
       nodesById,
       pushHistory,
       applyLocalNodePatch,
-      storyNodeMinWidth: STORY_NODE_MIN_WIDTH,
-      storyNodeMaxWidth: STORY_NODE_MAX_WIDTH,
-      storyNodeMinHeight: STORY_NODE_MIN_HEIGHT,
-      storyNodeMaxHeight: STORY_NODE_MAX_HEIGHT,
+      storyNodeMinWidth: plannerWorkspaceConstants.storyNodeMinWidth,
+      storyNodeMaxWidth: plannerWorkspaceConstants.storyNodeMaxWidth,
+      storyNodeMinHeight: plannerWorkspaceConstants.storyNodeMinHeight,
+      storyNodeMaxHeight: plannerWorkspaceConstants.storyNodeMaxHeight,
     })
   );
 
@@ -182,12 +176,12 @@ export function usePlannerWorkspaceOrchestration({
       toggleStoryCardExpand,
       startStoryNodeResize,
       resetStoryNodeSize,
-      crossReferencesEnabled: CROSS_REFERENCES_ENABLED,
-      storyNodeMinWidth: STORY_NODE_MIN_WIDTH,
-      storyNodeMaxWidth: STORY_NODE_MAX_WIDTH,
-      storyNodeMinHeight: STORY_NODE_MIN_HEIGHT,
-      storyNodeMaxHeight: STORY_NODE_MAX_HEIGHT,
-      defaultBubbleColor: DEFAULT_BUBBLE_COLOR,
+      crossReferencesEnabled: plannerWorkspaceConstants.crossReferencesEnabled,
+      storyNodeMinWidth: plannerWorkspaceConstants.storyNodeMinWidth,
+      storyNodeMaxWidth: plannerWorkspaceConstants.storyNodeMaxWidth,
+      storyNodeMinHeight: plannerWorkspaceConstants.storyNodeMinHeight,
+      storyNodeMaxHeight: plannerWorkspaceConstants.storyNodeMaxHeight,
+      defaultBubbleColor: plannerWorkspaceConstants.defaultBubbleColor,
       chooseAnchorNodeId,
       bubbleDisplayToken,
       rgbaFromHex,
@@ -232,9 +226,9 @@ export function usePlannerWorkspaceOrchestration({
       activePortalRef: derivedBundle.activePortalRef,
       showSaveError,
       draggedNodeIdRef,
-      crossReferencesEnabled: CROSS_REFERENCES_ENABLED,
-      bubblesSimplifiedMode: BUBBLES_SIMPLIFIED_MODE,
-      defaultBubbleColor: DEFAULT_BUBBLE_COLOR,
+      crossReferencesEnabled: plannerWorkspaceConstants.crossReferencesEnabled,
+      bubblesSimplifiedMode: plannerWorkspaceConstants.bubblesSimplifiedMode,
+      defaultBubbleColor: plannerWorkspaceConstants.defaultBubbleColor,
       nextNodeKind,
       openBubblesPanel,
       openMobileQuickBubble,
@@ -256,8 +250,8 @@ export function usePlannerWorkspaceOrchestration({
       filteredTreeIds,
       filteredTreeIdSet,
       pushHistory,
-      crossReferencesEnabled: CROSS_REFERENCES_ENABLED,
-      bubblesSimplifiedMode: BUBBLES_SIMPLIFIED_MODE,
+      crossReferencesEnabled: plannerWorkspaceConstants.crossReferencesEnabled,
+      bubblesSimplifiedMode: plannerWorkspaceConstants.bubblesSimplifiedMode,
       openMobileQuickBubble,
       handleContextAddChild: mutationBundle.handleContextAddChild,
       setNodeTaskStatus: mutationBundle.setNodeTaskStatus,
@@ -315,9 +309,9 @@ export function usePlannerWorkspaceOrchestration({
       userEmail: user.email,
       sidebarIsCollapsed,
       currentRootKind,
-      crossReferencesEnabled: CROSS_REFERENCES_ENABLED,
-      bubblesSimplifiedMode: BUBBLES_SIMPLIFIED_MODE,
-      defaultBubbleColor: DEFAULT_BUBBLE_COLOR,
+      crossReferencesEnabled: plannerWorkspaceConstants.crossReferencesEnabled,
+      bubblesSimplifiedMode: plannerWorkspaceConstants.bubblesSimplifiedMode,
+      defaultBubbleColor: plannerWorkspaceConstants.defaultBubbleColor,
       canUndo,
       canRedo,
       undoLabel,

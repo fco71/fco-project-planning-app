@@ -163,3 +163,37 @@ test("authenticated mobile bubble quick add and delete flow", async ({ page }, t
   await page.getByTestId("planner-mobile-quick-bubble-delete-button").click();
   await expect(bubbleChip).toHaveCount(0);
 });
+
+test("desktop shortcuts help opens via keyboard and palette command", async ({ page }, testInfo) => {
+  test.skip(testInfo.project.name !== "desktop-chromium", "Desktop-only flow.");
+
+  await page.goto("/");
+  await ensureSignedIn(page);
+
+  const firestoreUnavailable = page.getByText("Firestore is not available");
+  if (await firestoreUnavailable.isVisible().catch(() => false)) {
+    test.skip(true, "Firestore is unavailable in this environment.");
+  }
+
+  await expect(page.getByTestId("planner-shell")).toBeVisible();
+
+  const keyboardDialogPromise = page.waitForEvent("dialog");
+  await page.keyboard.press("Control+Shift+/");
+  const keyboardDialog = await keyboardDialogPromise;
+  await expect(keyboardDialog.message()).toContain("Keyboard Shortcuts");
+  await keyboardDialog.accept();
+
+  await page.getByTestId("planner-command-palette-button").click();
+  await expect(page.getByTestId("planner-command-palette-input")).toBeVisible();
+  await page.getByTestId("planner-command-palette-input").fill("shortcuts");
+
+  const paletteDialogPromise = page.waitForEvent("dialog");
+  await page
+    .getByTestId("planner-command-palette-item")
+    .filter({ hasText: "Show keyboard shortcuts" })
+    .first()
+    .click();
+  const paletteDialog = await paletteDialogPromise;
+  await expect(paletteDialog.message()).toContain("Cmd/Ctrl+K");
+  await paletteDialog.accept();
+});

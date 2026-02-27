@@ -30,6 +30,7 @@ export function CommandPalette({
     <div className="planner-palette-backdrop" onClick={onClose}>
       <div className="planner-palette" onClick={(event) => event.stopPropagation()}>
         <input
+          data-testid="planner-command-palette-input"
           ref={inputRef}
           value={query}
           onChange={(event) => {
@@ -46,6 +47,7 @@ export function CommandPalette({
               <button
                 key={item.id}
                 className={`planner-palette-item ${index === paletteIndex ? "active" : ""}`}
+                data-testid="planner-command-palette-item"
                 onMouseEnter={() => onSetIndex(index)}
                 onClick={() => onRunItem(item)}
               >
