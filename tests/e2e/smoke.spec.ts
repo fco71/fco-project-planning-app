@@ -50,6 +50,9 @@ test("app bootstraps without crash", async ({ page }) => {
 
   await expect(page.getByText("Something went wrong")).toHaveCount(0);
 
+  // Wait for Firebase auth to resolve (loading state disappears)
+  await page.locator(".planner-loading-state").waitFor({ state: "hidden", timeout: 15000 }).catch(() => undefined);
+
   const hasAuthCard = await isVisible(page, "[data-testid='auth-card']");
   const hasPlannerShell = await isVisible(page, "[data-testid='planner-shell']");
   const hasEmptyState = await isVisible(page, ".planner-empty-state");
