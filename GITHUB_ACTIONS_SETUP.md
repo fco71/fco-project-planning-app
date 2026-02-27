@@ -41,8 +41,11 @@ Add these repository secrets in the same GitHub Secrets page:
 - `VITE_FIREBASE_STORAGE_BUCKET`
 - `VITE_FIREBASE_MESSAGING_SENDER_ID`
 - `VITE_FIREBASE_APP_ID`
+- `E2E_EMAIL` (optional but recommended for authenticated smoke tests)
+- `E2E_PASSWORD` (optional but recommended for authenticated smoke tests)
 
 These are required for `npm run build` in GitHub Actions.
+`E2E_EMAIL` and `E2E_PASSWORD` allow the CI Playwright workflow to run signed-in planner smoke coverage instead of skipping auth-required tests.
 
 ### 4. Push Workflow Files to GitHub
 

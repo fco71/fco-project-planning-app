@@ -28,6 +28,10 @@ export default defineConfig({
   define: {
     __BUILD_LABEL__: JSON.stringify(buildLabel),
   },
+  test: {
+    include: ["src/**/*.test.{ts,tsx}"],
+    exclude: ["tests/**", "node_modules/**"],
+  },
   build: {
     // Clean dist each build to avoid stale assets being served/deployed.
     emptyOutDir: true,
