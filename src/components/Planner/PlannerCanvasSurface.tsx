@@ -238,7 +238,11 @@ export function PlannerCanvasSurface({
         onEdgeMouseEnter={(_, edge) => scheduleHoverUpdate(hoveredNodeId, edge.id)}
         onEdgeMouseLeave={() => scheduleHoverUpdate(hoveredNodeId, null)}
         onNodeDragStart={(_, node) => {
-          if (!node.id.startsWith("portal:")) isDraggingRef.current = true;
+          if (!node.id.startsWith("portal:")) {
+            // Clear hover-driven fades before drag to prevent visual flicker.
+            scheduleHoverUpdate(null, null);
+            isDraggingRef.current = true;
+          }
         }}
         onNodeDrag={onNodeDrag}
         onNodeDragStop={onNodeDragStop}
