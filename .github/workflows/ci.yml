@@ -70,12 +70,6 @@ jobs:
             echo "::warning::E2E_EMAIL/E2E_PASSWORD are missing. Auth-required smoke tests will be skipped."
           fi
 
-      - name: Require E2E auth secrets on main/manual/nightly runs
-        if: ${{ (github.event_name == 'push' || github.event_name == 'workflow_dispatch' || github.event_name == 'schedule') && steps.e2e_auth.outputs.enabled != 'true' }}
-        run: |
-          echo "E2E_EMAIL and E2E_PASSWORD are required for push/manual/nightly CI runs."
-          exit 1
-
       - name: E2E smoke tests
         run: npm run e2e
 

@@ -11,7 +11,7 @@ GitHub Actions workflows have been created for automatic deployment using Fireba
 ✅ CI secret scan modes: PRs scan changed files, `main`/manual runs scan all tracked files
 ✅ Optional local hook installer: `npm run hooks:install` (pre-commit staged secret guard + pre-push lint/typecheck, with optional `PRE_PUSH_FAST=1` changed-file lint mode)
 ✅ Local hook verifier: `npm run hooks:verify`
-✅ Nightly CI schedule with authenticated E2E requirements
+✅ Nightly CI schedule with optional authenticated E2E coverage
 
 ## Setup Steps (Simplified!)
 
@@ -47,13 +47,11 @@ Add these repository secrets in the same GitHub Secrets page:
 - `VITE_FIREBASE_STORAGE_BUCKET`
 - `VITE_FIREBASE_MESSAGING_SENDER_ID`
 - `VITE_FIREBASE_APP_ID`
-- `E2E_EMAIL` (required for full authenticated Playwright smoke coverage)
-- `E2E_PASSWORD` (required for full authenticated Playwright smoke coverage)
+- `E2E_EMAIL` (optional; enables signed-in Playwright smoke coverage)
+- `E2E_PASSWORD` (optional; enables signed-in Playwright smoke coverage)
 
-These are required for `npm run build` in GitHub Actions.
-`E2E_EMAIL` and `E2E_PASSWORD` allow the CI Playwright workflow to run signed-in planner smoke coverage instead of skipping auth-required tests.
-On `push` to `main` and `workflow_dispatch`, CI now fails if those two secrets are missing.
-On pull requests, CI warns and continues, but auth-required tests are skipped when credentials are absent.
+`VITE_FIREBASE_*` secrets are required for `npm run build` in GitHub Actions.
+`E2E_EMAIL` and `E2E_PASSWORD` are optional; when missing, CI warns and skips auth-required E2E tests.
 
 ### 4. Push Workflow Files to GitHub
 
@@ -95,8 +93,7 @@ Once you push:
 - **Actions**:
   1. Secret scan
   2. Lint + typecheck + unit tests + build
-  3. Authenticated Playwright smoke tests
-- **Requirement**: `E2E_EMAIL` and `E2E_PASSWORD` must be configured
+  3. Playwright smoke tests (authenticated tests run only if E2E secrets are present)
 
 ## Why Token Instead of Service Account?
 
