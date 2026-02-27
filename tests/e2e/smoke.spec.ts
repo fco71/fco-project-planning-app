@@ -22,6 +22,29 @@ async function ensureSignedIn(page: Page) {
   await expect(page.getByTestId("app-signout-button")).toBeVisible();
 }
 
+async function ensureDesktopSidebarOpen(page: Page) {
+  const searchInput = page.getByTestId("planner-search-input");
+  if (await searchInput.isVisible().catch(() => false)) return;
+  await page.getByTestId("planner-sidebar-toggle").click();
+  await expect(searchInput).toBeVisible();
+}
+
+async function createBubbleOnFirstNode(page: Page, bubbleName: string) {
+  const firstNodeCard = page.locator("[data-testid^='planner-node-card-']").first();
+  await expect(firstNodeCard).toBeVisible();
+  await firstNodeCard.click();
+
+  const bubbleTargetButton = page.getByTestId("planner-selected-node-add-bubble-button");
+  await expect(bubbleTargetButton).toBeVisible();
+  await bubbleTargetButton.click();
+
+  const bubbleInput = page.getByTestId("planner-bubble-name-input");
+  await expect(bubbleInput).toBeVisible();
+  await bubbleInput.fill(bubbleName);
+  await page.getByTestId("planner-bubble-add-button").click();
+  await expect(page.getByTestId("planner-bubble-existing-chip").filter({ hasText: bubbleName })).toHaveCount(1);
+}
+
 test("app bootstraps without crash", async ({ page }) => {
   await page.goto("/");
 
@@ -95,31 +118,79 @@ test("authenticated desktop bubble add and delete flow", async ({ page }, testIn
 
   await expect(page.getByTestId("planner-shell")).toBeVisible();
 
-  const searchInput = page.getByTestId("planner-search-input");
-  if (!(await searchInput.isVisible().catch(() => false))) {
-    await page.getByTestId("planner-sidebar-toggle").click();
-    await expect(searchInput).toBeVisible();
+  await ensureDesktopSidebarOpen(page);
+  const bubbleName = `E2E Desktop Bubble ${Date.now()}`;
+  await createBubbleOnFirstNode(page, bubbleName);
+
+  await page
+    .locator(".chip.with-action")
+    .filter({ hasText: bubbleName })
+    .first()
+    .getByTestId("planner-bubble-delete-chip-button")
+    .click();
+  await expect(page.getByTestId("planner-bubble-existing-chip").filter({ hasText: bubbleName })).toHaveCount(0);
+});
+
+test("authenticated desktop bubble delete supports undo and redo", async ({ page }, testInfo) => {
+  test.skip(testInfo.project.name !== "desktop-chromium", "Desktop-only flow.");
+
+  await page.goto("/");
+  await ensureSignedIn(page);
+
+  const firestoreUnavailable = page.getByText("Firestore is not available");
+  if (await firestoreUnavailable.isVisible().catch(() => false)) {
+    test.skip(true, "Firestore is unavailable in this environment.");
   }
 
-  const firstNodeCard = page.locator("[data-testid^='planner-node-card-']").first();
-  await expect(firstNodeCard).toBeVisible();
-  await firstNodeCard.click();
+  await expect(page.getByTestId("planner-shell")).toBeVisible();
+  await ensureDesktopSidebarOpen(page);
 
-  const bubbleTargetButton = page.getByTestId("planner-selected-node-add-bubble-button");
-  await expect(bubbleTargetButton).toBeVisible();
-  await bubbleTargetButton.click();
+  const bubbleName = `E2E Undo Bubble ${Date.now()}`;
+  await createBubbleOnFirstNode(page, bubbleName);
 
-  const bubbleName = `E2E Desktop Bubble ${Date.now()}`;
-  const bubbleInput = page.getByTestId("planner-bubble-name-input");
-  await expect(bubbleInput).toBeVisible();
-  await bubbleInput.fill(bubbleName);
-  await page.getByTestId("planner-bubble-add-button").click();
-
-  const bubbleChipRow = page.locator(".chip.with-action").filter({ hasText: bubbleName }).first();
-  await expect(bubbleChipRow).toBeVisible();
-
-  await bubbleChipRow.getByTestId("planner-bubble-delete-chip-button").click();
+  await page
+    .locator(".chip.with-action")
+    .filter({ hasText: bubbleName })
+    .first()
+    .getByTestId("planner-bubble-delete-chip-button")
+    .click();
   await expect(page.getByTestId("planner-bubble-existing-chip").filter({ hasText: bubbleName })).toHaveCount(0);
+
+  await page.getByTestId("planner-undo-button").click();
+  await expect(page.getByTestId("planner-bubble-existing-chip").filter({ hasText: bubbleName })).toHaveCount(1);
+
+  await page.getByTestId("planner-redo-button").click();
+  await expect(page.getByTestId("planner-bubble-existing-chip").filter({ hasText: bubbleName })).toHaveCount(0);
+});
+
+test("authenticated desktop bubble selection clears on escape and canvas click", async ({ page }, testInfo) => {
+  test.skip(testInfo.project.name !== "desktop-chromium", "Desktop-only flow.");
+
+  await page.goto("/");
+  await ensureSignedIn(page);
+
+  const firestoreUnavailable = page.getByText("Firestore is not available");
+  if (await firestoreUnavailable.isVisible().catch(() => false)) {
+    test.skip(true, "Firestore is unavailable in this environment.");
+  }
+
+  await expect(page.getByTestId("planner-shell")).toBeVisible();
+  await ensureDesktopSidebarOpen(page);
+
+  const bubbleName = `E2E Select Bubble ${Date.now()}`;
+  await createBubbleOnFirstNode(page, bubbleName);
+
+  await page.getByTestId("planner-bubble-existing-chip").filter({ hasText: bubbleName }).first().click();
+  await expect(page.getByTestId("planner-bubble-selected-color-input")).toBeVisible();
+
+  await page.keyboard.press("Escape");
+  await expect(page.getByTestId("planner-bubble-selected-color-input")).toHaveCount(0);
+
+  await page.getByTestId("planner-bubble-existing-chip").filter({ hasText: bubbleName }).first().click();
+  await expect(page.getByTestId("planner-bubble-selected-color-input")).toBeVisible();
+
+  await page.getByTestId("planner-reactflow-surface").click({ position: { x: 8, y: 8 } });
+  await expect(page.getByTestId("planner-bubble-selected-color-input")).toHaveCount(0);
 });
 
 test("authenticated mobile bubble quick add and delete flow", async ({ page }, testInfo) => {

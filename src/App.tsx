@@ -5,7 +5,12 @@ const LoginPage = lazy(() => import("./pages/LoginPage"));
 const PlannerPage = lazy(() => import("./pages/PlannerPage"));
 
 function LoadingFallback() {
-  return <div className="planner-empty-state">Loading...</div>;
+  return (
+    <div className="planner-loading-state" role="status" aria-live="polite">
+      <span className="planner-loading-spinner" aria-hidden="true" />
+      <span>Loading...</span>
+    </div>
+  );
 }
 
 export default function App() {

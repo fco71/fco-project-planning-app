@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { resolveDeleteShortcutTarget } from "./usePlannerKeyboardShortcuts";
+import { resolveCreateShortcutTarget, resolveDeleteShortcutTarget } from "./usePlannerKeyboardShortcuts";
 
 describe("resolveDeleteShortcutTarget", () => {
   it("prioritizes active bubble selection over selected node", () => {
@@ -15,3 +15,14 @@ describe("resolveDeleteShortcutTarget", () => {
   });
 });
 
+describe("resolveCreateShortcutTarget", () => {
+  it("uses story-sibling target for story nodes", () => {
+    expect(resolveCreateShortcutTarget("story")).toBe("story-sibling");
+  });
+
+  it("uses child target for non-story nodes", () => {
+    expect(resolveCreateShortcutTarget("item")).toBe("child");
+    expect(resolveCreateShortcutTarget("project")).toBe("child");
+    expect(resolveCreateShortcutTarget(null)).toBe("child");
+  });
+});

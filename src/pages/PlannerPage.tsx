@@ -36,7 +36,12 @@ export default function PlannerPage({ user }: PlannerPageProps) {
   }
 
   if (loading) {
-    return <div className="planner-empty-state">Loading your planning graph...</div>;
+    return (
+      <div className="planner-loading-state" role="status" aria-live="polite">
+        <span className="planner-loading-spinner" aria-hidden="true" />
+        <span>Loading your planning graph...</span>
+      </div>
+    );
   }
 
   return (

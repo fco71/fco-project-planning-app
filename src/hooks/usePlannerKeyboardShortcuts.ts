@@ -1,5 +1,6 @@
 import { useEffect } from "react";
 import type { Dispatch, MutableRefObject, SetStateAction } from "react";
+import type { NodeKind } from "../types/planner";
 import type { LocalOp } from "./useUndoRedo";
 import { showPlannerShortcutsHelp } from "../utils/shortcutsHelp";
 
@@ -10,6 +11,10 @@ export function resolveDeleteShortcutTarget(
   if (activePortalRefId) return "bubble";
   if (selectedNodeId) return "node";
   return null;
+}
+
+export function resolveCreateShortcutTarget(selectedNodeKind: NodeKind | null): "story-sibling" | "child" {
+  return selectedNodeKind === "story" ? "story-sibling" : "child";
 }
 
 type UsePlannerKeyboardShortcutsParams<TItem extends { action: () => void }> = {
@@ -25,9 +30,11 @@ type UsePlannerKeyboardShortcutsParams<TItem extends { action: () => void }> = {
   activePortalRefId: string | null;
   deletePortalByRefId: (refId: string) => Promise<void>;
   handleContextAddChild: (nodeId: string) => void | Promise<void>;
+  handleContextAddStorySibling: (nodeId: string) => void | Promise<void>;
   handleContextDelete: (nodeId: string) => void | Promise<void>;
   handleContextDuplicate: (nodeId: string) => void | Promise<void>;
   selectedNodeId: string | null;
+  selectedNodeKind: NodeKind | null;
   mobileQuickEditorOpen: boolean;
   setMobileQuickEditorOpen: Dispatch<SetStateAction<boolean>>;
   mobileSidebarOpen: boolean;
@@ -58,9 +65,11 @@ export function usePlannerKeyboardShortcuts<TItem extends { action: () => void }
   activePortalRefId,
   deletePortalByRefId,
   handleContextAddChild,
+  handleContextAddStorySibling,
   handleContextDelete,
   handleContextDuplicate,
   selectedNodeId,
+  selectedNodeKind,
   mobileQuickEditorOpen,
   setMobileQuickEditorOpen,
   mobileSidebarOpen,
@@ -159,7 +168,12 @@ export function usePlannerKeyboardShortcuts<TItem extends { action: () => void }
         e.preventDefault();
         if (busyAction) return;
         if (selectedNodeId) {
-          void handleContextAddChild(selectedNodeId);
+          const createTarget = resolveCreateShortcutTarget(selectedNodeKind);
+          if (createTarget === "story-sibling") {
+            void handleContextAddStorySibling(selectedNodeId);
+          } else {
+            void handleContextAddChild(selectedNodeId);
+          }
         }
         return;
       }
@@ -222,6 +236,7 @@ export function usePlannerKeyboardShortcuts<TItem extends { action: () => void }
     activePortalRefId,
     deletePortalByRefId,
     handleContextAddChild,
+    handleContextAddStorySibling,
     handleContextDelete,
     handleContextDuplicate,
     paletteIndex,
@@ -232,6 +247,7 @@ export function usePlannerKeyboardShortcuts<TItem extends { action: () => void }
     runPaletteAction,
     searchQuery,
     selectedNodeId,
+    selectedNodeKind,
     canUndo,
     canRedo,
     undo,

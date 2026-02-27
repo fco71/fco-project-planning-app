@@ -85,6 +85,7 @@ type UsePlannerSidebarPanelsPropsParams = {
   isMobileLayout: boolean;
   selectedNodeRefs: CrossRef[];
   activePortalRef: CrossRef | null;
+  mobileQuickBubbleEditName: string;
   effectiveBubbleTargetId: string | null;
   newRefLabelInputRef: RefObject<HTMLInputElement | null>;
   newRefLabel: string;
@@ -103,6 +104,7 @@ type UsePlannerSidebarPanelsPropsParams = {
   blurActiveInput: () => void;
   applyBubbleSuggestion: (ref: CrossRef) => void;
   deletePortalByRefId: (refId: string) => Promise<void> | void;
+  saveMobileQuickBubbleName: () => Promise<void> | void;
   updateCrossRefColor: (refId: string, color: string) => Promise<void> | void;
 
   refs: CrossRef[];
@@ -153,6 +155,7 @@ type UsePlannerSidebarPanelsPropsParams = {
   setMergeFromRefId: Dispatch<SetStateAction<string>>;
   mergeCrossRefIntoEdited: () => Promise<void> | void;
   deleteCrossRefBubble: () => Promise<void> | void;
+  setMobileQuickBubbleEditName: Dispatch<SetStateAction<string>>;
 };
 
 export function usePlannerSidebarPanelsProps({
@@ -224,6 +227,7 @@ export function usePlannerSidebarPanelsProps({
   isMobileLayout,
   selectedNodeRefs,
   activePortalRef,
+  mobileQuickBubbleEditName,
   effectiveBubbleTargetId,
   newRefLabelInputRef,
   newRefLabel,
@@ -242,6 +246,7 @@ export function usePlannerSidebarPanelsProps({
   blurActiveInput,
   applyBubbleSuggestion,
   deletePortalByRefId,
+  saveMobileQuickBubbleName,
   updateCrossRefColor,
   refs,
   activePortalTargets,
@@ -290,6 +295,7 @@ export function usePlannerSidebarPanelsProps({
   setMergeFromRefId,
   mergeCrossRefIntoEdited,
   deleteCrossRefBubble,
+  setMobileQuickBubbleEditName,
 }: UsePlannerSidebarPanelsPropsParams): ComponentProps<typeof PlannerSidebarPanels> {
   return {
     showProjectSection,
@@ -397,6 +403,7 @@ export function usePlannerSidebarPanelsProps({
       selectedNodeId,
       selectedNodeRefs,
       activePortalRef,
+      mobileQuickBubbleEditName,
       effectiveBubbleTargetId,
       newRefLabelInputRef,
       newRefLabel,
@@ -424,6 +431,8 @@ export function usePlannerSidebarPanelsProps({
       onDeletePortalByRefId: (refId) => {
         void deletePortalByRefId(refId);
       },
+      onMobileQuickBubbleEditNameChange: setMobileQuickBubbleEditName,
+      onSaveMobileQuickBubbleName: () => Promise.resolve(saveMobileQuickBubbleName()),
       onUpdateCrossRefColor: async (refId, color) => {
         await updateCrossRefColor(refId, color);
       },

@@ -451,6 +451,37 @@ button {
   font-weight: 820;
 }
 
+.planner-panel-title-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+}
+
+.planner-bubble-target-badge {
+  max-width: min(68vw, 250px);
+  border: 1px solid rgba(255, 255, 255, 0.18);
+  border-radius: 999px;
+  padding: 4px 8px;
+  font-size: 10px;
+  font-weight: 700;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.planner-bubble-target-badge.is-active {
+  color: rgba(191, 219, 254, 0.98);
+  background: rgba(30, 64, 175, 0.24);
+  border-color: rgba(96, 165, 250, 0.38);
+}
+
+.planner-bubble-target-badge.is-empty {
+  color: rgba(229, 236, 246, 0.78);
+  background: rgba(148, 163, 184, 0.14);
+  border-color: rgba(148, 163, 184, 0.25);
+}
+
 .planner-subtle {
   margin: 0;
   font-size: 11px;
@@ -801,6 +832,35 @@ button {
     radial-gradient(circle at 90% 5%, rgba(190, 24, 93, 0.18), transparent 42%),
     radial-gradient(circle at 70% 90%, rgba(14, 116, 144, 0.16), transparent 44%),
     #080d15;
+}
+
+.planner-canvas-onboarding {
+  position: absolute;
+  top: 14px;
+  left: 14px;
+  z-index: 8;
+  max-width: min(360px, calc(100% - 28px));
+  border: 1px solid rgba(255, 255, 255, 0.16);
+  border-radius: 14px;
+  background: rgba(8, 13, 21, 0.92);
+  box-shadow: 0 10px 24px rgba(0, 0, 0, 0.3);
+  padding: 12px;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.planner-canvas-onboarding h2 {
+  margin: 0;
+  font-size: 13px;
+  color: rgba(245, 248, 255, 0.97);
+}
+
+.planner-canvas-onboarding p {
+  margin: 0;
+  font-size: 11.5px;
+  line-height: 1.4;
+  color: rgba(229, 236, 246, 0.82);
 }
 
 .planner-mobile-backdrop {
@@ -1527,6 +1587,35 @@ button {
   color: rgba(229, 236, 246, 0.82);
 }
 
+.planner-loading-state {
+  height: 100%;
+  display: grid;
+  place-content: center;
+  justify-items: center;
+  gap: 10px;
+  padding: 24px;
+  font-size: 14px;
+  color: rgba(229, 236, 246, 0.88);
+}
+
+.planner-loading-spinner {
+  width: 22px;
+  height: 22px;
+  border-radius: 999px;
+  border: 2.5px solid rgba(148, 163, 184, 0.32);
+  border-top-color: rgba(125, 211, 252, 0.95);
+  animation: planner-spin 0.8s linear infinite;
+}
+
+@keyframes planner-spin {
+  from {
+    transform: rotate(0deg);
+  }
+  to {
+    transform: rotate(360deg);
+  }
+}
+
 .planner-palette-backdrop {
   position: fixed;
   inset: 0;
@@ -1745,6 +1834,12 @@ button {
   .planner-canvas {
     user-select: none;
     -webkit-user-select: none;
+  }
+
+  .planner-canvas-onboarding {
+    top: calc(10px + env(safe-area-inset-top));
+    left: calc(10px + env(safe-area-inset-left));
+    max-width: min(360px, calc(100% - 20px - env(safe-area-inset-left) - env(safe-area-inset-right)));
   }
 
   /* ReactFlow node wrapper — prevent default touch callout on long press */

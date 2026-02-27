@@ -1,5 +1,6 @@
 import { useCallback } from "react";
 import type { Dispatch, SetStateAction } from "react";
+import type { NodeKind } from "../types/planner";
 import type { TaskStatus, TreeNode } from "../types/planner";
 
 type MobileSidebarSection = "project" | "node" | "bubbles";
@@ -17,10 +18,15 @@ type UsePlannerMobileToolbarActionsParams = {
   setActivePortalRefId: Dispatch<SetStateAction<string | null>>;
   openMobileQuickBubble: (nodeId: string, focusInput?: boolean) => void;
   handleContextAddChild: (nodeId: string) => Promise<void> | void;
+  handleContextAddStorySibling: (nodeId: string) => Promise<void> | void;
   setNodeTaskStatus: (nodeId: string, status: TaskStatus) => Promise<void> | void;
   goGrandmotherView: () => void;
   goUpOneView: () => void;
 };
+
+export function resolveToolbarCreateTarget(selectedNodeKind: NodeKind | null | undefined): "story-sibling" | "child" {
+  return selectedNodeKind === "story" ? "story-sibling" : "child";
+}
 
 export function usePlannerMobileToolbarActions({
   selectedNodeId,
@@ -34,6 +40,7 @@ export function usePlannerMobileToolbarActions({
   setActivePortalRefId,
   openMobileQuickBubble,
   handleContextAddChild,
+  handleContextAddStorySibling,
   setNodeTaskStatus,
   goGrandmotherView,
   goUpOneView,
@@ -80,9 +87,14 @@ export function usePlannerMobileToolbarActions({
 
   const onToolbarAddChild = useCallback(() => {
     if (!selectedNodeId) return;
-    void handleContextAddChild(selectedNodeId);
+    const createTarget = resolveToolbarCreateTarget(selectedNode?.kind);
+    if (createTarget === "story-sibling") {
+      void handleContextAddStorySibling(selectedNodeId);
+    } else {
+      void handleContextAddChild(selectedNodeId);
+    }
     setMobileToolbarOpen(false);
-  }, [handleContextAddChild, selectedNodeId, setMobileToolbarOpen]);
+  }, [handleContextAddChild, handleContextAddStorySibling, selectedNode?.kind, selectedNodeId, setMobileToolbarOpen]);
 
   const onToolbarToggleTaskStatus = useCallback(() => {
     if (!selectedNodeId || !selectedNode || selectedNode.kind === "root") return;

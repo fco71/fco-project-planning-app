@@ -11,6 +11,7 @@ type SimpleBubblesPanelProps = {
   selectedNodeId: string | null;
   selectedNodeRefs: CrossRef[];
   activePortalRef: CrossRef | null;
+  mobileQuickBubbleEditName: string;
   effectiveBubbleTargetId: string | null;
   newRefLabelInputRef: RefObject<HTMLInputElement | null>;
   newRefLabel: string;
@@ -31,6 +32,8 @@ type SimpleBubblesPanelProps = {
   onApplyBubbleSuggestion: (ref: CrossRef) => void;
   onToggleActivePortalRef: (refId: string) => void;
   onDeletePortalByRefId: (refId: string) => void;
+  onMobileQuickBubbleEditNameChange: (value: string) => void;
+  onSaveMobileQuickBubbleName: () => Promise<void> | void;
   onUpdateCrossRefColor: (refId: string, color: string) => Promise<void>;
 };
 
@@ -42,6 +45,7 @@ export function SimpleBubblesPanel({
   selectedNodeId,
   selectedNodeRefs,
   activePortalRef,
+  mobileQuickBubbleEditName,
   effectiveBubbleTargetId,
   newRefLabelInputRef,
   newRefLabel,
@@ -62,11 +66,24 @@ export function SimpleBubblesPanel({
   onApplyBubbleSuggestion,
   onToggleActivePortalRef,
   onDeletePortalByRefId,
+  onMobileQuickBubbleEditNameChange,
+  onSaveMobileQuickBubbleName,
   onUpdateCrossRefColor,
 }: SimpleBubblesPanelProps) {
   return (
     <div id="cross-ref-bubbles-panel" className="planner-panel-block" data-testid="planner-bubbles-panel">
-      <h3>Bubbles</h3>
+      <div className="planner-panel-title-row">
+        <h3>Bubbles</h3>
+        {isMobileLayout ? (
+          <span
+            className={`planner-bubble-target-badge ${bubbleTargetNode ? "is-active" : "is-empty"}`}
+            title={bubbleTargetNode ? buildNodePath(bubbleTargetNode.id, nodesById) : "No node selected"}
+            data-testid="planner-bubble-target-badge"
+          >
+            {bubbleTargetNode ? `Target: ${bubbleTargetNode.title}` : "Target: none"}
+          </span>
+        ) : null}
+      </div>
       <p className="planner-subtle">
         Local visual bubbles for each node. No cross-linking between nodes.
       </p>
@@ -140,6 +157,9 @@ export function SimpleBubblesPanel({
               Add
             </button>
           </div>
+          {!effectiveBubbleTargetId ? (
+            <p className="planner-subtle">Select a node on the canvas first. Bubble add is node-specific.</p>
+          ) : null}
           <div className="planner-inline-buttons planner-mobile-bubble-aux-row">
             <button type="button" onClick={onBlurActiveInput}>
               Done
@@ -150,7 +170,7 @@ export function SimpleBubblesPanel({
               disabled={!effectiveBubbleTargetId}
               data-testid="planner-bubble-quick-add-button"
             >
-              Open Quick Sheet
+              Manage this node
             </button>
           </div>
           <details className="planner-advanced-tools">
@@ -206,6 +226,78 @@ export function SimpleBubblesPanel({
                     ))}
                   </div>
                 </>
+              ) : null}
+            </div>
+          </details>
+          <details className="planner-advanced-tools">
+            <summary>
+              Manage bubbles on this node ({selectedNodeRefs.length})
+            </summary>
+            <div className="planner-advanced-tools-content">
+              <div className="planner-chip-list">
+                {selectedNodeRefs.length === 0 || !selectedNodeId ? (
+                  <span className="planner-subtle">No bubbles yet.</span>
+                ) : (
+                  selectedNodeRefs.map((ref) => (
+                    <div key={ref.id} className="chip with-action">
+                      <button
+                        onClick={() => onToggleActivePortalRef(ref.id)}
+                        title={ref.label}
+                        className="bubble-chip"
+                        style={buildBubbleChipStyle(ref.color)}
+                        data-testid="planner-bubble-existing-chip"
+                      >
+                        {ref.label}
+                      </button>
+                      <button
+                        className="chip-action"
+                        onClick={() => onDeletePortalByRefId(ref.id)}
+                        title="Delete bubble"
+                        data-testid="planner-bubble-delete-chip-button"
+                      >
+                        ×
+                      </button>
+                    </div>
+                  ))
+                )}
+              </div>
+              {activePortalRef ? (
+                <div className="planner-panel-block planner-panel-block-tight">
+                  <div className="planner-row-label">Edit selected bubble</div>
+                  <input
+                    value={mobileQuickBubbleEditName}
+                    onChange={(event) => onMobileQuickBubbleEditNameChange(event.target.value)}
+                    onKeyDown={(event) => {
+                      if (event.key !== "Enter") return;
+                      event.preventDefault();
+                      if (busyAction || mobileQuickBubbleEditName.trim().length === 0) return;
+                      void onSaveMobileQuickBubbleName();
+                    }}
+                    placeholder="Bubble name"
+                    data-testid="planner-bubble-selected-name-input"
+                  />
+                  <div className="planner-inline-buttons">
+                    <button
+                      type="button"
+                      onClick={() => {
+                        void onSaveMobileQuickBubbleName();
+                      }}
+                      disabled={busyAction || mobileQuickBubbleEditName.trim().length === 0}
+                      data-testid="planner-bubble-selected-name-save-button"
+                    >
+                      Save Name
+                    </button>
+                    <input
+                      className="planner-color-input-md"
+                      type="color"
+                      value={activePortalRef.color || defaultBubbleColor}
+                      onChange={(event) => {
+                        void onUpdateCrossRefColor(activePortalRef.id, event.target.value);
+                      }}
+                      data-testid="planner-bubble-selected-color-input"
+                    />
+                  </div>
+                </div>
               ) : null}
             </div>
           </details>
@@ -282,52 +374,56 @@ export function SimpleBubblesPanel({
           ) : null}
         </>
       )}
-      <div className="planner-row-label">
-        {bubbleTargetNode ? `Bubbles on ${bubbleTargetNode.title}` : "Bubbles on selected node"}
-      </div>
-      <div className="planner-chip-list">
-        {selectedNodeRefs.length === 0 || !selectedNodeId ? (
-          <span className="planner-subtle">No bubbles yet.</span>
-        ) : (
-          selectedNodeRefs.map((ref) => (
-            <div key={ref.id} className="chip with-action">
-              <button
-                onClick={() => onToggleActivePortalRef(ref.id)}
-                title={ref.label}
-                className="bubble-chip"
-                style={buildBubbleChipStyle(ref.color)}
-                data-testid="planner-bubble-existing-chip"
-              >
-                {ref.label}
-              </button>
-              <button
-                className="chip-action"
-                onClick={() => onDeletePortalByRefId(ref.id)}
-                title="Delete bubble"
-                data-testid="planner-bubble-delete-chip-button"
-              >
-                ×
-              </button>
-            </div>
-          ))
-        )}
-      </div>
-      {activePortalRef ? (
-        <div className="planner-panel-block planner-panel-block-tight">
-          <div className="planner-row-label">Selected bubble</div>
-          <div className="planner-inline-buttons">
-            <span className="planner-subtle planner-inline-center">{`${activePortalRef.label} (${activePortalRef.code})`}</span>
-            <input
-              className="planner-color-input-md"
-              type="color"
-              value={activePortalRef.color || defaultBubbleColor}
-              onChange={(event) => {
-                void onUpdateCrossRefColor(activePortalRef.id, event.target.value);
-              }}
-              data-testid="planner-bubble-selected-color-input"
-            />
+      {!isMobileLayout ? (
+        <>
+          <div className="planner-row-label">
+            {bubbleTargetNode ? `Bubbles on ${bubbleTargetNode.title}` : "Bubbles on selected node"}
           </div>
-        </div>
+          <div className="planner-chip-list">
+            {selectedNodeRefs.length === 0 || !selectedNodeId ? (
+              <span className="planner-subtle">No bubbles yet.</span>
+            ) : (
+              selectedNodeRefs.map((ref) => (
+                <div key={ref.id} className="chip with-action">
+                  <button
+                    onClick={() => onToggleActivePortalRef(ref.id)}
+                    title={ref.label}
+                    className="bubble-chip"
+                    style={buildBubbleChipStyle(ref.color)}
+                    data-testid="planner-bubble-existing-chip"
+                  >
+                    {ref.label}
+                  </button>
+                  <button
+                    className="chip-action"
+                    onClick={() => onDeletePortalByRefId(ref.id)}
+                    title="Delete bubble"
+                    data-testid="planner-bubble-delete-chip-button"
+                  >
+                    ×
+                  </button>
+                </div>
+              ))
+            )}
+          </div>
+          {activePortalRef ? (
+            <div className="planner-panel-block planner-panel-block-tight">
+              <div className="planner-row-label">Selected bubble</div>
+              <div className="planner-inline-buttons">
+                <span className="planner-subtle planner-inline-center">{`${activePortalRef.label} (${activePortalRef.code})`}</span>
+                <input
+                  className="planner-color-input-md"
+                  type="color"
+                  value={activePortalRef.color || defaultBubbleColor}
+                  onChange={(event) => {
+                    void onUpdateCrossRefColor(activePortalRef.id, event.target.value);
+                  }}
+                  data-testid="planner-bubble-selected-color-input"
+                />
+              </div>
+            </div>
+          ) : null}
+        </>
       ) : null}
     </div>
   );

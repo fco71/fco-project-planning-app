@@ -161,8 +161,35 @@ export function PlannerCanvasSurface({
   onToolbarGoHome,
   onToolbarGoUp,
 }: PlannerCanvasSurfaceProps) {
+  const nonPortalNodeCount = reactFlowNodes.reduce((count, node) => (
+    node.id.startsWith("portal:") ? count : count + 1
+  ), 0);
+  const rootNode = rootNodeId ? nodesById.get(rootNodeId) || null : null;
+  const showFirstNodeOnboarding = rootNode?.kind === "root" && nonPortalNodeCount <= 1;
+
   return (
     <main className="planner-canvas" data-testid="planner-canvas">
+      {showFirstNodeOnboarding ? (
+        <section className="planner-canvas-onboarding" data-testid="planner-canvas-onboarding">
+          <h2>Start your planning tree</h2>
+          <p>
+            Add your first node, then rename it and build branches from there.
+          </p>
+          <div className="planner-inline-buttons">
+            <button
+              type="button"
+              onClick={() => {
+                if (!rootNodeId) return;
+                onContextAddChild(rootNodeId);
+              }}
+              data-testid="planner-canvas-onboarding-add-button"
+            >
+              Create first node
+            </button>
+          </div>
+        </section>
+      ) : null}
+
       <MobileCanvasToolbar
         isMobileLayout={isMobileLayout}
         mobileToolbarOpen={mobileToolbarOpen}
