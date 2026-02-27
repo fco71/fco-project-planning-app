@@ -31,9 +31,6 @@ export default function App() {
   return (
     <div className="app-shell">
       <header className="app-header">
-        <div className="app-header-title">
-          <h1>FCO Planning App</h1>
-        </div>
         <button
           onClick={() => {
             signOut().catch(() => {

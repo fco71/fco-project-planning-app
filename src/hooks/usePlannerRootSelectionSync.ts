@@ -2,8 +2,6 @@ import { useEffect, useMemo, useRef } from "react";
 import type { Dispatch, RefObject, SetStateAction } from "react";
 import type { TreeNode } from "../types/planner";
 
-type MobileSidebarSection = "project" | "node" | "bubbles";
-
 type UsePlannerRootSelectionSyncParams = {
   rootNodeId: string | null;
   loading: boolean;
@@ -21,9 +19,6 @@ type UsePlannerRootSelectionSyncParams = {
   setStoryLaneMode: Dispatch<SetStateAction<boolean>>;
   pendingRenameNodeId: string | null;
   setPendingRenameNodeId: Dispatch<SetStateAction<string | null>>;
-  setSidebarCollapsed: Dispatch<SetStateAction<boolean>>;
-  setMobileSidebarSection: Dispatch<SetStateAction<MobileSidebarSection>>;
-  setMobileSidebarOpen: Dispatch<SetStateAction<boolean>>;
   renameInputRef: RefObject<HTMLInputElement | null>;
 };
 
@@ -44,9 +39,6 @@ export function usePlannerRootSelectionSync({
   setStoryLaneMode,
   pendingRenameNodeId,
   setPendingRenameNodeId,
-  setSidebarCollapsed,
-  setMobileSidebarSection,
-  setMobileSidebarOpen,
   renameInputRef,
 }: UsePlannerRootSelectionSyncParams) {
   const initialPageParamHydratedRef = useRef(false);
@@ -133,23 +125,16 @@ export function usePlannerRootSelectionSync({
     if (!pendingRenameNodeId) return;
     if (!selectedNodeId || selectedNodeId !== pendingRenameNodeId) return;
     const timeout = window.setTimeout(() => {
-      setSidebarCollapsed(false);
-      setMobileSidebarSection("node");
-      if (isMobileLayout) setMobileSidebarOpen(true);
       renameInputRef.current?.focus();
       renameInputRef.current?.select();
       setPendingRenameNodeId(null);
     }, 60);
     return () => window.clearTimeout(timeout);
   }, [
-    isMobileLayout,
     pendingRenameNodeId,
     renameInputRef,
     selectedNodeId,
-    setMobileSidebarOpen,
-    setMobileSidebarSection,
     setPendingRenameNodeId,
-    setSidebarCollapsed,
   ]);
 
   return {

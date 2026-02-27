@@ -30,9 +30,6 @@ export function buildPlannerRootSelectionSyncParams({
     setStoryLaneMode: plannerState.setStoryLaneMode,
     pendingRenameNodeId: plannerState.pendingRenameNodeId,
     setPendingRenameNodeId: plannerState.setPendingRenameNodeId,
-    setSidebarCollapsed: plannerState.setSidebarCollapsed,
-    setMobileSidebarSection: plannerState.setMobileSidebarSection,
-    setMobileSidebarOpen: plannerState.setMobileSidebarOpen,
     renameInputRef: plannerState.renameInputRef,
   };
 }

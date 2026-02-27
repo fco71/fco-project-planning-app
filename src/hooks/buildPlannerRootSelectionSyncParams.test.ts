@@ -22,9 +22,6 @@ describe("buildPlannerRootSelectionSyncParams", () => {
       setStoryLaneMode: vi.fn(),
       pendingRenameNodeId: "node-3",
       setPendingRenameNodeId: vi.fn(),
-      setSidebarCollapsed: vi.fn(),
-      setMobileSidebarSection: vi.fn(),
-      setMobileSidebarOpen: vi.fn(),
       renameInputRef: { current: null },
     } as unknown as PlannerState;
 

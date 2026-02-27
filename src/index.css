@@ -47,21 +47,8 @@ button {
   backdrop-filter: blur(8px);
   display: flex;
   align-items: center;
-  justify-content: space-between;
+  justify-content: flex-end;
   gap: 12px;
-}
-
-.app-header-title h1 {
-  margin: 0;
-  font-size: 14px;
-  font-weight: 800;
-  letter-spacing: 0.15px;
-}
-
-.app-header-title p {
-  margin: 2px 0 0;
-  font-size: 11px;
-  opacity: 0.68;
 }
 
 .app-header button {
@@ -240,15 +227,12 @@ button {
 }
 
 .planner-shell {
+  --planner-sidebar-expanded-width: clamp(300px, 30vw, 360px);
+  --planner-sidebar-collapsed-width: 64px;
+  position: relative;
   height: 100%;
-  display: grid;
-  grid-template-columns: minmax(300px, 360px) 1fr;
   min-height: 0;
-  transition: grid-template-columns 350ms cubic-bezier(0.4, 0, 0.2, 1);
-}
-
-.planner-shell.sidebar-collapsed {
-  grid-template-columns: 64px 1fr;
+  overflow: hidden;
 }
 
 .planner-sidebar {
@@ -261,6 +245,18 @@ button {
   display: flex;
   flex-direction: column;
   gap: 10px;
+  transition: transform 240ms cubic-bezier(0.22, 0.78, 0.2, 1), opacity 180ms ease, padding 240ms ease;
+  transform: translateX(0);
+  opacity: 1;
+}
+
+.planner-shell:not(.mobile) .planner-sidebar {
+  position: absolute;
+  inset: 0 auto 0 0;
+  width: var(--planner-sidebar-expanded-width);
+  z-index: 30;
+  box-shadow: 10px 0 28px rgba(0, 0, 0, 0.32);
+  will-change: transform;
 }
 
 .planner-sidebar-header {
@@ -375,6 +371,11 @@ button {
 .planner-sidebar.collapsed {
   padding: 8px;
   overflow: hidden;
+  opacity: 0.98;
+}
+
+.planner-shell:not(.mobile) .planner-sidebar.collapsed {
+  transform: translateX(calc(-1 * (var(--planner-sidebar-expanded-width) - var(--planner-sidebar-collapsed-width))));
 }
 
 .planner-sidebar.collapsed .planner-sidebar-header {
@@ -834,6 +835,7 @@ button {
 
 .planner-canvas {
   position: relative;
+  height: 100%;
   min-width: 0;
   min-height: 0;
   background:
@@ -1715,8 +1717,6 @@ button {
   }
 
   .planner-shell {
-    grid-template-columns: 1fr;
-    grid-template-rows: 1fr;
     /* Fill the entire viewport including notch areas */
     height: 100dvh;
   }
