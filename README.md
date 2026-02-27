@@ -19,6 +19,12 @@ Editable planning trees backed by Firebase Auth + Firestore.
 npm install
 ```
 
+Or bootstrap local setup (install deps + hooks + hook verification):
+
+```bash
+npm run setup:dev
+```
+
 2. Create `.env` from `.env.example` and fill Firebase keys:
 
 - `VITE_FIREBASE_API_KEY`
@@ -89,3 +95,7 @@ npm run dev
 - `users/{uid}`: profile + `rootNodeId`
 - `users/{uid}/nodes/{nodeId}`: editable tree nodes
 - `users/{uid}/crossRefs/{refId}`: shared cross-reference bubbles
+
+## Security
+
+See `/Users/fco/Library/Mobile Documents/com~apple~CloudDocs/Documents/websites/fco project planning app/SECURITY.md` for vulnerability reporting and incident response steps.

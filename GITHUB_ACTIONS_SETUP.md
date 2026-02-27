@@ -11,6 +11,7 @@ GitHub Actions workflows have been created for automatic deployment using Fireba
 ✅ CI secret scan modes: PRs scan changed files, `main`/manual runs scan all tracked files
 ✅ Optional local hook installer: `npm run hooks:install` (pre-commit staged secret guard + pre-push lint/typecheck, with optional `PRE_PUSH_FAST=1` changed-file lint mode)
 ✅ Local hook verifier: `npm run hooks:verify`
+✅ Nightly CI schedule with authenticated E2E requirements
 
 ## Setup Steps (Simplified!)
 
@@ -88,6 +89,14 @@ Once you push:
   3. Build the app
   4. Deploy to preview channel
 - **Result**: Get a unique preview URL like `https://fco-planning-app--pr-123-xxxxx.web.app`
+
+### Nightly CI (Quality + Smoke)
+- **Trigger**: Daily at 07:00 UTC
+- **Actions**:
+  1. Secret scan
+  2. Lint + typecheck + unit tests + build
+  3. Authenticated Playwright smoke tests
+- **Requirement**: `E2E_EMAIL` and `E2E_PASSWORD` must be configured
 
 ## Why Token Instead of Service Account?
 

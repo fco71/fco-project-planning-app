@@ -5,6 +5,7 @@
   "type": "module",
   "scripts": {
     "dev": "vite",
+    "setup:dev": "npm install && npm run hooks:install && npm run hooks:verify",
     "build": "vite build",
     "build:offline": "VITE_OFFLINE_MODE=1 vite build",
     "test": "vitest run",
