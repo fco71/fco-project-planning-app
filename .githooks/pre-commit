@@ -1,5 +1,10 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-echo "[pre-commit] Running secret guard..."
-npm run --silent guard:secrets
+if git diff --cached --quiet; then
+  echo "[pre-commit] No staged changes. Skipping secret guard."
+  exit 0
+fi
+
+echo "[pre-commit] Running secret guard on staged files..."
+npm run --silent guard:secrets:staged

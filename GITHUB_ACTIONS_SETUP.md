@@ -9,7 +9,8 @@ GitHub Actions workflows have been created for automatic deployment using Fireba
 ✅ CI secret guard that blocks tracked sensitive `.env` files (except `.env.example` and `.env.offline`)
 ✅ CI high-signal secret pattern scan on tracked files (Google API key/private key/GitHub token/Firebase CI token-like patterns)
 ✅ CI secret scan modes: PRs scan changed files, `main`/manual runs scan all tracked files
-✅ Optional local hook installer: `npm run hooks:install` (pre-commit secret guard + pre-push lint/typecheck, with optional `PRE_PUSH_FAST=1` changed-file lint mode)
+✅ Optional local hook installer: `npm run hooks:install` (pre-commit staged secret guard + pre-push lint/typecheck, with optional `PRE_PUSH_FAST=1` changed-file lint mode)
+✅ Local hook verifier: `npm run hooks:verify`
 
 ## Setup Steps (Simplified!)
 

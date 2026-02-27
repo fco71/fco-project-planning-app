@@ -46,6 +46,12 @@ Optional PR-style scan against `main` (changed files only):
 npm run guard:secrets:changed
 ```
 
+Staged-files scan (used by pre-commit):
+
+```bash
+npm run guard:secrets:staged
+```
+
 Install local git hooks (recommended):
 
 ```bash
@@ -53,8 +59,14 @@ npm run hooks:install
 ```
 
 This installs repo-managed hooks:
-- `pre-commit` runs `guard:secrets`
+- `pre-commit` runs `guard:secrets:staged`
 - `pre-push` runs `check` (lint + typecheck)
+
+Verify hook setup anytime:
+
+```bash
+npm run hooks:verify
+```
 
 Optional faster push loop for local-only work:
 

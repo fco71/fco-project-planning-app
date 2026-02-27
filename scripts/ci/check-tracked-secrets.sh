@@ -3,10 +3,11 @@ set -euo pipefail
 
 usage() {
   cat <<'USAGE'
-Usage: check-tracked-secrets.sh [--scope=all|changed] [--base-ref=<branch>]
+Usage: check-tracked-secrets.sh [--scope=all|changed|staged] [--base-ref=<branch>]
 
 Options:
-  --scope=all|changed  Scan all tracked files (default: all) or only changed files.
+  --scope=all|changed|staged
+                       Scan all tracked files (default), changed files, or staged files.
   --base-ref=<branch>  Base branch to diff against when scope is changed (for example: main).
 USAGE
 }
@@ -16,7 +17,7 @@ base_ref=""
 
 for arg in "$@"; do
   case "${arg}" in
-    --scope=all|--scope=changed)
+    --scope=all|--scope=changed|--scope=staged)
       scope="${arg#--scope=}"
       ;;
     --base-ref=*)
@@ -89,6 +90,8 @@ elif [ "${scope}" = "changed" ]; then
   else
     git diff --name-only --diff-filter=ACMR -z "${merge_base}...HEAD" > "${files_file}"
   fi
+elif [ "${scope}" = "staged" ]; then
+  git diff --cached --name-only --diff-filter=ACMR -z > "${files_file}"
 else
   echo "Invalid --scope value: ${scope}"
   usage
