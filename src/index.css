@@ -559,6 +559,11 @@ button {
   gap: 4px;
 }
 
+.planner-grid-gap-6 {
+  display: grid;
+  gap: 6px;
+}
+
 .planner-flex-1 {
   flex: 1;
 }

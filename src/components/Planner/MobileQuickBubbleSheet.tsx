@@ -74,6 +74,7 @@ export function MobileQuickBubbleSheet({
   const shouldFocusEditAfterAddRef = useRef(false);
   const mobileQuickBubbleEditInputRef = useRef<HTMLInputElement | null>(null);
   const [mobileQuickAddSuccess, setMobileQuickAddSuccess] = useState<string | null>(null);
+  const [manageExpanded, setManageExpanded] = useState(false);
 
   useEffect(() => {
     return () => {
@@ -118,6 +119,12 @@ export function MobileQuickBubbleSheet({
   }, [activePortalRef, open, selectedNode]);
 
   if (!open) return null;
+  const autoExpandManage = !!(
+    selectedNode
+    && activePortalRef
+    && activePortalRef.nodeIds.includes(selectedNode.id)
+  );
+  const manageOpen = autoExpandManage || manageExpanded;
 
   return (
     <section
@@ -223,73 +230,86 @@ export function MobileQuickBubbleSheet({
               ))}
             </div>
           ) : null}
-          <div className="planner-row-label">Bubbles on this node</div>
-          <div className="planner-chip-list">
-            {selectedNodeRefs.length === 0 ? (
-              <span className="planner-subtle">No bubbles yet.</span>
-            ) : (
-              selectedNodeRefs.map((ref) => (
-                <button
-                  key={`mobile-quick-node-ref:${ref.id}`}
-                  className="chip bubble-chip"
-                  onClick={() => onSelectRefForEditing(ref.id)}
-                  style={buildBubbleChipStyle(ref.color, activePortalRef?.id === ref.id)}
-                  data-testid="planner-mobile-quick-bubble-node-chip"
-                >
-                  {ref.label}
-                </button>
-              ))
-            )}
-          </div>
-          {activePortalRef && activePortalRef.nodeIds.includes(selectedNode.id) ? (
-            <>
-              <div className="planner-row-label">Edit selected bubble</div>
-              <input
-                ref={mobileQuickBubbleEditInputRef}
-                value={mobileQuickBubbleEditName}
-                onChange={(event) => onMobileQuickBubbleEditNameChange(event.target.value)}
-                onKeyDown={(event) => {
-                  if (event.key !== "Enter") return;
-                  event.preventDefault();
-                  if (busyAction || mobileQuickBubbleEditName.trim().length === 0) return;
-                  void onSaveMobileQuickBubbleName();
-                }}
-                placeholder="Bubble name"
-                data-testid="planner-mobile-quick-bubble-edit-name-input"
-              />
-              <div className="planner-inline-buttons planner-mobile-bubble-edit-row">
-                <input
-                  className="planner-color-input-md"
-                  type="color"
-                  value={activePortalRef.color || defaultBubbleColor}
-                  onChange={(event) => {
-                    void onUpdateCrossRefColor(activePortalRef.id, event.target.value);
-                  }}
-                  data-testid="planner-mobile-quick-bubble-edit-color-input"
-                />
-                <button
-                  type="button"
-                  onClick={() => {
-                    void onSaveMobileQuickBubbleName();
-                  }}
-                  disabled={busyAction || mobileQuickBubbleEditName.trim().length === 0}
-                  data-testid="planner-mobile-quick-bubble-save-name-button"
-                >
-                  Save Name
-                </button>
-                <button
-                  type="button"
-                  onClick={() => {
-                    void onDeletePortalByRefId(activePortalRef.id);
-                  }}
-                  disabled={busyAction}
-                  data-testid="planner-mobile-quick-bubble-delete-button"
-                >
-                  Delete
-                </button>
+          <details
+            className="planner-advanced-tools"
+            open={manageOpen}
+            onToggle={(event) => {
+              setManageExpanded((event.currentTarget as HTMLDetailsElement).open);
+            }}
+          >
+            <summary>
+              Manage existing bubbles ({selectedNodeRefs.length})
+            </summary>
+            <div className="planner-advanced-tools-content planner-grid-gap-6">
+              <div className="planner-row-label">Bubbles on this node</div>
+              <div className="planner-chip-list">
+                {selectedNodeRefs.length === 0 ? (
+                  <span className="planner-subtle">No bubbles yet.</span>
+                ) : (
+                  selectedNodeRefs.map((ref) => (
+                    <button
+                      key={`mobile-quick-node-ref:${ref.id}`}
+                      className="chip bubble-chip"
+                      onClick={() => onSelectRefForEditing(ref.id)}
+                      style={buildBubbleChipStyle(ref.color, activePortalRef?.id === ref.id)}
+                      data-testid="planner-mobile-quick-bubble-node-chip"
+                    >
+                      {ref.label}
+                    </button>
+                  ))
+                )}
               </div>
-            </>
-          ) : null}
+              {activePortalRef && activePortalRef.nodeIds.includes(selectedNode.id) ? (
+                <>
+                  <div className="planner-row-label">Edit selected bubble</div>
+                  <input
+                    ref={mobileQuickBubbleEditInputRef}
+                    value={mobileQuickBubbleEditName}
+                    onChange={(event) => onMobileQuickBubbleEditNameChange(event.target.value)}
+                    onKeyDown={(event) => {
+                      if (event.key !== "Enter") return;
+                      event.preventDefault();
+                      if (busyAction || mobileQuickBubbleEditName.trim().length === 0) return;
+                      void onSaveMobileQuickBubbleName();
+                    }}
+                    placeholder="Bubble name"
+                    data-testid="planner-mobile-quick-bubble-edit-name-input"
+                  />
+                  <div className="planner-inline-buttons planner-mobile-bubble-edit-row">
+                    <input
+                      className="planner-color-input-md"
+                      type="color"
+                      value={activePortalRef.color || defaultBubbleColor}
+                      onChange={(event) => {
+                        void onUpdateCrossRefColor(activePortalRef.id, event.target.value);
+                      }}
+                      data-testid="planner-mobile-quick-bubble-edit-color-input"
+                    />
+                    <button
+                      type="button"
+                      onClick={() => {
+                        void onSaveMobileQuickBubbleName();
+                      }}
+                      disabled={busyAction || mobileQuickBubbleEditName.trim().length === 0}
+                      data-testid="planner-mobile-quick-bubble-save-name-button"
+                    >
+                      Save Name
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => {
+                        void onDeletePortalByRefId(activePortalRef.id);
+                      }}
+                      disabled={busyAction}
+                      data-testid="planner-mobile-quick-bubble-delete-button"
+                    >
+                      Delete
+                    </button>
+                  </div>
+                </>
+              ) : null}
+            </div>
+          </details>
           <div className="planner-mobile-bubble-sticky-actions">
             <button
               type="button"

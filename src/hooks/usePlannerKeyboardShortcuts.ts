@@ -3,6 +3,15 @@ import type { Dispatch, MutableRefObject, SetStateAction } from "react";
 import type { LocalOp } from "./useUndoRedo";
 import { showPlannerShortcutsHelp } from "../utils/shortcutsHelp";
 
+export function resolveDeleteShortcutTarget(
+  activePortalRefId: string | null,
+  selectedNodeId: string | null
+): "bubble" | "node" | null {
+  if (activePortalRefId) return "bubble";
+  if (selectedNodeId) return "node";
+  return null;
+}
+
 type UsePlannerKeyboardShortcutsParams<TItem extends { action: () => void }> = {
   paletteOpen: boolean;
   setPaletteOpen: Dispatch<SetStateAction<boolean>>;
@@ -148,6 +157,7 @@ export function usePlannerKeyboardShortcuts<TItem extends { action: () => void }
 
       if (cmdOrCtrl && e.key === "n") {
         e.preventDefault();
+        if (busyAction) return;
         if (selectedNodeId) {
           void handleContextAddChild(selectedNodeId);
         }
@@ -156,6 +166,7 @@ export function usePlannerKeyboardShortcuts<TItem extends { action: () => void }
 
       if (cmdOrCtrl && e.key === "d") {
         e.preventDefault();
+        if (busyAction) return;
         if (selectedNodeId) {
           void handleContextDuplicate(selectedNodeId);
         }
@@ -164,11 +175,13 @@ export function usePlannerKeyboardShortcuts<TItem extends { action: () => void }
 
       if ((e.key === "Delete" || e.key === "Backspace") && !e.shiftKey && !cmdOrCtrl) {
         e.preventDefault();
-        if (activePortalRefId) {
+        if (busyAction) return;
+        const deleteTarget = resolveDeleteShortcutTarget(activePortalRefId, selectedNodeId);
+        if (deleteTarget === "bubble" && activePortalRefId) {
           void deletePortalByRefId(activePortalRefId);
           return;
         }
-        if (selectedNodeId) {
+        if (deleteTarget === "node" && selectedNodeId) {
           void handleContextDelete(selectedNodeId);
         }
         return;
@@ -181,6 +194,10 @@ export function usePlannerKeyboardShortcuts<TItem extends { action: () => void }
       }
 
       if (e.key === "Escape") {
+        if (activePortalRefId) {
+          setActivePortalRefId(null);
+          return;
+        }
         if (mobileQuickEditorOpen) {
           setMobileQuickEditorOpen(false);
           return;
