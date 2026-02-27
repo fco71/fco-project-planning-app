@@ -64,6 +64,7 @@ type BuildPlannerWorkspaceBundleParamsInput = {
   setNodeTaskStatus: SidebarMobilePanelsParams["setNodeTaskStatus"];
   toggleNodeCollapse: SidebarMobilePanelsParams["toggleNodeCollapse"];
   createChild: SidebarMobilePanelsParams["createChild"];
+  handleContextAddStorySibling: SidebarMobilePanelsParams["handleContextAddStorySibling"];
   openSelectedAsStoryLane: SidebarMobilePanelsParams["openSelectedAsStoryLane"];
   focusMobileQuickBubbleInput: SidebarMobilePanelsParams["focusMobileQuickBubbleInput"];
   blurActiveInput: SidebarMobilePanelsParams["blurActiveInput"];
@@ -186,6 +187,7 @@ export function buildPlannerWorkspaceBundleParams({
   setNodeTaskStatus,
   toggleNodeCollapse,
   createChild,
+  handleContextAddStorySibling,
   openSelectedAsStoryLane,
   focusMobileQuickBubbleInput,
   blurActiveInput,
@@ -359,6 +361,7 @@ export function buildPlannerWorkspaceBundleParams({
       toggleNodeCollapse,
       setCurrentRootId: plannerState.setCurrentRootId,
       handleContextAddChild: onContextAddChild,
+      handleContextAddStorySibling,
       openSelectedAsStoryLane,
       focusMobileQuickBubbleInput,
       blurActiveInput,

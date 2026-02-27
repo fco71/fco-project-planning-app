@@ -75,6 +75,7 @@ type UsePlannerSidebarPanelsPropsParams = {
   toggleNodeCollapse: (nodeId: string) => void;
   handleContextAddCrossRef: (nodeId: string) => Promise<void> | void;
   handleContextAddChild: (nodeId: string) => Promise<void> | void;
+  handleContextAddStorySibling: (nodeId: string) => Promise<void> | void;
   toggleStoryStepDone: (stepId: string) => Promise<void> | void;
   moveStoryStep: (stepId: string, direction: -1 | 1) => Promise<void> | void;
   deleteStoryStep: (stepId: string) => Promise<void> | void;
@@ -214,6 +215,7 @@ export function usePlannerSidebarPanelsProps({
   toggleNodeCollapse,
   handleContextAddCrossRef,
   handleContextAddChild,
+  handleContextAddStorySibling,
   toggleStoryStepDone,
   moveStoryStep,
   deleteStoryStep,
@@ -369,6 +371,11 @@ export function usePlannerSidebarPanelsProps({
       },
       onOpenSelectedAsStoryLane: openSelectedAsStoryLane,
       onAddChildNode: (nodeId) => {
+        const node = nodesById.get(nodeId);
+        if (node?.kind === "story") {
+          void handleContextAddStorySibling(nodeId);
+          return;
+        }
         void handleContextAddChild(nodeId);
       },
       onToggleStoryStepDone: (stepId) => {

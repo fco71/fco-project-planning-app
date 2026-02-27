@@ -91,6 +91,7 @@ export function MobileQuickEditorSheet({
 }: MobileQuickEditorSheetProps) {
   const touchStartY = useRef<number | null>(null);
   if (!open) return null;
+  const addButtonLabel = selectedNode?.kind === "story" ? "Add Beat" : "Add Child";
 
   return (
     <section
@@ -323,7 +324,7 @@ export function MobileQuickEditorSheet({
               }}
               disabled={busyAction}
             >
-              Add Child
+              {addButtonLabel}
             </button>
           </div>
           {selectedNode.kind === "story" ? (
@@ -335,7 +336,7 @@ export function MobileQuickEditorSheet({
                 }}
                 disabled={busyAction}
               >
-                Add Beat Node
+                Add Next Beat
               </button>
             </div>
           ) : null}

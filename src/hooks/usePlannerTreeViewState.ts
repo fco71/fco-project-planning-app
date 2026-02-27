@@ -184,6 +184,63 @@ export function usePlannerTreeViewState({
     };
 
     walk(currentRootId, 0);
+
+    // Keep regular tree layout, but render story-to-story chains laterally for cleaner beat flow.
+    const chainXGap = 320;
+    const chainChildrenByParent = (parentId: string) =>
+      (childrenByParent.get(parentId) || []).filter((childId) => filteredIdSet.has(childId));
+
+    const shiftVisibleSubtree = (subtreeRootId: string, dx: number, dy: number) => {
+      if (dx === 0 && dy === 0) return;
+      const stack = [subtreeRootId];
+      while (stack.length > 0) {
+        const currentId = stack.pop() as string;
+        const currentPosition = map.get(currentId);
+        if (currentPosition) {
+          map.set(currentId, { x: currentPosition.x + dx, y: currentPosition.y + dy });
+        }
+        if (collapsedNodeIds.has(currentId)) continue;
+        chainChildrenByParent(currentId).forEach((childId) => {
+          stack.push(childId);
+        });
+      }
+    };
+
+    const alignStoryChains = (parentId: string) => {
+      if (collapsedNodeIds.has(parentId)) return;
+      const parentNode = nodesById.get(parentId);
+      const parentPosition = map.get(parentId);
+      if (!parentNode || !parentPosition) return;
+
+      const visibleChildren = chainChildrenByParent(parentId);
+      if (parentNode.kind === "story") {
+        const orderedStoryChildren = visibleChildren
+          .filter((childId) => nodesById.get(childId)?.kind === "story")
+          .sort((a, b) => {
+            const aPosition = map.get(a) || { x: Number.POSITIVE_INFINITY, y: Number.POSITIVE_INFINITY };
+            const bPosition = map.get(b) || { x: Number.POSITIVE_INFINITY, y: Number.POSITIVE_INFINITY };
+            if (aPosition.x !== bPosition.x) return aPosition.x - bPosition.x;
+            if (aPosition.y !== bPosition.y) return aPosition.y - bPosition.y;
+            const aTitle = nodesById.get(a)?.title || "";
+            const bTitle = nodesById.get(b)?.title || "";
+            return aTitle.localeCompare(bTitle);
+          });
+
+        orderedStoryChildren.forEach((childId, index) => {
+          const childPosition = map.get(childId);
+          if (!childPosition) return;
+          const targetX = parentPosition.x + chainXGap * (index + 1);
+          const targetY = parentPosition.y;
+          shiftVisibleSubtree(childId, targetX - childPosition.x, targetY - childPosition.y);
+        });
+      }
+
+      visibleChildren.forEach((childId) => {
+        alignStoryChains(childId);
+      });
+    };
+
+    alignStoryChains(currentRootId);
     return map;
   }, [childrenByParent, collapsedNodeIds, currentRootId, currentRootKind, filteredTreeIds, nodesById, storyLaneMode]);
 

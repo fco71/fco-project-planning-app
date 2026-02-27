@@ -144,6 +144,7 @@ export function buildPlannerWorkspaceBundleParamsFromBundles({
     setNodeTaskStatus: mutation.setNodeTaskStatus,
     toggleNodeCollapse: canvasGraph.toggleNodeCollapse,
     createChild: mutation.createChild,
+    handleContextAddStorySibling: mutation.handleContextAddStorySibling,
     openSelectedAsStoryLane: navigation.openSelectedAsStoryLane,
     focusMobileQuickBubbleInput,
     blurActiveInput,

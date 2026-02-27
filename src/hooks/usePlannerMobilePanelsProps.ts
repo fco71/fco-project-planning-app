@@ -44,6 +44,7 @@ type UsePlannerMobilePanelsPropsParams = {
   toggleNodeCollapse: (nodeId: string) => void;
   setCurrentRootId: (nodeId: string | null) => void;
   handleContextAddChild: (nodeId: string) => void | Promise<void>;
+  handleContextAddStorySibling: (nodeId: string) => void | Promise<void>;
   openSelectedAsStoryLane: () => void;
   focusMobileQuickBubbleInput: (delayMs?: number) => void;
   blurActiveInput: () => void;
@@ -102,6 +103,7 @@ export function usePlannerMobilePanelsProps({
   toggleNodeCollapse,
   setCurrentRootId,
   handleContextAddChild,
+  handleContextAddStorySibling,
   openSelectedAsStoryLane,
   focusMobileQuickBubbleInput,
   blurActiveInput,
@@ -167,7 +169,13 @@ export function usePlannerMobilePanelsProps({
       onChangeType: (nodeId) => handleContextChangeType(nodeId),
       onToggleNodeCollapse: toggleNodeCollapse,
       onFocusHere: setCurrentRootId,
-      onAddChild: handleContextAddChild,
+      onAddChild: (nodeId) => {
+        const node = nodesById.get(nodeId);
+        if (node?.kind === "story") {
+          return handleContextAddStorySibling(nodeId);
+        }
+        return handleContextAddChild(nodeId);
+      },
       onOpenSelectedAsStoryLane: openSelectedAsStoryLane,
       onOpenFullNodePanel: () => {
         setMobileSidebarSection("node");

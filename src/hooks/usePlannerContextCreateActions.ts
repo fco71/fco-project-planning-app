@@ -92,29 +92,45 @@ export function usePlannerContextCreateActions({
       const baseNode = nodesById.get(nodeId);
       if (!baseNode || baseNode.kind !== "story") return;
       const basePosition = resolveNodePosition(nodeId);
-      const directStoryChildren = (childrenByParent.get(nodeId) || [])
+      const parentNode = baseNode.parentId ? nodesById.get(baseNode.parentId) : null;
+      const storyParentId = parentNode && parentNode.kind === "story" ? parentNode.id : nodeId;
+      const directStoryChildren = (childrenByParent.get(storyParentId) || [])
         .map((id) => nodesById.get(id))
         .filter((entry): entry is TreeNode => !!entry && entry.kind === "story");
+      const laneStoryIds = new Set(directStoryChildren.map((entry) => entry.id));
+      laneStoryIds.add(nodeId);
       const maxBeatX = directStoryChildren.reduce(
         (maxX, storyChild) => Math.max(maxX, resolveNodePosition(storyChild.id).x),
-        basePosition.x
+        Array.from(laneStoryIds).reduce((maxX, storyId) => Math.max(maxX, resolveNodePosition(storyId).x), basePosition.x)
       );
+      const newId = newNodeDocId();
+      const nodeData: TreeNodeDoc = {
+        title: "New Story Beat",
+        parentId: storyParentId,
+        kind: "story",
+        x: maxBeatX + 320,
+        y: basePosition.y,
+      };
 
-      const newDoc = doc(collection(firestore, "users", userUid, "nodes"));
+      pushHistory({
+        id: crypto.randomUUID(),
+        label: 'Create "New Story Beat"',
+        forwardLocal: [{ target: "nodes", op: "add", node: { ...nodeData, id: newId } }],
+        forwardFirestore: [{ kind: "setNode", nodeId: newId, data: nodeData }],
+        inverseLocal: [{ target: "nodes", op: "remove", nodeIds: [newId] }],
+        inverseFirestore: [{ kind: "deleteNode", nodeId: newId }],
+      });
+
       setBusyAction(true);
       setError(null);
       try {
-        await setDoc(doc(firestore, "users", userUid, "nodes", newDoc.id), {
-          title: "New Story Beat",
-          parentId: nodeId,
-          kind: "story",
-          x: maxBeatX + 320,
-          y: basePosition.y,
+        await setDoc(doc(firestore, "users", userUid, "nodes", newId), {
+          ...nodeData,
           createdAt: serverTimestamp(),
           updatedAt: serverTimestamp(),
         } satisfies TreeNodeDoc & { createdAt: unknown; updatedAt: unknown });
-        setPendingSelectedNodeId(newDoc.id);
-        setPendingRenameNodeId(newDoc.id);
+        setPendingSelectedNodeId(newId);
+        setPendingRenameNodeId(newId);
       } catch (actionError: unknown) {
         setError(actionError instanceof Error ? actionError.message : "Could not create story sibling.");
       } finally {
@@ -124,7 +140,9 @@ export function usePlannerContextCreateActions({
     [
       childrenByParent,
       firestore,
+      newNodeDocId,
       nodesById,
+      pushHistory,
       resolveNodePosition,
       setBusyAction,
       setError,

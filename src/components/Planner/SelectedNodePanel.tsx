@@ -238,7 +238,7 @@ export function SelectedNodePanel({
                   }}
                   disabled={busyAction}
                 >
-                  Add beat node
+                  Add next beat
                 </button>
               </div>
               <p className="planner-subtle">
