@@ -1,6 +1,7 @@
 import { useEffect } from "react";
 import type { Dispatch, MutableRefObject, SetStateAction } from "react";
 import type { LocalOp } from "./useUndoRedo";
+import { showPlannerShortcutsHelp } from "../utils/shortcutsHelp";
 
 type UsePlannerKeyboardShortcutsParams<TItem extends { action: () => void }> = {
   paletteOpen: boolean;
@@ -104,6 +105,12 @@ export function usePlannerKeyboardShortcuts<TItem extends { action: () => void }
           }
           return next;
         });
+        return;
+      }
+
+      if (cmdOrCtrl && (e.key === "?" || (e.key === "/" && e.shiftKey))) {
+        e.preventDefault();
+        showPlannerShortcutsHelp();
         return;
       }
 

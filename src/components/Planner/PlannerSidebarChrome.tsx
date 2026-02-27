@@ -124,7 +124,7 @@ export function PlannerSidebarChrome({
               </div>
             ) : null}
             <button className="planner-palette-launcher" onClick={onOpenPalette} data-testid="planner-command-palette-button">
-              Command palette (Cmd/Ctrl+K)
+              Command palette (Cmd/Ctrl+K) · Shortcuts (Cmd/Ctrl+?)
             </button>
             {!isMobileLayout ? (
               <div className="planner-top-actions">

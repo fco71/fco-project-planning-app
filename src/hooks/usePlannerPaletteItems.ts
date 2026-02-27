@@ -1,6 +1,7 @@
 import { useMemo } from "react";
 import type { CrossRef, NodeKind, TreeNode } from "../types/planner";
 import { buildNodePath } from "../utils/treeUtils";
+import { showPlannerShortcutsHelp } from "../utils/shortcutsHelp";
 
 export type PaletteItem = {
   id: string;
@@ -80,6 +81,13 @@ export function usePlannerPaletteItems({
 
     addItem("cmd-grandmother", "Open top view (root)", "Navigation", goGrandmotherView, "top root grandmother home");
     addItem("cmd-up", "Go to parent view", "Navigation", goUpOneView, "up parent back one level");
+    addItem(
+      "cmd-shortcuts-help",
+      "Show keyboard shortcuts",
+      "Help",
+      showPlannerShortcutsHelp,
+      "keyboard shortcuts hotkeys help cmd ctrl"
+    );
     addItem("cmd-organize-tree", "Clean up tree layout", "Layout", organizeVisibleTree, "cleanup organize layout tidy tree auto arrange");
     if (crossReferencesEnabled && !bubblesSimplifiedMode) {
       addItem(

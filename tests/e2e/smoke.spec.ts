@@ -44,6 +44,12 @@ test("forgot password screen is reachable from sign in", async ({ page }) => {
     test.skip(true, "Session is already authenticated.");
   }
 
+  const signInForm = page.getByTestId("auth-signin-form");
+  await signInForm.waitFor({ state: "visible", timeout: 5000 }).catch(() => undefined);
+  if (!(await signInForm.isVisible().catch(() => false))) {
+    test.skip(true, "Sign-in form is not visible in this environment.");
+  }
+
   const forgotButton = page.getByTestId("auth-forgot-password-button");
   if (!(await forgotButton.isVisible().catch(() => false))) {
     test.skip(true, "Sign-in form is not visible in this environment.");

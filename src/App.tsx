@@ -1,7 +1,7 @@
 import { Suspense, lazy } from "react";
 import { useAuth } from "./auth/AuthProvider";
-import LoginPage from "./pages/LoginPage";
 
+const LoginPage = lazy(() => import("./pages/LoginPage"));
 const PlannerPage = lazy(() => import("./pages/PlannerPage"));
 
 function LoadingFallback() {
@@ -16,7 +16,11 @@ export default function App() {
   }
 
   if (!user) {
-    return <LoginPage />;
+    return (
+      <Suspense fallback={<LoadingFallback />}>
+        <LoginPage />
+      </Suspense>
+    );
   }
 
   return (
