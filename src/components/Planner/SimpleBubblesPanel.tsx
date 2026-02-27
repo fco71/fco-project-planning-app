@@ -70,6 +70,10 @@ export function SimpleBubblesPanel({
   onSaveMobileQuickBubbleName,
   onUpdateCrossRefColor,
 }: SimpleBubblesPanelProps) {
+  const recoverableTargetId = !bubbleTargetNode && selectedNodeId && nodesById.has(selectedNodeId)
+    ? selectedNodeId
+    : null;
+
   return (
     <div id="cross-ref-bubbles-panel" className="planner-panel-block" data-testid="planner-bubbles-panel">
       <div className="planner-panel-title-row">
@@ -95,9 +99,20 @@ export function SimpleBubblesPanel({
               {bubbleTargetNode.title}
             </div>
           ) : (
-            <p className="planner-subtle">
-              Tap a node on the canvas first. Bubble actions always apply to that selected node.
-            </p>
+            <>
+              <p className="planner-subtle">
+                Tap a node on the canvas first. Bubble actions always apply to that selected node.
+              </p>
+              {recoverableTargetId ? (
+                <button
+                  type="button"
+                  onClick={() => onSelectBubbleTarget(recoverableTargetId)}
+                  data-testid="planner-bubble-recover-target-button"
+                >
+                  Use selected node
+                </button>
+              ) : null}
+            </>
           )}
         </>
       ) : (
