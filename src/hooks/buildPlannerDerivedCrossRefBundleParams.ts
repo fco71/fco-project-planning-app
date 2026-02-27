@@ -14,7 +14,6 @@ type BuildPlannerDerivedCrossRefBundleParamsInput = {
   nodesById: ViewDerivedParams["nodesById"];
   childrenByParent: ViewDerivedParams["childrenByParent"];
   visibleTreeIdSet: CrossRefDerivedParams["visibleTreeIdSet"];
-  effectiveBubbleTargetId: CrossRefDerivedParams["effectiveBubbleTargetId"];
   resolveNodePosition: DefaultPortalPositionParams["resolveNodePosition"];
   defaultPortalPositionForAnchor: DefaultPortalPositionParams["defaultPortalPositionForAnchor"];
   persistNodeBody: BodySaveParams["persistNodeBody"];
@@ -26,7 +25,6 @@ export function buildPlannerDerivedCrossRefBundleParams({
   nodesById,
   childrenByParent,
   visibleTreeIdSet,
-  effectiveBubbleTargetId,
   resolveNodePosition,
   defaultPortalPositionForAnchor,
   persistNodeBody,
@@ -47,7 +45,6 @@ export function buildPlannerDerivedCrossRefBundleParams({
       visibleTreeIdSet,
       selectedNodeId: plannerState.selectedNodeId,
       activePortalRefId: plannerState.activePortalRefId,
-      effectiveBubbleTargetId,
       editRefId: plannerState.editRefId,
       refSearchQuery: plannerState.refSearchQuery,
       refCategoryFilter: plannerState.refCategoryFilter,

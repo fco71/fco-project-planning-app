@@ -67,8 +67,9 @@ export function usePlannerVisiblePortals({
     if (!crossReferencesEnabled) return [];
     const PORTAL_SIZE = isMobileLayout ? 48 : 40;
     const STACK_GAP = isMobileLayout ? 56 : 50;
-    const STACK_VERTICAL_GAP = isMobileLayout ? 74 : 70;
-    const SIDE_GAP = isMobileLayout ? 72 : 66;
+    // Slightly closer anchor spacing while preserving collision resolution behavior.
+    const STACK_VERTICAL_GAP = isMobileLayout ? 68 : 64;
+    const SIDE_GAP = isMobileLayout ? 66 : 60;
     const COLUMN_GAP = isMobileLayout ? 30 : 26;
     const NODE_FALLBACK_WIDTH = isMobileLayout ? 280 : 260;
     const NODE_FALLBACK_HEIGHT = isMobileLayout ? 96 : 80;

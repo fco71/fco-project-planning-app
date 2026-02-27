@@ -47,14 +47,13 @@ describe("buildPlannerDerivedCrossRefBundleParams", () => {
       nodesById: new Map(),
       childrenByParent: new Map(),
       visibleTreeIdSet: new Set<string>(["node-1"]),
-      effectiveBubbleTargetId: "node-1",
       resolveNodePosition: vi.fn(() => ({ x: 10, y: 20 })),
       defaultPortalPositionForAnchor: vi.fn(() => ({ x: 11, y: 22 })),
       persistNodeBody: vi.fn(),
     });
 
     expect(params.viewDerived.currentRootId).toBe("root-1");
-    expect(params.crossRefDerived.effectiveBubbleTargetId).toBe("node-1");
+    expect(params.crossRefDerived.selectedNodeId).toBe("node-1");
     expect(params.crossRefDerived.refs).toBe(plannerState.refs);
     expect(params.crossRefUiSync.setEditRefId).toBe(plannerState.setEditRefId);
     expect(params.bodySave.bodyDraft).toBe("Body draft");

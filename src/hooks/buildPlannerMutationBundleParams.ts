@@ -124,7 +124,7 @@ export function buildPlannerMutationBundleParams({
       setActivePortalRefId: plannerState.setActivePortalRefId,
       setBusyAction: plannerState.setBusyAction,
       setError: plannerState.setError,
-      effectiveBubbleTargetId: plannerState.selectedNodeId || null,
+      selectedNodeId: plannerState.selectedNodeId,
       newRefCode: plannerState.newRefCode,
       newRefLabel: plannerState.newRefLabel,
       newRefColor: plannerState.newRefColor,

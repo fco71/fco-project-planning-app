@@ -22,7 +22,7 @@ type MobileQuickEditorSheetProps = {
   newRefLabel: string;
   onNewRefLabelChange: (value: string) => void;
   canCreateBubbleFromInput: boolean;
-  onCreateCrossRef: (nodeId: string) => void | Promise<void>;
+  onCreateCrossRef: () => void | Promise<void>;
   onOpenMobileQuickBubble: (nodeId: string, focusInput?: boolean) => void;
   bodyDraft: string;
   onBodyDraftChange: (value: string) => void;
@@ -180,14 +180,14 @@ export function MobileQuickEditorSheet({
                         if (event.key !== "Enter") return;
                         event.preventDefault();
                         if (busyAction || !canCreateBubbleFromInput) return;
-                        void onCreateCrossRef(selectedNode.id);
+                        void onCreateCrossRef();
                       }}
                       placeholder="Bubble name"
                     />
                     <button
                       type="button"
                       onClick={() => {
-                        void onCreateCrossRef(selectedNode.id);
+                        void onCreateCrossRef();
                       }}
                       disabled={busyAction || !canCreateBubbleFromInput}
                     >
@@ -234,7 +234,7 @@ export function MobileQuickEditorSheet({
                       if (event.key !== "Enter") return;
                       event.preventDefault();
                       if (busyAction || !selectedNodeId || !canCreateBubbleFromInput) return;
-                      void onCreateCrossRef(selectedNode.id);
+                      void onCreateCrossRef();
                     }}
                     placeholder="Bubble name"
                   />
@@ -253,7 +253,7 @@ export function MobileQuickEditorSheet({
                     />
                     <button
                       onClick={() => {
-                        void onCreateCrossRef(selectedNode.id);
+                        void onCreateCrossRef();
                       }}
                       disabled={busyAction || !selectedNodeId || !canCreateBubbleFromInput}
                     >

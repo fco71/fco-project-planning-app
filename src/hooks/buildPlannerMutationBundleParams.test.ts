@@ -100,7 +100,7 @@ describe("buildPlannerMutationBundleParams", () => {
     });
 
     expect(params.createDelete.newChildTitle).toBe("New Child");
-    expect(params.crossRef.effectiveBubbleTargetId).toBe("node-1");
+    expect(params.crossRef.selectedNodeId).toBe("node-1");
     expect(params.context.openBubblesPanel).toBe(openBubblesPanel);
     expect(params.context.openMobileQuickBubble).toBe(openMobileQuickBubble);
     expect(params.drag.dropTargetIdRef).toBe(plannerState.dropTargetIdRef);

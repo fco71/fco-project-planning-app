@@ -12,7 +12,6 @@ type UsePlannerCrossRefDerivedStateParams = {
   visibleTreeIdSet: Set<string>;
   selectedNodeId: string | null;
   activePortalRefId: string | null;
-  effectiveBubbleTargetId: string | null;
   editRefId: string;
   refSearchQuery: string;
   refCategoryFilter: RefCategoryFilter;
@@ -40,7 +39,6 @@ export function usePlannerCrossRefDerivedState({
   visibleTreeIdSet,
   selectedNodeId,
   activePortalRefId,
-  effectiveBubbleTargetId,
   editRefId,
   refSearchQuery,
   refCategoryFilter,
@@ -105,19 +103,19 @@ export function usePlannerCrossRefDerivedState({
   }, [refCategoryFilter, refScopeFilter, refSearchQuery, refs, visibleTreeIdSet]);
 
   const newRefSuggestions = useMemo(() => {
-    if (!effectiveBubbleTargetId) return [] as CrossRef[];
+    if (!selectedNodeId) return [] as CrossRef[];
     const labelQuery = newRefLabel.trim().toLowerCase();
     const codeQuery = normalizeCode(newRefCode.trim());
     if (!labelQuery && !newRefCode.trim()) return [] as CrossRef[];
     return refs
-      .filter((ref) => !ref.nodeIds.includes(effectiveBubbleTargetId))
+      .filter((ref) => !ref.nodeIds.includes(selectedNodeId))
       .filter((ref) => {
         const labelMatches = labelQuery ? ref.label.toLowerCase().includes(labelQuery) : false;
         const codeMatches = newRefCode.trim().length > 0 ? ref.code.includes(codeQuery) : false;
         return labelMatches || codeMatches;
       })
       .slice(0, 6);
-  }, [effectiveBubbleTargetId, newRefCode, newRefLabel, refs]);
+  }, [selectedNodeId, newRefCode, newRefLabel, refs]);
 
   const nextAutoBubbleCode = useMemo(() => nextBubbleCode(refs.map((ref) => ref.code)), [refs]);
 

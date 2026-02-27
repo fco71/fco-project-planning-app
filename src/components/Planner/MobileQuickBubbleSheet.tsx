@@ -13,7 +13,7 @@ type MobileQuickBubbleSheetProps = {
   onNewRefLabelChange: (value: string) => void;
   busyAction: boolean;
   canCreateBubbleFromInput: boolean;
-  onCreateBubble: (nodeId: string) => Promise<void> | void;
+  onCreateBubble: () => Promise<void> | void;
   focusMobileQuickBubbleInput: (delayMs?: number) => void;
   blurActiveInput: () => void;
   openBubblesPanel: (focusInput?: boolean) => void;
@@ -96,7 +96,7 @@ export function MobileQuickBubbleSheet({
       setMobileQuickAddSuccess(null);
       successTimeoutRef.current = null;
     }, 2200);
-    void Promise.resolve(onCreateBubble(selectedNode.id)).then(() => {
+    void Promise.resolve(onCreateBubble()).then(() => {
       focusMobileQuickBubbleInput(30);
     });
   };

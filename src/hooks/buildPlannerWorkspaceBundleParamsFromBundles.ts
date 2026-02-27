@@ -181,8 +181,6 @@ export function buildPlannerWorkspaceBundleParamsFromBundles({
     moveStoryStep: mutation.moveStoryStep,
     deleteStoryStep: mutation.deleteStoryStep,
     addStoryStep: mutation.addStoryStep,
-    bubbleTargetNode: selectedNode,
-    effectiveBubbleTargetId: plannerState.selectedNodeId || null,
     activePortalTargets: derived.activePortalTargets,
     newRefSuggestions: derived.newRefSuggestions,
     describeRefTargets: derived.describeRefTargets,

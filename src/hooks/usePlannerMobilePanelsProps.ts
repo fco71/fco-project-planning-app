@@ -34,7 +34,7 @@ type UsePlannerMobilePanelsPropsParams = {
   mobileQuickBubbleEditName: string;
   defaultBubbleColor: string;
   renameSelected: () => void | Promise<void>;
-  createCrossRef: (nodeId: string) => void | Promise<void>;
+  createCrossRef: () => void | Promise<void>;
   openMobileQuickBubble: (nodeId: string, focusInput?: boolean) => void;
   saveSelectedBody: () => void | Promise<void>;
   applyBubbleSuggestion: (ref: CrossRef) => void;
@@ -149,7 +149,7 @@ export function usePlannerMobilePanelsProps({
       newRefLabel,
       onNewRefLabelChange: setNewRefLabel,
       canCreateBubbleFromInput,
-      onCreateCrossRef: createCrossRef,
+      onCreateCrossRef: () => createCrossRef(),
       onOpenMobileQuickBubble: openMobileQuickBubble,
       bodyDraft,
       onBodyDraftChange: setBodyDraft,
@@ -193,7 +193,7 @@ export function usePlannerMobilePanelsProps({
       onNewRefLabelChange: setNewRefLabel,
       busyAction,
       canCreateBubbleFromInput,
-      onCreateBubble: createCrossRef,
+      onCreateBubble: () => createCrossRef(),
       focusMobileQuickBubbleInput,
       blurActiveInput,
       openBubblesPanel,

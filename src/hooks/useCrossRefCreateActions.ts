@@ -37,7 +37,7 @@ type UseCrossRefCreateActionsParams = {
   firestore: Firestore | null;
   userUid: string;
   refs: CrossRef[];
-  effectiveBubbleTargetId: string | null;
+  selectedNodeId: string | null;
   newRefCode: string;
   newRefLabel: string;
   newRefColor: string;
@@ -64,7 +64,7 @@ export function useCrossRefCreateActions({
   firestore,
   userUid,
   refs,
-  effectiveBubbleTargetId,
+  selectedNodeId,
   newRefCode,
   newRefLabel,
   newRefColor,
@@ -87,12 +87,11 @@ export function useCrossRefCreateActions({
   setRefs,
 }: UseCrossRefCreateActionsParams) {
   const createCrossRef = useCallback(
-    async (targetNodeIdOverride?: unknown) => {
+    async () => {
       if (!firestore) return;
 
       const plan = resolveCreateCrossRefPlan({
-        targetNodeIdOverride,
-        effectiveBubbleTargetId,
+        selectedNodeId,
         refs,
         newRefCode,
         newRefLabel,
@@ -255,7 +254,6 @@ export function useCrossRefCreateActions({
       buildDefaultPortalPosition,
       chooseAnchorNodeId,
       defaultBubbleColor,
-      effectiveBubbleTargetId,
       firestore,
       hydrateRefEditor,
       newRefCode,
@@ -266,6 +264,7 @@ export function useCrossRefCreateActions({
       refs,
       resolveNodePosition,
       resolvePortalFollowPosition,
+      selectedNodeId,
       setActivePortalRefId,
       setBusyAction,
       setError,

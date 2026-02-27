@@ -81,12 +81,10 @@ type UsePlannerSidebarPanelsPropsParams = {
   deleteStoryStep: (stepId: string) => Promise<void> | void;
   addStoryStep: () => Promise<void> | void;
 
-  bubbleTargetNode: TreeNode | null | undefined;
   isMobileLayout: boolean;
   selectedNodeRefs: CrossRef[];
   activePortalRef: CrossRef | null;
   mobileQuickBubbleEditName: string;
-  effectiveBubbleTargetId: string | null;
   newRefLabelInputRef: RefObject<HTMLInputElement | null>;
   newRefLabel: string;
   setNewRefLabel: Dispatch<SetStateAction<string>>;
@@ -99,7 +97,7 @@ type UsePlannerSidebarPanelsPropsParams = {
   canCreateBubbleFromInput: boolean;
   bubblePrefixSuggestions: CrossRef[];
   defaultBubbleColor: string;
-  createCrossRef: (targetNodeIdOverride?: unknown) => Promise<void> | void;
+  createCrossRef: () => Promise<void> | void;
   openMobileQuickBubble: (targetNodeId?: string, focusInput?: boolean) => void;
   blurActiveInput: () => void;
   applyBubbleSuggestion: (ref: CrossRef) => void;
@@ -223,12 +221,10 @@ export function usePlannerSidebarPanelsProps({
   moveStoryStep,
   deleteStoryStep,
   addStoryStep,
-  bubbleTargetNode,
   isMobileLayout,
   selectedNodeRefs,
   activePortalRef,
   mobileQuickBubbleEditName,
-  effectiveBubbleTargetId,
   newRefLabelInputRef,
   newRefLabel,
   setNewRefLabel,
@@ -396,15 +392,14 @@ export function usePlannerSidebarPanelsProps({
       onAddStoryStep: addStoryStep,
     },
     simpleBubblesPanelProps: {
-      bubbleTargetNode,
       nodesById,
       isMobileLayout,
       busyAction,
       selectedNodeId,
+      selectedNode: selectedNode || null,
       selectedNodeRefs,
       activePortalRef,
       mobileQuickBubbleEditName,
-      effectiveBubbleTargetId,
       newRefLabelInputRef,
       newRefLabel,
       onNewRefLabelChange: setNewRefLabel,

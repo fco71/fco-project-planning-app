@@ -17,8 +17,7 @@ export type ResolvedCreateCrossRefPlan = {
 };
 
 type ResolveCreateCrossRefPlanParams = {
-  targetNodeIdOverride?: unknown;
-  effectiveBubbleTargetId: string | null;
+  selectedNodeId: string | null;
   refs: CrossRef[];
   newRefCode: string;
   newRefLabel: string;
@@ -30,8 +29,7 @@ type ResolveCreateCrossRefPlanParams = {
 };
 
 export function resolveCreateCrossRefPlan({
-  targetNodeIdOverride,
-  effectiveBubbleTargetId,
+  selectedNodeId,
   refs,
   newRefCode,
   newRefLabel,
@@ -41,8 +39,7 @@ export function resolveCreateCrossRefPlan({
   bubblesSimplifiedMode,
   defaultBubbleColor,
 }: ResolveCreateCrossRefPlanParams): ResolvedCreateCrossRefPlan | null {
-  const targetNodeId =
-    typeof targetNodeIdOverride === "string" ? targetNodeIdOverride : effectiveBubbleTargetId;
+  const targetNodeId = selectedNodeId;
   if (!targetNodeId || typeof targetNodeId !== "string") return null;
 
   const typedCode = newRefCode.trim() ? normalizeCode(newRefCode) : "";

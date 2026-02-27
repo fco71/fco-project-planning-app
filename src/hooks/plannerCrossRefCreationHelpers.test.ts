@@ -30,7 +30,7 @@ function makeRef(overrides: Partial<CrossRef> = {}): CrossRef {
 describe("plannerCrossRefCreationHelpers", () => {
   it("returns null when target node cannot be resolved", () => {
     const plan = resolveCreateCrossRefPlan({
-      effectiveBubbleTargetId: null,
+      selectedNodeId: null,
       refs: [],
       newRefCode: "",
       newRefLabel: "Alpha",
@@ -55,7 +55,7 @@ describe("plannerCrossRefCreationHelpers", () => {
       links: ["https://x.com"],
     });
     const plan = resolveCreateCrossRefPlan({
-      effectiveBubbleTargetId: "node-1",
+      selectedNodeId: "node-1",
       refs: [template],
       newRefCode: "mpto",
       newRefLabel: "Ignored",
@@ -80,7 +80,7 @@ describe("plannerCrossRefCreationHelpers", () => {
 
   it("derives initials-based code in non-simplified mode when no code typed", () => {
     const plan = resolveCreateCrossRefPlan({
-      effectiveBubbleTargetId: "node-2",
+      selectedNodeId: "node-2",
       refs: [],
       newRefCode: "",
       newRefLabel: "Venture Partner",

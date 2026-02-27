@@ -32,7 +32,7 @@ type UsePlannerCrossRefActionsParams = {
   setActivePortalRefId: Dispatch<SetStateAction<string | null>>;
   setBusyAction: Dispatch<SetStateAction<boolean>>;
   setError: Dispatch<SetStateAction<string | null>>;
-  effectiveBubbleTargetId: string | null;
+  selectedNodeId: string | null;
   newRefCode: string;
   newRefLabel: string;
   newRefColor: string;
@@ -83,7 +83,7 @@ export function usePlannerCrossRefActions({
   setActivePortalRefId,
   setBusyAction,
   setError,
-  effectiveBubbleTargetId,
+  selectedNodeId,
   newRefCode,
   newRefLabel,
   newRefColor,
@@ -139,7 +139,7 @@ export function usePlannerCrossRefActions({
     firestore,
     userUid,
     refs,
-    effectiveBubbleTargetId,
+    selectedNodeId,
     newRefCode,
     newRefLabel,
     newRefColor,

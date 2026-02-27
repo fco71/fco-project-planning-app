@@ -59,7 +59,6 @@ export function usePlannerWorkspaceOrchestration({
   const {
     nodes, setNodes,
     refs, setRefs,
-    selectedNodeId,
     sidebarCollapsed,
     isMobileLayout,
     mobileSidebarOpen,
@@ -114,8 +113,6 @@ export function usePlannerWorkspaceOrchestration({
       nodesById,
     })
   );
-
-  const effectiveBubbleTargetId = selectedNodeId || null;
 
   const {
     openBubblesPanel,
@@ -197,7 +194,6 @@ export function usePlannerWorkspaceOrchestration({
       nodesById,
       childrenByParent,
       visibleTreeIdSet,
-      effectiveBubbleTargetId,
       resolveNodePosition,
       defaultPortalPositionForAnchor,
       persistNodeBody,

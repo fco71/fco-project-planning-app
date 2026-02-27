@@ -101,8 +101,6 @@ type BuildPlannerWorkspaceBundleParamsInput = {
   moveStoryStep: SidebarMobilePanelsParams["moveStoryStep"];
   deleteStoryStep: SidebarMobilePanelsParams["deleteStoryStep"];
   addStoryStep: SidebarMobilePanelsParams["addStoryStep"];
-  bubbleTargetNode: SidebarMobilePanelsParams["bubbleTargetNode"];
-  effectiveBubbleTargetId: SidebarMobilePanelsParams["effectiveBubbleTargetId"];
   activePortalTargets: SidebarMobilePanelsParams["activePortalTargets"];
   newRefSuggestions: SidebarMobilePanelsParams["newRefSuggestions"];
   describeRefTargets: SidebarMobilePanelsParams["describeRefTargets"];
@@ -224,8 +222,6 @@ export function buildPlannerWorkspaceBundleParams({
   moveStoryStep,
   deleteStoryStep,
   addStoryStep,
-  bubbleTargetNode,
-  effectiveBubbleTargetId,
   activePortalTargets,
   newRefSuggestions,
   describeRefTargets,
@@ -426,8 +422,6 @@ export function buildPlannerWorkspaceBundleParams({
       moveStoryStep,
       deleteStoryStep,
       addStoryStep,
-      bubbleTargetNode,
-      effectiveBubbleTargetId,
       newRefLabelInputRef: plannerState.newRefLabelInputRef,
       refs,
       activePortalTargets,

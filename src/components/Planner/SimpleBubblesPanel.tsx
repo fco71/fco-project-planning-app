@@ -4,7 +4,7 @@ import type { CrossRef, TreeNode } from "../../types/planner";
 import { buildBubbleChipStyle } from "../../utils/bubbleChipStyle";
 
 type SimpleBubblesPanelProps = {
-  bubbleTargetNode: TreeNode | null | undefined;
+  selectedNode: TreeNode | null;
   nodesById: Map<string, TreeNode>;
   isMobileLayout: boolean;
   busyAction: boolean;
@@ -12,7 +12,6 @@ type SimpleBubblesPanelProps = {
   selectedNodeRefs: CrossRef[];
   activePortalRef: CrossRef | null;
   mobileQuickBubbleEditName: string;
-  effectiveBubbleTargetId: string | null;
   newRefLabelInputRef: RefObject<HTMLInputElement | null>;
   newRefLabel: string;
   onNewRefLabelChange: (value: string) => void;
@@ -38,7 +37,7 @@ type SimpleBubblesPanelProps = {
 };
 
 export function SimpleBubblesPanel({
-  bubbleTargetNode,
+  selectedNode,
   nodesById,
   isMobileLayout,
   busyAction,
@@ -46,7 +45,6 @@ export function SimpleBubblesPanel({
   selectedNodeRefs,
   activePortalRef,
   mobileQuickBubbleEditName,
-  effectiveBubbleTargetId,
   newRefLabelInputRef,
   newRefLabel,
   onNewRefLabelChange,
@@ -70,7 +68,7 @@ export function SimpleBubblesPanel({
   onSaveMobileQuickBubbleName,
   onUpdateCrossRefColor,
 }: SimpleBubblesPanelProps) {
-  const recoverableTargetId = !bubbleTargetNode && selectedNodeId && nodesById.has(selectedNodeId)
+  const recoverableTargetId = !selectedNode && selectedNodeId && nodesById.has(selectedNodeId)
     ? selectedNodeId
     : null;
 
@@ -80,11 +78,11 @@ export function SimpleBubblesPanel({
         <h3>Bubbles</h3>
         {isMobileLayout ? (
           <span
-            className={`planner-bubble-target-badge ${bubbleTargetNode ? "is-active" : "is-empty"}`}
-            title={bubbleTargetNode ? buildNodePath(bubbleTargetNode.id, nodesById) : "No node selected"}
+            className={`planner-bubble-target-badge ${selectedNode ? "is-active" : "is-empty"}`}
+            title={selectedNode ? buildNodePath(selectedNode.id, nodesById) : "No node selected"}
             data-testid="planner-bubble-target-badge"
           >
-            {bubbleTargetNode ? `Target: ${bubbleTargetNode.title}` : "Target: none"}
+            {selectedNode ? `Target: ${selectedNode.title}` : "Target: none"}
           </span>
         ) : null}
       </div>
@@ -94,9 +92,9 @@ export function SimpleBubblesPanel({
       {isMobileLayout ? (
         <>
           <div className="planner-row-label">Selected node</div>
-          {bubbleTargetNode ? (
+          {selectedNode ? (
             <div className="planner-subtle planner-mobile-selected-node-label">
-              {bubbleTargetNode.title}
+              {selectedNode.title}
             </div>
           ) : (
             <>
@@ -119,22 +117,22 @@ export function SimpleBubblesPanel({
         <>
           <div className="planner-row-label">Selected node target</div>
           <div className="planner-chip-list">
-            {bubbleTargetNode ? (
+            {selectedNode ? (
               <button
                 className="chip"
-                onClick={() => onSelectBubbleTarget(bubbleTargetNode.id)}
-                title={buildNodePath(bubbleTargetNode.id, nodesById)}
+                onClick={() => onSelectBubbleTarget(selectedNode.id)}
+                title={buildNodePath(selectedNode.id, nodesById)}
                 data-testid="planner-bubble-target-chip"
               >
-                {bubbleTargetNode.title}
+                {selectedNode.title}
               </button>
             ) : (
               <span className="planner-subtle">Tap a node, then add a bubble.</span>
             )}
           </div>
-          {bubbleTargetNode ? (
+          {selectedNode ? (
             <div className="planner-path planner-bubble-target-path">
-              {buildNodePath(bubbleTargetNode.id, nodesById)}
+              {buildNodePath(selectedNode.id, nodesById)}
             </div>
           ) : (
             <p className="planner-subtle">
@@ -146,7 +144,7 @@ export function SimpleBubblesPanel({
       {isMobileLayout ? (
         <>
           <div className="planner-row-label">
-            {bubbleTargetNode ? `Add bubble to: ${bubbleTargetNode.title}` : "Tap a node first"}
+            {selectedNode ? `Add bubble to: ${selectedNode.title}` : "Tap a node first"}
           </div>
           <div className="planner-inline-buttons planner-mobile-bubble-input-row">
             <input
@@ -156,7 +154,7 @@ export function SimpleBubblesPanel({
               onKeyDown={(event) => {
                 if (event.key !== "Enter") return;
                 event.preventDefault();
-                if (busyAction || !effectiveBubbleTargetId || !canCreateBubbleFromInput) return;
+                if (busyAction || !selectedNodeId || !canCreateBubbleFromInput) return;
                 void onCreateCrossRef();
               }}
               placeholder="Bubble name"
@@ -166,13 +164,13 @@ export function SimpleBubblesPanel({
               onClick={() => {
                 void onCreateCrossRef();
               }}
-              disabled={busyAction || !effectiveBubbleTargetId || !canCreateBubbleFromInput}
+              disabled={busyAction || !selectedNodeId || !canCreateBubbleFromInput}
               data-testid="planner-bubble-add-button"
             >
               Add
             </button>
           </div>
-          {!effectiveBubbleTargetId ? (
+          {!selectedNodeId ? (
             <p className="planner-subtle">Select a node on the canvas first. Bubble add is node-specific.</p>
           ) : null}
           <div className="planner-inline-buttons planner-mobile-bubble-aux-row">
@@ -181,8 +179,8 @@ export function SimpleBubblesPanel({
             </button>
             <button
               type="button"
-              onClick={() => onOpenMobileQuickBubble(effectiveBubbleTargetId || undefined, true)}
-              disabled={!effectiveBubbleTargetId}
+              onClick={() => onOpenMobileQuickBubble(selectedNodeId || undefined, true)}
+              disabled={!selectedNodeId}
               data-testid="planner-bubble-quick-add-button"
             >
               Manage this node
@@ -217,8 +215,8 @@ export function SimpleBubblesPanel({
               </div>
               <button
                 type="button"
-                onClick={() => onOpenMobileQuickBubble(effectiveBubbleTargetId || undefined, true)}
-                disabled={!effectiveBubbleTargetId}
+                onClick={() => onOpenMobileQuickBubble(selectedNodeId || undefined, true)}
+                disabled={!selectedNodeId}
                 data-testid="planner-bubble-open-quick-add-button"
               >
                 Open dedicated quick-add sheet
@@ -320,7 +318,7 @@ export function SimpleBubblesPanel({
       ) : (
         <>
           <div className="planner-row-label">
-            {bubbleTargetNode ? `Add bubble to: ${bubbleTargetNode.title}` : "Tap a node first"}
+            {selectedNode ? `Add bubble to: ${selectedNode.title}` : "Tap a node first"}
           </div>
           <input
             ref={newRefLabelInputRef}
@@ -329,7 +327,7 @@ export function SimpleBubblesPanel({
             onKeyDown={(event) => {
               if (event.key !== "Enter") return;
               event.preventDefault();
-              if (busyAction || !effectiveBubbleTargetId || !canCreateBubbleFromInput) return;
+              if (busyAction || !selectedNodeId || !canCreateBubbleFromInput) return;
               void onCreateCrossRef();
             }}
             placeholder="Bubble name"
@@ -339,10 +337,10 @@ export function SimpleBubblesPanel({
             onClick={() => {
               void onCreateCrossRef();
             }}
-            disabled={busyAction || !effectiveBubbleTargetId || !canCreateBubbleFromInput}
+            disabled={busyAction || !selectedNodeId || !canCreateBubbleFromInput}
             data-testid="planner-bubble-add-button"
           >
-            {effectiveBubbleTargetId ? "Add Bubble to Selected Node" : "Select Node to Add Bubble"}
+            {selectedNodeId ? "Add Bubble to Selected Node" : "Select Node to Add Bubble"}
           </button>
           <div className="planner-inline-buttons">
             <label className="planner-bubble-color-input-wrap">
@@ -392,7 +390,7 @@ export function SimpleBubblesPanel({
       {!isMobileLayout ? (
         <>
           <div className="planner-row-label">
-            {bubbleTargetNode ? `Bubbles on ${bubbleTargetNode.title}` : "Bubbles on selected node"}
+            {selectedNode ? `Bubbles on ${selectedNode.title}` : "Bubbles on selected node"}
           </div>
           <div className="planner-chip-list">
             {selectedNodeRefs.length === 0 || !selectedNodeId ? (

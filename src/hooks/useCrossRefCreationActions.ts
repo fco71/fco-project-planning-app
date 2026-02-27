@@ -20,7 +20,7 @@ type UseCrossRefCreationActionsParams = {
   firestore: Firestore | null;
   userUid: string;
   refs: CrossRef[];
-  effectiveBubbleTargetId: string | null;
+  selectedNodeId: string | null;
   newRefCode: string;
   newRefLabel: string;
   newRefColor: string;
@@ -51,7 +51,7 @@ export function useCrossRefCreationActions({
   firestore,
   userUid,
   refs,
-  effectiveBubbleTargetId,
+  selectedNodeId,
   newRefCode,
   newRefLabel,
   newRefColor,
@@ -109,7 +109,7 @@ export function useCrossRefCreationActions({
     firestore,
     userUid,
     refs,
-    effectiveBubbleTargetId,
+    selectedNodeId,
     newRefCode,
     newRefLabel,
     newRefColor,
