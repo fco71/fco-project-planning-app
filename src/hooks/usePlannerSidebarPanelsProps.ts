@@ -99,9 +99,6 @@ type UsePlannerSidebarPanelsPropsParams = {
   defaultBubbleColor: string;
   createCrossRef: (targetNodeIdOverride?: unknown) => Promise<void> | void;
   openMobileQuickBubble: (targetNodeId?: string, focusInput?: boolean) => void;
-  setMobileQuickBubbleOpen: Dispatch<SetStateAction<boolean>>;
-  setMobileSidebarOpen: Dispatch<SetStateAction<boolean>>;
-  setMobileQuickEditorOpen: Dispatch<SetStateAction<boolean>>;
   blurActiveInput: () => void;
   applyBubbleSuggestion: (ref: CrossRef) => void;
   deletePortalByRefId: (refId: string) => Promise<void> | void;
@@ -240,9 +237,6 @@ export function usePlannerSidebarPanelsProps({
   defaultBubbleColor,
   createCrossRef,
   openMobileQuickBubble,
-  setMobileQuickBubbleOpen,
-  setMobileSidebarOpen,
-  setMobileQuickEditorOpen,
   blurActiveInput,
   applyBubbleSuggestion,
   deletePortalByRefId,
@@ -415,11 +409,6 @@ export function usePlannerSidebarPanelsProps({
       },
       onCreateCrossRef: () => Promise.resolve(createCrossRef()),
       onOpenMobileQuickBubble: openMobileQuickBubble,
-      onCloseMobilePanels: () => {
-        setMobileQuickBubbleOpen(false);
-        setMobileSidebarOpen(false);
-        setMobileQuickEditorOpen(false);
-      },
       onBlurActiveInput: blurActiveInput,
       onApplyBubbleSuggestion: applyBubbleSuggestion,
       onToggleActivePortalRef: (refId) => {

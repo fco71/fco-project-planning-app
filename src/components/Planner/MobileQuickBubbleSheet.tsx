@@ -1,4 +1,4 @@
-import { useRef } from "react";
+import { useEffect, useRef, useState } from "react";
 import type { RefObject } from "react";
 import type { CrossRef, TreeNode } from "../../types/planner";
 import { buildNodePathTail } from "../../utils/treeUtils";
@@ -70,6 +70,33 @@ export function MobileQuickBubbleSheet({
   onClose,
 }: MobileQuickBubbleSheetProps) {
   const touchStartY = useRef<number | null>(null);
+  const successTimeoutRef = useRef<number | null>(null);
+  const [mobileQuickAddSuccess, setMobileQuickAddSuccess] = useState<string | null>(null);
+
+  useEffect(() => {
+    return () => {
+      if (successTimeoutRef.current === null) return;
+      window.clearTimeout(successTimeoutRef.current);
+      successTimeoutRef.current = null;
+    };
+  }, []);
+
+  const handleAddBubble = () => {
+    if (!selectedNode || busyAction || !canCreateBubbleFromInput) return;
+    if (successTimeoutRef.current !== null) {
+      window.clearTimeout(successTimeoutRef.current);
+      successTimeoutRef.current = null;
+    }
+    setMobileQuickAddSuccess(newRefLabel.trim() || "Bubble");
+    successTimeoutRef.current = window.setTimeout(() => {
+      setMobileQuickAddSuccess(null);
+      successTimeoutRef.current = null;
+    }, 2200);
+    void Promise.resolve(onCreateBubble(selectedNode.id)).then(() => {
+      focusMobileQuickBubbleInput(30);
+    });
+  };
+
   if (!open) return null;
 
   return (
@@ -101,7 +128,7 @@ export function MobileQuickBubbleSheet({
             <span>bubble</span>
           </div>
           <div className="planner-mobile-sheet-path planner-mobile-sheet-path-tail">
-            {buildNodePathTail(selectedNode.id, nodesById, 3)}
+            Selected node · {buildNodePathTail(selectedNode.id, nodesById, 2)}
           </div>
           <div className="planner-row-label">Bubble name</div>
           <div className="planner-inline-buttons planner-mobile-bubble-input-row">
@@ -112,33 +139,35 @@ export function MobileQuickBubbleSheet({
               onKeyDown={(event) => {
                 if (event.key !== "Enter") return;
                 event.preventDefault();
-                if (busyAction || !canCreateBubbleFromInput) return;
-                void Promise.resolve(onCreateBubble(selectedNode.id)).then(() => {
-                  focusMobileQuickBubbleInput(30);
-                });
+                handleAddBubble();
               }}
               placeholder="Bubble name"
               data-testid="planner-mobile-quick-bubble-name-input"
             />
             <button
               type="button"
-              onClick={() => {
-                void Promise.resolve(onCreateBubble(selectedNode.id)).then(() => {
-                  focusMobileQuickBubbleInput(30);
-                });
-              }}
+              onClick={handleAddBubble}
               disabled={busyAction || !canCreateBubbleFromInput}
               data-testid="planner-mobile-quick-bubble-add-button"
             >
               Add
             </button>
           </div>
+          {mobileQuickAddSuccess ? (
+            <div className="planner-mobile-bubble-success" data-testid="planner-mobile-quick-bubble-success">
+              Added: {mobileQuickAddSuccess}
+            </div>
+          ) : (
+            <div className="planner-subtle">
+              {selectedNodeRefs.length} bubble{selectedNodeRefs.length === 1 ? "" : "s"} currently on this node.
+            </div>
+          )}
           <div className="planner-inline-buttons planner-mobile-bubble-aux-row">
             <button type="button" onClick={blurActiveInput} data-testid="planner-mobile-quick-bubble-done-button">
               Done
             </button>
             <button type="button" onClick={() => openBubblesPanel(false)} data-testid="planner-mobile-quick-bubble-manage-button">
-              Manage
+              Full manager
             </button>
           </div>
           <div className="planner-inline-buttons planner-mobile-bubble-meta-row">
@@ -185,9 +214,6 @@ export function MobileQuickBubbleSheet({
               ))}
             </div>
           ) : null}
-          <div className="planner-subtle">
-            {selectedNodeRefs.length} bubble{selectedNodeRefs.length === 1 ? "" : "s"} currently on this node.
-          </div>
           <div className="planner-row-label">Bubbles on this node</div>
           <div className="planner-chip-list">
             {selectedNodeRefs.length === 0 ? (

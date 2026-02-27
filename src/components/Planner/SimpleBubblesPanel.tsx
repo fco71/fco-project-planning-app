@@ -1,5 +1,5 @@
 import type { RefObject } from "react";
-import { buildNodePath, buildNodePathTail } from "../../utils/treeUtils";
+import { buildNodePath } from "../../utils/treeUtils";
 import type { CrossRef, TreeNode } from "../../types/planner";
 import { buildBubbleChipStyle } from "../../utils/bubbleChipStyle";
 
@@ -27,7 +27,6 @@ type SimpleBubblesPanelProps = {
   onSelectBubbleTarget: (nodeId: string) => void;
   onCreateCrossRef: () => Promise<void>;
   onOpenMobileQuickBubble: (targetNodeId?: string, focusInput?: boolean) => void;
-  onCloseMobilePanels: () => void;
   onBlurActiveInput: () => void;
   onApplyBubbleSuggestion: (ref: CrossRef) => void;
   onToggleActivePortalRef: (refId: string) => void;
@@ -59,7 +58,6 @@ export function SimpleBubblesPanel({
   onSelectBubbleTarget,
   onCreateCrossRef,
   onOpenMobileQuickBubble,
-  onCloseMobilePanels,
   onBlurActiveInput,
   onApplyBubbleSuggestion,
   onToggleActivePortalRef,
@@ -72,93 +70,92 @@ export function SimpleBubblesPanel({
       <p className="planner-subtle">
         Local visual bubbles for each node. No cross-linking between nodes.
       </p>
-      <div className="planner-row-label">Selected node target</div>
-      <div className="planner-chip-list">
-        {bubbleTargetNode ? (
-          <button
-            className="chip"
-            onClick={() => onSelectBubbleTarget(bubbleTargetNode.id)}
-            title={buildNodePath(bubbleTargetNode.id, nodesById)}
-            data-testid="planner-bubble-target-chip"
-          >
-            {bubbleTargetNode.title}
-          </button>
-        ) : (
-          <span className="planner-subtle">Tap a node, then add a bubble.</span>
-        )}
-      </div>
-      {bubbleTargetNode ? (
-        <div className={`planner-path planner-bubble-target-path${isMobileLayout ? " planner-path-tail" : ""}`}>
-          {isMobileLayout
-            ? buildNodePathTail(bubbleTargetNode.id, nodesById, 3)
-            : buildNodePath(bubbleTargetNode.id, nodesById)}
-        </div>
+      {isMobileLayout ? (
+        <>
+          <div className="planner-row-label">Selected node</div>
+          {bubbleTargetNode ? (
+            <div className="planner-subtle planner-mobile-selected-node-label">
+              {bubbleTargetNode.title}
+            </div>
+          ) : (
+            <p className="planner-subtle">
+              Tap a node on the canvas first. Bubble actions always apply to that selected node.
+            </p>
+          )}
+        </>
       ) : (
-        <p className="planner-subtle">
-          Tap any node on the canvas. This panel always targets your current selection.
-        </p>
+        <>
+          <div className="planner-row-label">Selected node target</div>
+          <div className="planner-chip-list">
+            {bubbleTargetNode ? (
+              <button
+                className="chip"
+                onClick={() => onSelectBubbleTarget(bubbleTargetNode.id)}
+                title={buildNodePath(bubbleTargetNode.id, nodesById)}
+                data-testid="planner-bubble-target-chip"
+              >
+                {bubbleTargetNode.title}
+              </button>
+            ) : (
+              <span className="planner-subtle">Tap a node, then add a bubble.</span>
+            )}
+          </div>
+          {bubbleTargetNode ? (
+            <div className="planner-path planner-bubble-target-path">
+              {buildNodePath(bubbleTargetNode.id, nodesById)}
+            </div>
+          ) : (
+            <p className="planner-subtle">
+              Tap any node on the canvas. This panel always targets your current selection.
+            </p>
+          )}
+        </>
       )}
       {isMobileLayout ? (
         <>
           <div className="planner-row-label">
-            {bubbleTargetNode ? `Quick add to: ${bubbleTargetNode.title}` : "Tap a node first"}
+            {bubbleTargetNode ? `Add bubble to: ${bubbleTargetNode.title}` : "Tap a node first"}
+          </div>
+          <div className="planner-inline-buttons planner-mobile-bubble-input-row">
+            <input
+              ref={newRefLabelInputRef}
+              value={newRefLabel}
+              onChange={(event) => onNewRefLabelChange(event.target.value)}
+              onKeyDown={(event) => {
+                if (event.key !== "Enter") return;
+                event.preventDefault();
+                if (busyAction || !effectiveBubbleTargetId || !canCreateBubbleFromInput) return;
+                void onCreateCrossRef();
+              }}
+              placeholder="Bubble name"
+              data-testid="planner-bubble-name-input"
+            />
+            <button
+              onClick={() => {
+                void onCreateCrossRef();
+              }}
+              disabled={busyAction || !effectiveBubbleTargetId || !canCreateBubbleFromInput}
+              data-testid="planner-bubble-add-button"
+            >
+              Add
+            </button>
           </div>
           <div className="planner-inline-buttons planner-mobile-bubble-aux-row">
+            <button type="button" onClick={onBlurActiveInput}>
+              Done
+            </button>
             <button
               type="button"
               onClick={() => onOpenMobileQuickBubble(effectiveBubbleTargetId || undefined, true)}
               disabled={!effectiveBubbleTargetId}
               data-testid="planner-bubble-quick-add-button"
             >
-              Quick Add Bubble
-            </button>
-            <button type="button" onClick={onCloseMobilePanels} data-testid="planner-bubble-pick-node-button">
-              Pick Node
+              Open Quick Sheet
             </button>
           </div>
-          <p className="planner-subtle">
-            Quick Add opens a short sheet with one input and one Add button.
-          </p>
           <details className="planner-advanced-tools">
             <summary>Advanced bubble options</summary>
             <div className="planner-advanced-tools-content">
-              <div className="planner-inline-buttons planner-mobile-bubble-input-row">
-                <input
-                  ref={newRefLabelInputRef}
-                  value={newRefLabel}
-                  onChange={(event) => onNewRefLabelChange(event.target.value)}
-                  onKeyDown={(event) => {
-                    if (event.key !== "Enter") return;
-                    event.preventDefault();
-                    if (busyAction || !effectiveBubbleTargetId || !canCreateBubbleFromInput) return;
-                    void onCreateCrossRef();
-                  }}
-                  placeholder="Bubble name"
-                  data-testid="planner-bubble-name-input"
-                />
-                <button
-                  onClick={() => {
-                    void onCreateCrossRef();
-                  }}
-                  disabled={busyAction || !effectiveBubbleTargetId || !canCreateBubbleFromInput}
-                  data-testid="planner-bubble-add-button"
-                >
-                  Add
-                </button>
-              </div>
-              <div className="planner-inline-buttons planner-mobile-bubble-aux-row">
-                <button type="button" onClick={onBlurActiveInput}>
-                  Done
-                </button>
-                <button
-                  type="button"
-                  onClick={() => onOpenMobileQuickBubble(effectiveBubbleTargetId || undefined, true)}
-                  disabled={!effectiveBubbleTargetId}
-                  data-testid="planner-bubble-open-quick-add-button"
-                >
-                  Open Quick Add
-                </button>
-              </div>
               <div className="planner-inline-buttons">
                 <label className="planner-bubble-color-input-wrap">
                   <span className="planner-subtle planner-subtle-11">Color</span>
@@ -183,6 +180,14 @@ export function SimpleBubblesPanel({
                   </span>
                 </div>
               </div>
+              <button
+                type="button"
+                onClick={() => onOpenMobileQuickBubble(effectiveBubbleTargetId || undefined, true)}
+                disabled={!effectiveBubbleTargetId}
+                data-testid="planner-bubble-open-quick-add-button"
+              >
+                Open dedicated quick-add sheet
+              </button>
               {bubblePrefixSuggestions.length > 0 ? (
                 <>
                   <div className="planner-row-label">Similar bubble styles</div>
