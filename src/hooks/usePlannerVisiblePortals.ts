@@ -68,8 +68,8 @@ export function usePlannerVisiblePortals({
     const PORTAL_SIZE = isMobileLayout ? 48 : 40;
     const STACK_GAP = isMobileLayout ? 56 : 50;
     // Keep bubbles clearly near their node; collision logic still prevents overlap.
-    const STACK_VERTICAL_GAP = isMobileLayout ? 56 : 52;
-    const SIDE_GAP = isMobileLayout ? 54 : 48;
+    const STACK_VERTICAL_GAP = isMobileLayout ? 46 : 42;
+    const SIDE_GAP = isMobileLayout ? 44 : 38;
     const COLUMN_GAP = isMobileLayout ? 30 : 26;
     const NODE_FALLBACK_WIDTH = isMobileLayout ? 280 : 260;
     const NODE_FALLBACK_HEIGHT = isMobileLayout ? 96 : 80;
@@ -103,12 +103,11 @@ export function usePlannerVisiblePortals({
         maxY: nodeBounds[0].y + nodeBounds[0].height,
       }
     );
-    const sceneMidX = (sceneBounds.minX + sceneBounds.maxX) / 2;
-    const sceneMidY = (sceneBounds.minY + sceneBounds.maxY) / 2;
-    const minX = sceneBounds.minX - (isMobileLayout ? 80 : 90);
-    const maxX = sceneBounds.maxX + (isMobileLayout ? 120 : 130);
-    const minY = sceneBounds.minY - (isMobileLayout ? 60 : 70);
-    const maxY = sceneBounds.maxY + (isMobileLayout ? 80 : 90);
+    // Use generous world bounds so collapsing distant branches does not clamp/move unrelated bubbles.
+    const minX = sceneBounds.minX - (isMobileLayout ? 240 : 260);
+    const maxX = sceneBounds.maxX + (isMobileLayout ? 320 : 340);
+    const minY = sceneBounds.minY - (isMobileLayout ? 220 : 240);
+    const maxY = sceneBounds.maxY + (isMobileLayout ? 260 : 280);
 
     const refsByAnchor = new Map<string, CrossRef[]>();
     for (const ref of refs) {
@@ -125,14 +124,8 @@ export function usePlannerVisiblePortals({
 
     const result: Node[] = [];
     const placedPortalRects: Rect[] = [];
-    const anchorOrder = Array.from(refsByAnchor.keys()).sort((a, b) => {
-      const aBounds = boundsByNodeId.get(a);
-      const bBounds = boundsByNodeId.get(b);
-      if (!aBounds || !bBounds) return a.localeCompare(b);
-      if (aBounds.y !== bBounds.y) return aBounds.y - bBounds.y;
-      if (aBounds.x !== bBounds.x) return aBounds.x - bBounds.x;
-      return a.localeCompare(b);
-    });
+    // Keep order stable by id so collapsing one subtree doesn't reorder the whole bubble pass.
+    const anchorOrder = Array.from(refsByAnchor.keys()).sort((a, b) => a.localeCompare(b));
 
     for (const anchorNodeId of anchorOrder) {
       const anchorRefs = refsByAnchor.get(anchorNodeId);
@@ -164,13 +157,33 @@ export function usePlannerVisiblePortals({
       const anchorNudge = getNudge(anchorNodeId, 10, 6);
       const stackHeight = (anchorRefs.length - 1) * STACK_GAP;
       const stackX = anchorBounds.x + anchorBounds.width / 2 - PORTAL_SIZE / 2 + anchorNudge.x * 0.22;
-      const placeBelow = anchorBounds.y + anchorBounds.height / 2 <= sceneMidY;
-      let stackStartY = placeBelow
-        ? anchorBounds.y + anchorBounds.height + STACK_VERTICAL_GAP
-        : anchorBounds.y - STACK_VERTICAL_GAP - stackHeight - PORTAL_SIZE;
-      stackStartY = clamp(stackStartY + anchorNudge.y * 0.26, minY, maxY - stackHeight - PORTAL_SIZE);
+      const stackStartBelow = anchorBounds.y + anchorBounds.height + STACK_VERTICAL_GAP + anchorNudge.y * 0.26;
+      const stackStartAbove = anchorBounds.y - STACK_VERTICAL_GAP - stackHeight - PORTAL_SIZE + anchorNudge.y * 0.26;
+      const estimateStackCollisions = (startY: number) => {
+        let score = 0;
+        for (let i = 0; i < anchorRefs.length; i += 1) {
+          const probe: Rect = {
+            x: stackX,
+            y: startY + i * STACK_GAP,
+            width: PORTAL_SIZE,
+            height: PORTAL_SIZE,
+          };
+          if (
+            nodeBounds.some((rect) => rect.id !== anchorNodeId && intersectsRect(probe, rect))
+          ) {
+            score += 1;
+          }
+        }
+        return score;
+      };
+      const belowCollisionScore = estimateStackCollisions(stackStartBelow);
+      const aboveCollisionScore = estimateStackCollisions(stackStartAbove);
+      const placeBelow = belowCollisionScore <= aboveCollisionScore;
+      let stackStartY = placeBelow ? stackStartBelow : stackStartAbove;
+      stackStartY = clamp(stackStartY, minY, maxY - stackHeight - PORTAL_SIZE);
 
-      const sideDirection: -1 | 1 = anchorBounds.x + anchorBounds.width / 2 >= sceneMidX ? -1 : 1;
+      const sideDirectionNudge = getNudge(`${anchorNodeId}:side`, 1, 0);
+      const sideDirection: -1 | 1 = sideDirectionNudge.x < 0 ? -1 : 1;
       const sideX = anchorBounds.x + (sideDirection === -1 ? -(SIDE_GAP + PORTAL_SIZE) : anchorBounds.width + SIDE_GAP);
       let sideStartY = anchorBounds.y + anchorBounds.height / 2 - stackHeight / 2 + anchorNudge.y * 0.22;
       sideStartY = clamp(sideStartY, minY, maxY - stackHeight - PORTAL_SIZE);
