@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import type { RefObject } from "react";
 import type { CrossRef, TreeNode } from "../../types/planner";
 import { buildNodePathTail, normalizeCode } from "../../utils/treeUtils";
@@ -75,6 +75,11 @@ export function MobileQuickBubbleSheet({
   const mobileQuickBubbleEditInputRef = useRef<HTMLInputElement | null>(null);
   const [mobileQuickAddSuccess, setMobileQuickAddSuccess] = useState<string | null>(null);
   const [manageExpanded, setManageExpanded] = useState(false);
+  const [selectedLibraryRefId, setSelectedLibraryRefId] = useState("");
+  const libraryBubbleOptions = useMemo(
+    () => bubblePrefixSuggestions.slice(0, 24),
+    [bubblePrefixSuggestions]
+  );
 
   useEffect(() => {
     return () => {
@@ -118,12 +123,29 @@ export function MobileQuickBubbleSheet({
     }, 80);
   }, [activePortalRef, open, selectedNode]);
 
+  const triggerLibraryAdd = (ref: CrossRef) => {
+    setMobileQuickAddSuccess(ref.label);
+    if (successTimeoutRef.current !== null) {
+      window.clearTimeout(successTimeoutRef.current);
+    }
+    successTimeoutRef.current = window.setTimeout(() => {
+      setMobileQuickAddSuccess(null);
+      successTimeoutRef.current = null;
+    }, 2200);
+    void Promise.resolve(onCreateBubbleFromLibrary(ref)).then(() => {
+      focusMobileQuickBubbleInput(30);
+    });
+  };
+
   if (!open) return null;
   const hasBubbleQuery = newRefLabel.trim().length > 0 || newRefCode.trim().length > 0;
   const typedCode = newRefCode.trim() ? normalizeCode(newRefCode) : "";
   const codeMatch = typedCode
-    ? bubblePrefixSuggestions.find((ref) => ref.code === typedCode) || null
+    ? libraryBubbleOptions.find((ref) => ref.code === typedCode) || null
     : null;
+  const resolvedSelectedLibraryRefId = libraryBubbleOptions.some((ref) => ref.id === selectedLibraryRefId)
+    ? selectedLibraryRefId
+    : "";
   const autoExpandManage = !!(
     selectedNode
     && activePortalRef
@@ -189,6 +211,41 @@ export function MobileQuickBubbleSheet({
               New code: <strong>{effectiveNewBubbleCode}</strong>
             </span>
           </div>
+          {libraryBubbleOptions.length > 0 ? (
+            <>
+              <div className="planner-row-label">Add Existing Bubble Code</div>
+              <div className="planner-inline-buttons planner-bubble-library-row">
+                <select
+                  value={resolvedSelectedLibraryRefId}
+                  onChange={(event) => {
+                    const nextRefId = event.target.value;
+                    setSelectedLibraryRefId(nextRefId);
+                    const picked = libraryBubbleOptions.find((ref) => ref.id === nextRefId);
+                    if (picked) onNewRefCodeChange(picked.code);
+                  }}
+                >
+                  <option value="">Select existing code...</option>
+                  {libraryBubbleOptions.map((ref) => (
+                    <option key={`mobile-bubble-code:${ref.id}`} value={ref.id}>
+                      {`${ref.code} · ${ref.label}`}
+                    </option>
+                  ))}
+                </select>
+                <button
+                  type="button"
+                  onClick={() => {
+                    if (!resolvedSelectedLibraryRefId || !selectedNode || busyAction) return;
+                    const picked = libraryBubbleOptions.find((ref) => ref.id === resolvedSelectedLibraryRefId);
+                    if (!picked) return;
+                    triggerLibraryAdd(picked);
+                  }}
+                  disabled={!resolvedSelectedLibraryRefId || !selectedNode || busyAction}
+                >
+                  Add Existing Bubble Code
+                </button>
+              </div>
+            </>
+          ) : null}
           {codeMatch ? (
             <p className="planner-subtle">
               Reusing style from <strong>{codeMatch.code} · {codeMatch.label}</strong>. Tap Add.
@@ -233,26 +290,16 @@ export function MobileQuickBubbleSheet({
               </div>
             </details>
           </div>
-          {bubblePrefixSuggestions.length > 0 ? (
+          {libraryBubbleOptions.length > 0 ? (
             <>
               <div className="planner-row-label">{hasBubbleQuery ? "Matching bubble library" : "Recent bubble library"}</div>
               <div className="planner-chip-list">
-              {bubblePrefixSuggestions.slice(0, 4).map((ref) => (
+              {libraryBubbleOptions.slice(0, 4).map((ref) => (
                 <button
                   key={`mobile-quick-template:${ref.id}`}
                   className="chip bubble-chip"
                   onClick={() => {
-                    setMobileQuickAddSuccess(ref.label);
-                    if (successTimeoutRef.current !== null) {
-                      window.clearTimeout(successTimeoutRef.current);
-                    }
-                    successTimeoutRef.current = window.setTimeout(() => {
-                      setMobileQuickAddSuccess(null);
-                      successTimeoutRef.current = null;
-                    }, 2200);
-                    void Promise.resolve(onCreateBubbleFromLibrary(ref)).then(() => {
-                      focusMobileQuickBubbleInput(30);
-                    });
+                    triggerLibraryAdd(ref);
                   }}
                   title={`Use style from ${ref.label} (${ref.code})`}
                   style={buildBubbleChipStyle(ref.color)}

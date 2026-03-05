@@ -1,4 +1,4 @@
-import type { RefObject } from "react";
+import { useMemo, useState, type RefObject } from "react";
 import { buildNodePath, normalizeCode } from "../../utils/treeUtils";
 import type { CrossRef, TreeNode } from "../../types/planner";
 import { buildBubbleChipStyle } from "../../utils/bubbleChipStyle";
@@ -68,14 +68,30 @@ export function SimpleBubblesPanel({
   onSaveMobileQuickBubbleName,
   onUpdateCrossRefColor,
 }: SimpleBubblesPanelProps) {
+  const [selectedLibraryRefId, setSelectedLibraryRefId] = useState("");
   const recoverableTargetId = !selectedNode && selectedNodeId && nodesById.has(selectedNodeId)
     ? selectedNodeId
     : null;
   const hasBubbleQuery = newRefLabel.trim().length > 0 || newRefCode.trim().length > 0;
+  const libraryBubbleOptions = useMemo(
+    () => bubblePrefixSuggestions.slice(0, 24),
+    [bubblePrefixSuggestions]
+  );
   const typedCode = newRefCode.trim() ? normalizeCode(newRefCode) : "";
   const codeMatch = typedCode
-    ? bubblePrefixSuggestions.find((ref) => ref.code === typedCode) || null
+    ? libraryBubbleOptions.find((ref) => ref.code === typedCode) || null
     : null;
+  const resolvedSelectedLibraryRefId = libraryBubbleOptions.some((ref) => ref.id === selectedLibraryRefId)
+    ? selectedLibraryRefId
+    : "";
+
+  const addExistingBubbleFromCode = () => {
+    if (busyAction || !selectedNodeId || !resolvedSelectedLibraryRefId) return;
+    const selectedLibraryRef = libraryBubbleOptions.find((ref) => ref.id === resolvedSelectedLibraryRefId);
+    if (!selectedLibraryRef) return;
+    onNewRefCodeChange(selectedLibraryRef.code);
+    void onCreateCrossRefFromLibrary(selectedLibraryRef);
+  };
 
   return (
     <div id="cross-ref-bubbles-panel" className="planner-panel-block" data-testid="planner-bubbles-panel">
@@ -237,11 +253,37 @@ export function SimpleBubblesPanel({
               </button>
             </div>
           </details>
-          {bubblePrefixSuggestions.length > 0 ? (
+          {libraryBubbleOptions.length > 0 ? (
             <>
+              <div className="planner-row-label">Add Existing Bubble Code</div>
+              <div className="planner-inline-buttons planner-bubble-library-row">
+                <select
+                  value={resolvedSelectedLibraryRefId}
+                  onChange={(event) => {
+                    const nextRefId = event.target.value;
+                    setSelectedLibraryRefId(nextRefId);
+                    const picked = libraryBubbleOptions.find((ref) => ref.id === nextRefId);
+                    if (picked) onNewRefCodeChange(picked.code);
+                  }}
+                >
+                  <option value="">Select existing code...</option>
+                  {libraryBubbleOptions.map((ref) => (
+                    <option key={`bubble-code:${ref.id}`} value={ref.id}>
+                      {`${ref.code} · ${ref.label}`}
+                    </option>
+                  ))}
+                </select>
+                <button
+                  type="button"
+                  onClick={addExistingBubbleFromCode}
+                  disabled={busyAction || !selectedNodeId || !resolvedSelectedLibraryRefId}
+                >
+                  Add Existing Bubble Code
+                </button>
+              </div>
               <div className="planner-row-label">{hasBubbleQuery ? "Matching bubble library" : "Recent bubble library"}</div>
               <div className="planner-chip-list">
-                    {bubblePrefixSuggestions.map((ref) => (
+                    {libraryBubbleOptions.slice(0, 8).map((ref) => (
                       <button
                         key={`template:${ref.id}`}
                         className="chip bubble-chip"
@@ -383,11 +425,37 @@ export function SimpleBubblesPanel({
               </span>
             </div>
           </div>
-          {bubblePrefixSuggestions.length > 0 ? (
+          {libraryBubbleOptions.length > 0 ? (
             <>
+              <div className="planner-row-label">Add Existing Bubble Code</div>
+              <div className="planner-inline-buttons planner-bubble-library-row">
+                <select
+                  value={resolvedSelectedLibraryRefId}
+                  onChange={(event) => {
+                    const nextRefId = event.target.value;
+                    setSelectedLibraryRefId(nextRefId);
+                    const picked = libraryBubbleOptions.find((ref) => ref.id === nextRefId);
+                    if (picked) onNewRefCodeChange(picked.code);
+                  }}
+                >
+                  <option value="">Select existing code...</option>
+                  {libraryBubbleOptions.map((ref) => (
+                    <option key={`bubble-code:${ref.id}`} value={ref.id}>
+                      {`${ref.code} · ${ref.label}`}
+                    </option>
+                  ))}
+                </select>
+                <button
+                  type="button"
+                  onClick={addExistingBubbleFromCode}
+                  disabled={busyAction || !selectedNodeId || !resolvedSelectedLibraryRefId}
+                >
+                  Add Existing Bubble Code
+                </button>
+              </div>
               <div className="planner-row-label">{hasBubbleQuery ? "Matching bubble library" : "Recent bubble library"}</div>
               <div className="planner-chip-list">
-                {bubblePrefixSuggestions.map((ref) => (
+                {libraryBubbleOptions.slice(0, 8).map((ref) => (
                   <button
                     key={`template:${ref.id}`}
                     className="chip bubble-chip"

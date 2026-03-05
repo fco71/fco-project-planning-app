@@ -1069,6 +1069,16 @@ button {
   align-items: center;
 }
 
+.planner-bubble-library-row {
+  grid-template-columns: minmax(0, 1fr);
+  align-items: center;
+}
+
+.planner-bubble-library-row button {
+  white-space: nowrap;
+  justify-self: start;
+}
+
 .planner-mobile-bubble-advanced {
   width: 100%;
 }
@@ -1871,6 +1881,10 @@ button {
   }
 
   .planner-shell.mobile .planner-mobile-bubble-meta-row {
+    grid-template-columns: minmax(0, 1fr);
+  }
+
+  .planner-shell.mobile .planner-bubble-library-row {
     grid-template-columns: minmax(0, 1fr);
   }
 

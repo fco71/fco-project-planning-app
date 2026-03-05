@@ -152,7 +152,7 @@ export function usePlannerCrossRefDerivedState({
         dedupe.add(key);
         return true;
       })
-      .slice(0, 6);
+      .slice(0, 24);
   }, [newRefCode, newRefLabel, refs]);
 
   const editableRef = useMemo(() => {
