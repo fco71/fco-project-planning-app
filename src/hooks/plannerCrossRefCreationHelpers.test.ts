@@ -43,7 +43,7 @@ describe("plannerCrossRefCreationHelpers", () => {
     expect(plan).toBeNull();
   });
 
-  it("inherits template values when code matches existing bubble", () => {
+  it("inherits template values when code matches existing bubble but keeps typed label", () => {
     const template = makeRef({
       label: "Mario Pinto",
       code: "MPTO",
@@ -68,7 +68,7 @@ describe("plannerCrossRefCreationHelpers", () => {
 
     expect(plan).not.toBeNull();
     expect(plan?.targetNodeId).toBe("node-1");
-    expect(plan?.label).toBe("Mario Pinto");
+    expect(plan?.label).toBe("Ignored");
     expect(plan?.code).toBe("B099");
     expect(plan?.color).toBe("#FF5500");
     expect(plan?.entityType).toBe("person");
@@ -76,6 +76,33 @@ describe("plannerCrossRefCreationHelpers", () => {
     expect(plan?.notes).toBe("has context");
     expect(plan?.contact).toBe("mario@x.com");
     expect(plan?.links).toEqual(["https://x.com"]);
+  });
+
+  it("extracts code from pasted mixed text and resolves template", () => {
+    const template = makeRef({
+      label: "Mario Pinto",
+      code: "MPTO",
+      color: "#0088FF",
+      entityType: "person",
+    });
+    const plan = resolveCreateCrossRefPlan({
+      selectedNodeId: "node-1",
+      refs: [template],
+      newRefCode: "Mario Pinto (mpto)",
+      newRefLabel: "",
+      newRefColor: "#123456",
+      newRefType: "entity",
+      nextAutoBubbleCode: "B100",
+      bubblesSimplifiedMode: true,
+      defaultBubbleColor: "#40B6FF",
+    });
+
+    expect(plan).not.toBeNull();
+    expect(plan?.typedCode).toBe("MPTO");
+    expect(plan?.label).toBe("Mario Pinto");
+    expect(plan?.code).toBe("B100");
+    expect(plan?.color).toBe("#0088FF");
+    expect(plan?.entityType).toBe("person");
   });
 
   it("derives initials-based code in non-simplified mode when no code typed", () => {

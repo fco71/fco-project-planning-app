@@ -151,7 +151,7 @@ describe("buildPlannerWorkspaceBundleParamsFromBundles", () => {
       deletePortalByRefId: vi.fn(),
       renameSelected: vi.fn(),
       createCrossRef: vi.fn(),
-      applyBubbleSuggestion: vi.fn(),
+      createCrossRefFromTemplate: vi.fn(),
       setNodeTaskStatus: vi.fn(),
       createChild: vi.fn(),
       saveMobileQuickBubbleName: vi.fn(),

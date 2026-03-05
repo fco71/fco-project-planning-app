@@ -1,5 +1,5 @@
 import type { RefObject } from "react";
-import { buildNodePath } from "../../utils/treeUtils";
+import { buildNodePath, normalizeCode } from "../../utils/treeUtils";
 import type { CrossRef, TreeNode } from "../../types/planner";
 import { buildBubbleChipStyle } from "../../utils/bubbleChipStyle";
 
@@ -28,7 +28,7 @@ type SimpleBubblesPanelProps = {
   onCreateCrossRef: () => Promise<void>;
   onOpenMobileQuickBubble: (targetNodeId?: string, focusInput?: boolean) => void;
   onBlurActiveInput: () => void;
-  onApplyBubbleSuggestion: (ref: CrossRef) => void;
+  onCreateCrossRefFromLibrary: (ref: CrossRef) => Promise<void> | void;
   onToggleActivePortalRef: (refId: string) => void;
   onDeletePortalByRefId: (refId: string) => void;
   onMobileQuickBubbleEditNameChange: (value: string) => void;
@@ -61,7 +61,7 @@ export function SimpleBubblesPanel({
   onCreateCrossRef,
   onOpenMobileQuickBubble,
   onBlurActiveInput,
-  onApplyBubbleSuggestion,
+  onCreateCrossRefFromLibrary,
   onToggleActivePortalRef,
   onDeletePortalByRefId,
   onMobileQuickBubbleEditNameChange,
@@ -70,6 +70,11 @@ export function SimpleBubblesPanel({
 }: SimpleBubblesPanelProps) {
   const recoverableTargetId = !selectedNode && selectedNodeId && nodesById.has(selectedNodeId)
     ? selectedNodeId
+    : null;
+  const hasBubbleQuery = newRefLabel.trim().length > 0 || newRefCode.trim().length > 0;
+  const typedCode = newRefCode.trim() ? normalizeCode(newRefCode) : "";
+  const codeMatch = typedCode
+    ? bubblePrefixSuggestions.find((ref) => ref.code === typedCode) || null
     : null;
 
   return (
@@ -170,6 +175,27 @@ export function SimpleBubblesPanel({
               Add
             </button>
           </div>
+          <div className="planner-inline-buttons planner-mobile-bubble-meta-row">
+            <input
+              value={newRefCode}
+              onChange={(event) => onNewRefCodeChange(event.target.value)}
+              placeholder={`Paste code to reuse (e.g. B012)`}
+              className="planner-flex-1"
+              data-testid="planner-bubble-code-input"
+            />
+            <span className="planner-subtle planner-subtle-11">
+              New code: <strong>{effectiveNewBubbleCode}</strong>
+            </span>
+          </div>
+          {codeMatch ? (
+            <p className="planner-subtle">
+              Reusing style from <strong>{codeMatch.code} · {codeMatch.label}</strong>. Tap Add to clone on this node.
+            </p>
+          ) : typedCode ? (
+            <p className="planner-subtle">
+              No existing bubble found for code <strong>{typedCode}</strong>. Enter a name to create a new style.
+            </p>
+          ) : null}
           {!selectedNodeId ? (
             <p className="planner-subtle">Select a node on the canvas first. Bubble add is node-specific.</p>
           ) : null}
@@ -200,18 +226,6 @@ export function SimpleBubblesPanel({
                     data-testid="planner-bubble-color-input"
                   />
                 </label>
-                <div className="planner-grid-gap-4 planner-flex-1">
-                  <input
-                    value={newRefCode}
-                    onChange={(event) => onNewRefCodeChange(event.target.value)}
-                    placeholder={`Code (auto ${nextAutoBubbleCode})`}
-                    className="planner-flex-1"
-                    data-testid="planner-bubble-code-input"
-                  />
-                  <span className="planner-subtle planner-subtle-11">
-                    New bubble code: <strong>{effectiveNewBubbleCode}</strong>
-                  </span>
-                </div>
               </div>
               <button
                 type="button"
@@ -221,27 +235,29 @@ export function SimpleBubblesPanel({
               >
                 Open dedicated quick-add sheet
               </button>
-              {bubblePrefixSuggestions.length > 0 ? (
-                <>
-                  <div className="planner-row-label">Similar bubble styles</div>
-                  <div className="planner-chip-list">
+            </div>
+          </details>
+          {bubblePrefixSuggestions.length > 0 ? (
+            <>
+              <div className="planner-row-label">{hasBubbleQuery ? "Matching bubble library" : "Recent bubble library"}</div>
+              <div className="planner-chip-list">
                     {bubblePrefixSuggestions.map((ref) => (
                       <button
                         key={`template:${ref.id}`}
                         className="chip bubble-chip"
-                        onClick={() => onApplyBubbleSuggestion(ref)}
+                        onClick={() => {
+                          void onCreateCrossRefFromLibrary(ref);
+                        }}
                         title={`Use style from ${ref.label} (${ref.code})`}
                         style={buildBubbleChipStyle(ref.color)}
                         data-testid="planner-bubble-suggestion-chip"
-                      >
-                        {ref.label}
-                      </button>
-                    ))}
-                  </div>
-                </>
-              ) : null}
-            </div>
-          </details>
+                  >
+                    {ref.code} · {ref.label}
+                  </button>
+                ))}
+              </div>
+            </>
+          ) : null}
           <details className="planner-advanced-tools">
             <summary>
               Manage bubbles on this node ({selectedNodeRefs.length})
@@ -255,12 +271,12 @@ export function SimpleBubblesPanel({
                     <div key={ref.id} className="chip with-action">
                       <button
                         onClick={() => onToggleActivePortalRef(ref.id)}
-                        title={ref.label}
+                        title={`${ref.code} · ${ref.label}`}
                         className="bubble-chip"
                         style={buildBubbleChipStyle(ref.color)}
                         data-testid="planner-bubble-existing-chip"
                       >
-                        {ref.label}
+                        {ref.code} · {ref.label}
                       </button>
                       <button
                         className="chip-action"
@@ -277,6 +293,7 @@ export function SimpleBubblesPanel({
               {activePortalRef ? (
                 <div className="planner-panel-block planner-panel-block-tight">
                   <div className="planner-row-label">Edit selected bubble</div>
+                  <span className="planner-subtle">{`Code: ${activePortalRef.code}`}</span>
                   <input
                     value={mobileQuickBubbleEditName}
                     onChange={(event) => onMobileQuickBubbleEditNameChange(event.target.value)}
@@ -368,18 +385,20 @@ export function SimpleBubblesPanel({
           </div>
           {bubblePrefixSuggestions.length > 0 ? (
             <>
-              <div className="planner-row-label">Similar bubble styles</div>
+              <div className="planner-row-label">{hasBubbleQuery ? "Matching bubble library" : "Recent bubble library"}</div>
               <div className="planner-chip-list">
                 {bubblePrefixSuggestions.map((ref) => (
                   <button
                     key={`template:${ref.id}`}
                     className="chip bubble-chip"
-                    onClick={() => onApplyBubbleSuggestion(ref)}
+                    onClick={() => {
+                      void onCreateCrossRefFromLibrary(ref);
+                    }}
                     title={`Use style from ${ref.label} (${ref.code})`}
                     style={buildBubbleChipStyle(ref.color)}
                     data-testid="planner-bubble-suggestion-chip"
                   >
-                    {ref.label}
+                    {ref.code} · {ref.label}
                   </button>
                 ))}
               </div>
@@ -400,12 +419,12 @@ export function SimpleBubblesPanel({
                 <div key={ref.id} className="chip with-action">
                   <button
                     onClick={() => onToggleActivePortalRef(ref.id)}
-                    title={ref.label}
+                    title={`${ref.code} · ${ref.label}`}
                     className="bubble-chip"
                     style={buildBubbleChipStyle(ref.color)}
                     data-testid="planner-bubble-existing-chip"
                   >
-                    {ref.label}
+                    {ref.code} · {ref.label}
                   </button>
                   <button
                     className="chip-action"
@@ -422,6 +441,7 @@ export function SimpleBubblesPanel({
           {activePortalRef ? (
             <div className="planner-panel-block planner-panel-block-tight">
               <div className="planner-row-label">Selected bubble</div>
+              <span className="planner-subtle">{`Code: ${activePortalRef.code}`}</span>
               <div className="planner-inline-buttons">
                 <span className="planner-subtle planner-inline-center">{`${activePortalRef.label} (${activePortalRef.code})`}</span>
                 <input

@@ -1065,8 +1065,8 @@ button {
 }
 
 .planner-mobile-bubble-meta-row {
-  grid-template-columns: auto minmax(0, 1fr);
-  align-items: end;
+  grid-template-columns: minmax(0, 1fr);
+  align-items: center;
 }
 
 .planner-mobile-bubble-advanced {
@@ -1871,7 +1871,7 @@ button {
   }
 
   .planner-shell.mobile .planner-mobile-bubble-meta-row {
-    grid-template-columns: auto minmax(0, 1fr);
+    grid-template-columns: minmax(0, 1fr);
   }
 
   .planner-shell.mobile .planner-mobile-bubble-edit-row {

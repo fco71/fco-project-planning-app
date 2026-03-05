@@ -60,7 +60,7 @@ type BuildPlannerWorkspaceBundleParamsInput = {
   createCrossRef: SidebarMobilePanelsParams["createCrossRef"];
   openMobileQuickBubble: SidebarMobilePanelsParams["openMobileQuickBubble"];
   saveSelectedBody: SidebarMobilePanelsParams["saveSelectedBody"];
-  applyBubbleSuggestion: SidebarMobilePanelsParams["applyBubbleSuggestion"];
+  createCrossRefFromTemplate: SidebarMobilePanelsParams["createCrossRefFromTemplate"];
   setNodeTaskStatus: SidebarMobilePanelsParams["setNodeTaskStatus"];
   toggleNodeCollapse: SidebarMobilePanelsParams["toggleNodeCollapse"];
   createChild: SidebarMobilePanelsParams["createChild"];
@@ -181,7 +181,7 @@ export function buildPlannerWorkspaceBundleParams({
   createCrossRef,
   openMobileQuickBubble,
   saveSelectedBody,
-  applyBubbleSuggestion,
+  createCrossRefFromTemplate,
   setNodeTaskStatus,
   toggleNodeCollapse,
   createChild,
@@ -350,7 +350,7 @@ export function buildPlannerWorkspaceBundleParams({
       createCrossRef,
       openMobileQuickBubble,
       saveSelectedBody,
-      applyBubbleSuggestion,
+      createCrossRefFromTemplate,
       openBubblesPanel: onOpenBubblesPanel,
       setNodeTaskStatus,
       handleContextChangeType: onContextChangeType,

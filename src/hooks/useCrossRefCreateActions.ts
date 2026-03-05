@@ -86,6 +86,141 @@ export function useCrossRefCreateActions({
   setNewRefType,
   setRefs,
 }: UseCrossRefCreateActionsParams) {
+  const createCrossRefFromTemplate = useCallback(
+    async (template: CrossRef) => {
+      if (!firestore) return;
+      const targetNodeId = selectedNodeId;
+      if (!targetNodeId) return;
+
+      const label = template.label.trim();
+      if (!label) return;
+      const color = template.color || defaultBubbleColor;
+      const entityType = template.entityType;
+      const tags = [...template.tags];
+      const notes = template.notes;
+      const contact = template.contact;
+      const links = [...template.links];
+      const code = bubblesSimplifiedMode ? nextAutoBubbleCode : template.code;
+
+      setBusyAction(true);
+      setError(null);
+      try {
+        if (bubblesSimplifiedMode) {
+          const newDoc = doc(collection(firestore, "users", userUid, "crossRefs"));
+          const anchorPosition = resolveNodePosition(targetNodeId);
+          const portalPosition = buildDefaultPortalPosition(targetNodeId, newDoc.id);
+          const newRef: CrossRef = buildLocalCrossRef({
+            id: newDoc.id,
+            label,
+            code,
+            targetNodeId,
+            color,
+            portalPosition,
+            anchorPosition,
+            entityType,
+            tags,
+            notes,
+            contact,
+            links,
+          });
+          await setDoc(doc(firestore, "users", userUid, "crossRefs", newDoc.id), {
+            ...buildCrossRefDocData({
+              label,
+              code,
+              targetNodeId,
+              color,
+              portalPosition,
+              anchorPosition,
+              entityType,
+              tags,
+              notes,
+              contact,
+              links,
+            }),
+            createdAt: serverTimestamp(),
+            updatedAt: serverTimestamp(),
+          } satisfies CrossRefDoc & { createdAt: unknown; updatedAt: unknown });
+          setRefs((previous) => {
+            if (previous.some((entry) => entry.id === newRef.id)) return previous;
+            return [...previous, newRef];
+          });
+          hydrateRefEditor(newRef);
+          setActivePortalRefId(newDoc.id);
+          setNewRefLabel("");
+          setNewRefCode(nextBubbleCode([code, ...refs.map((entry) => entry.code)]));
+          setNewRefColor(color);
+          setNewRefType(entityType);
+          return;
+        }
+
+        const {
+          nextNodeIds,
+          nextAnchorNodeId,
+          nextAnchorPosition,
+          nextPortalPosition,
+          nextEntityType,
+        } = computeExistingExactUpdate({
+          existingExact: template,
+          targetNodeId,
+          newRefType: template.entityType,
+          chooseAnchorNodeId,
+          resolveNodePosition,
+          resolvePortalFollowPosition,
+        });
+
+        await updateDoc(doc(firestore, "users", userUid, "crossRefs", template.id), {
+          nodeIds: arrayUnion(targetNodeId),
+          anchorNodeId: nextAnchorNodeId ?? deleteField(),
+          ...(nextPortalPosition ? { portalX: nextPortalPosition.x, portalY: nextPortalPosition.y } : {}),
+          ...(nextAnchorPosition ? { portalAnchorX: nextAnchorPosition.x, portalAnchorY: nextAnchorPosition.y } : {}),
+          entityType: nextEntityType,
+          updatedAt: serverTimestamp(),
+        });
+        hydrateRefEditor({
+          ...template,
+          nodeIds: nextNodeIds,
+          anchorNodeId: nextAnchorNodeId,
+          portalX: nextPortalPosition?.x ?? template.portalX,
+          portalY: nextPortalPosition?.y ?? template.portalY,
+          portalAnchorX: nextAnchorPosition?.x ?? template.portalAnchorX,
+          portalAnchorY: nextAnchorPosition?.y ?? template.portalAnchorY,
+          entityType: nextEntityType,
+        });
+        setActivePortalRefId(template.id);
+        setNewRefLabel("");
+        setNewRefCode("");
+        setNewRefColor(defaultBubbleColor);
+        setNewRefType("entity");
+      } catch (actionError: unknown) {
+        setError(actionError instanceof Error ? actionError.message : "Could not reuse bubble.");
+      } finally {
+        setBusyAction(false);
+      }
+    },
+    [
+      bubblesSimplifiedMode,
+      buildDefaultPortalPosition,
+      chooseAnchorNodeId,
+      defaultBubbleColor,
+      firestore,
+      hydrateRefEditor,
+      nextAutoBubbleCode,
+      refs,
+      resolveNodePosition,
+      resolvePortalFollowPosition,
+      selectedNodeId,
+      setActivePortalRefId,
+      setBusyAction,
+      setError,
+      setNewRefCode,
+      setNewRefColor,
+      setNewRefLabel,
+      setNewRefType,
+      setRefs,
+      userUid,
+    ]
+  );
+
   const createCrossRef = useCallback(
     async () => {
       if (!firestore) return;
@@ -277,5 +412,5 @@ export function useCrossRefCreateActions({
     ]
   );
 
-  return { createCrossRef };
+  return { createCrossRef, createCrossRefFromTemplate };
 }

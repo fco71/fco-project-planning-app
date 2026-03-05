@@ -96,7 +96,6 @@ export function useCrossRefCreationActions({
 
   const { applyBubbleSuggestion } = useCrossRefSuggestionActions({
     defaultBubbleColor,
-    newRefCode,
     nextAutoBubbleCode,
     newRefLabelInputRef,
     setNewRefLabel,
@@ -105,7 +104,7 @@ export function useCrossRefCreationActions({
     setNewRefType,
   });
 
-  const { createCrossRef } = useCrossRefCreateActions({
+  const { createCrossRef, createCrossRefFromTemplate } = useCrossRefCreateActions({
     firestore,
     userUid,
     refs,
@@ -136,5 +135,6 @@ export function useCrossRefCreationActions({
     linkCrossRefToNode,
     applyBubbleSuggestion,
     createCrossRef,
+    createCrossRefFromTemplate,
   };
 }

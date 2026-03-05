@@ -28,6 +28,40 @@ type ResolveCreateCrossRefPlanParams = {
   defaultBubbleColor: string;
 };
 
+export function resolveTemplateFromCodeInput(
+  rawInput: string,
+  refs: CrossRef[]
+): { typedCode: string; templateByCode: CrossRef | null } {
+  const trimmed = rawInput.trim();
+  if (!trimmed) {
+    return { typedCode: "", templateByCode: null };
+  }
+
+  const normalized = normalizeCode(trimmed);
+  const directMatch = refs.find((ref) => ref.code === normalized) || null;
+  if (directMatch) {
+    return { typedCode: normalized, templateByCode: directMatch };
+  }
+
+  // Allow pasted text like "Mario Pinto (B012)" or "B012 - Mario Pinto".
+  const rawUpper = trimmed.toUpperCase();
+  const candidateParts = rawUpper.split(/[^A-Z0-9]+/).filter(Boolean);
+  for (const part of candidateParts) {
+    const candidateCode = normalizeCode(part);
+    const match = refs.find((ref) => ref.code === candidateCode) || null;
+    if (match) {
+      return { typedCode: candidateCode, templateByCode: match };
+    }
+  }
+
+  const embeddedCodeMatch = refs.find((ref) => rawUpper.includes(ref.code)) || null;
+  if (embeddedCodeMatch) {
+    return { typedCode: embeddedCodeMatch.code, templateByCode: embeddedCodeMatch };
+  }
+
+  return { typedCode: normalized, templateByCode: null };
+}
+
 export function resolveCreateCrossRefPlan({
   selectedNodeId,
   refs,
@@ -42,9 +76,9 @@ export function resolveCreateCrossRefPlan({
   const targetNodeId = selectedNodeId;
   if (!targetNodeId || typeof targetNodeId !== "string") return null;
 
-  const typedCode = newRefCode.trim() ? normalizeCode(newRefCode) : "";
-  const templateByCode = typedCode ? refs.find((ref) => ref.code === typedCode) || null : null;
-  const label = templateByCode ? templateByCode.label.trim() : newRefLabel.trim();
+  const { typedCode, templateByCode } = resolveTemplateFromCodeInput(newRefCode, refs);
+  const typedLabel = newRefLabel.trim();
+  const label = typedLabel || (templateByCode ? templateByCode.label.trim() : "");
   if (!label) return null;
 
   const code = typedCode

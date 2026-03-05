@@ -135,7 +135,7 @@ export function usePlannerCrossRefActions({
     setError,
   });
 
-  const { linkCrossRefToNode, applyBubbleSuggestion, createCrossRef } = useCrossRefCreationActions({
+  const { linkCrossRefToNode, applyBubbleSuggestion, createCrossRef, createCrossRefFromTemplate } = useCrossRefCreationActions({
     firestore,
     userUid,
     refs,
@@ -233,6 +233,7 @@ export function usePlannerCrossRefActions({
     linkCrossRefToNode,
     applyBubbleSuggestion,
     createCrossRef,
+    createCrossRefFromTemplate,
     duplicateCrossRef,
     mergeCrossRefIntoEdited,
     saveCrossRefEdits,

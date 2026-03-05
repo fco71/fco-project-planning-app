@@ -100,7 +100,7 @@ type UsePlannerSidebarPanelsPropsParams = {
   createCrossRef: () => Promise<void> | void;
   openMobileQuickBubble: (targetNodeId?: string, focusInput?: boolean) => void;
   blurActiveInput: () => void;
-  applyBubbleSuggestion: (ref: CrossRef) => void;
+  createCrossRefFromTemplate: (ref: CrossRef) => Promise<void> | void;
   deletePortalByRefId: (refId: string) => Promise<void> | void;
   saveMobileQuickBubbleName: () => Promise<void> | void;
   updateCrossRefColor: (refId: string, color: string) => Promise<void> | void;
@@ -240,7 +240,7 @@ export function usePlannerSidebarPanelsProps({
   createCrossRef,
   openMobileQuickBubble,
   blurActiveInput,
-  applyBubbleSuggestion,
+  createCrossRefFromTemplate,
   deletePortalByRefId,
   saveMobileQuickBubbleName,
   updateCrossRefColor,
@@ -419,7 +419,7 @@ export function usePlannerSidebarPanelsProps({
       onCreateCrossRef: () => Promise.resolve(createCrossRef()),
       onOpenMobileQuickBubble: openMobileQuickBubble,
       onBlurActiveInput: blurActiveInput,
-      onApplyBubbleSuggestion: applyBubbleSuggestion,
+      onCreateCrossRefFromLibrary: (ref) => Promise.resolve(createCrossRefFromTemplate(ref)),
       onToggleActivePortalRef: (refId) => {
         setActivePortalRefId((prev) => (prev === refId ? null : refId));
       },

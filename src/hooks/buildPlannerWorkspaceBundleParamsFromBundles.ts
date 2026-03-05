@@ -140,7 +140,7 @@ export function buildPlannerWorkspaceBundleParamsFromBundles({
     createCrossRef: mutation.createCrossRef,
     openMobileQuickBubble,
     saveSelectedBody: derived.saveSelectedBody,
-    applyBubbleSuggestion: mutation.applyBubbleSuggestion,
+    createCrossRefFromTemplate: mutation.createCrossRefFromTemplate,
     setNodeTaskStatus: mutation.setNodeTaskStatus,
     toggleNodeCollapse: canvasGraph.toggleNodeCollapse,
     createChild: mutation.createChild,

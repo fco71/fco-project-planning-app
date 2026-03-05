@@ -4,7 +4,6 @@ import type { CrossRef, EntityType } from "../types/planner";
 
 type UseCrossRefSuggestionActionsParams = {
   defaultBubbleColor: string;
-  newRefCode: string;
   nextAutoBubbleCode: string;
   newRefLabelInputRef: MutableRefObject<HTMLInputElement | null>;
   setNewRefLabel: Dispatch<SetStateAction<string>>;
@@ -15,7 +14,6 @@ type UseCrossRefSuggestionActionsParams = {
 
 export function useCrossRefSuggestionActions({
   defaultBubbleColor,
-  newRefCode,
   nextAutoBubbleCode,
   newRefLabelInputRef,
   setNewRefLabel,
@@ -28,16 +26,13 @@ export function useCrossRefSuggestionActions({
       setNewRefLabel((previous) => (previous.trim().length > 0 ? previous : ref.label));
       setNewRefColor(ref.color || defaultBubbleColor);
       setNewRefType(ref.entityType);
-      if (!newRefCode.trim()) {
-        setNewRefCode(nextAutoBubbleCode);
-      }
+      setNewRefCode(ref.code || nextAutoBubbleCode);
       window.setTimeout(() => {
         newRefLabelInputRef.current?.focus();
       }, 0);
     },
     [
       defaultBubbleColor,
-      newRefCode,
       newRefLabelInputRef,
       nextAutoBubbleCode,
       setNewRefCode,

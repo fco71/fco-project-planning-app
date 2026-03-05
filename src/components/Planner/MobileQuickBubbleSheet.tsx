@@ -1,7 +1,7 @@
 import { useEffect, useRef, useState } from "react";
 import type { RefObject } from "react";
 import type { CrossRef, TreeNode } from "../../types/planner";
-import { buildNodePathTail } from "../../utils/treeUtils";
+import { buildNodePathTail, normalizeCode } from "../../utils/treeUtils";
 import { buildBubbleChipStyle } from "../../utils/bubbleChipStyle";
 
 type MobileQuickBubbleSheetProps = {
@@ -24,7 +24,7 @@ type MobileQuickBubbleSheetProps = {
   nextAutoBubbleCode: string;
   effectiveNewBubbleCode: string;
   bubblePrefixSuggestions: CrossRef[];
-  applyBubbleSuggestion: (ref: CrossRef) => void;
+  onCreateBubbleFromLibrary: (ref: CrossRef) => Promise<void> | void;
   selectedNodeRefs: CrossRef[];
   onSelectRefForEditing: (refId: string) => void;
   activePortalRef: CrossRef | null;
@@ -57,7 +57,7 @@ export function MobileQuickBubbleSheet({
   nextAutoBubbleCode,
   effectiveNewBubbleCode,
   bubblePrefixSuggestions,
-  applyBubbleSuggestion,
+  onCreateBubbleFromLibrary,
   selectedNodeRefs,
   onSelectRefForEditing,
   activePortalRef,
@@ -119,6 +119,11 @@ export function MobileQuickBubbleSheet({
   }, [activePortalRef, open, selectedNode]);
 
   if (!open) return null;
+  const hasBubbleQuery = newRefLabel.trim().length > 0 || newRefCode.trim().length > 0;
+  const typedCode = newRefCode.trim() ? normalizeCode(newRefCode) : "";
+  const codeMatch = typedCode
+    ? bubblePrefixSuggestions.find((ref) => ref.code === typedCode) || null
+    : null;
   const autoExpandManage = !!(
     selectedNode
     && activePortalRef
@@ -172,6 +177,31 @@ export function MobileQuickBubbleSheet({
               data-testid="planner-mobile-quick-bubble-name-input"
             />
           </div>
+          <div className="planner-inline-buttons planner-mobile-bubble-meta-row">
+            <input
+              className="planner-flex-1"
+              value={newRefCode}
+              onChange={(event) => onNewRefCodeChange(event.target.value)}
+              placeholder="Paste code to reuse (e.g. B012)"
+              data-testid="planner-mobile-quick-bubble-code-input"
+            />
+            <span className="planner-subtle planner-subtle-11">
+              New code: <strong>{effectiveNewBubbleCode}</strong>
+            </span>
+          </div>
+          {codeMatch ? (
+            <p className="planner-subtle">
+              Reusing style from <strong>{codeMatch.code} · {codeMatch.label}</strong>. Tap Add.
+            </p>
+          ) : typedCode ? (
+            <p className="planner-subtle">
+              No existing bubble found for code <strong>{typedCode}</strong>.
+            </p>
+          ) : (
+            <p className="planner-subtle">
+              Leave code empty to auto-assign <strong>{nextAutoBubbleCode}</strong>.
+            </p>
+          )}
           {mobileQuickAddSuccess ? (
             <div className="planner-mobile-bubble-success" data-testid="planner-mobile-quick-bubble-success">
               Added: {mobileQuickAddSuccess}
@@ -188,7 +218,7 @@ export function MobileQuickBubbleSheet({
           </div>
           <div className="planner-inline-buttons planner-mobile-bubble-meta-row">
             <details className="planner-advanced-tools planner-mobile-bubble-advanced">
-              <summary>Advanced style and code (optional)</summary>
+              <summary>Advanced style (optional)</summary>
               <div className="planner-advanced-tools-content">
                 <label className="planner-bubble-color-input-wrap">
                   <span className="planner-subtle planner-subtle-11">Color</span>
@@ -200,35 +230,38 @@ export function MobileQuickBubbleSheet({
                     data-testid="planner-mobile-quick-bubble-color-input"
                   />
                 </label>
-                <div className="planner-grid-gap-4">
-                  <input
-                    className="planner-flex-1"
-                    value={newRefCode}
-                    onChange={(event) => onNewRefCodeChange(event.target.value)}
-                    placeholder={`Internal code (auto ${nextAutoBubbleCode})`}
-                    data-testid="planner-mobile-quick-bubble-code-input"
-                  />
-                  <span className="planner-subtle planner-subtle-11">
-                    Internal code: <strong>{effectiveNewBubbleCode}</strong>
-                  </span>
-                </div>
               </div>
             </details>
           </div>
           {bubblePrefixSuggestions.length > 0 ? (
-            <div className="planner-chip-list">
+            <>
+              <div className="planner-row-label">{hasBubbleQuery ? "Matching bubble library" : "Recent bubble library"}</div>
+              <div className="planner-chip-list">
               {bubblePrefixSuggestions.slice(0, 4).map((ref) => (
                 <button
                   key={`mobile-quick-template:${ref.id}`}
                   className="chip bubble-chip"
-                  onClick={() => applyBubbleSuggestion(ref)}
+                  onClick={() => {
+                    setMobileQuickAddSuccess(ref.label);
+                    if (successTimeoutRef.current !== null) {
+                      window.clearTimeout(successTimeoutRef.current);
+                    }
+                    successTimeoutRef.current = window.setTimeout(() => {
+                      setMobileQuickAddSuccess(null);
+                      successTimeoutRef.current = null;
+                    }, 2200);
+                    void Promise.resolve(onCreateBubbleFromLibrary(ref)).then(() => {
+                      focusMobileQuickBubbleInput(30);
+                    });
+                  }}
                   title={`Use style from ${ref.label} (${ref.code})`}
                   style={buildBubbleChipStyle(ref.color)}
                 >
-                  {ref.label}
+                  {ref.code} · {ref.label}
                 </button>
               ))}
-            </div>
+              </div>
+            </>
           ) : null}
           <details
             className="planner-advanced-tools"
@@ -254,7 +287,7 @@ export function MobileQuickBubbleSheet({
                       style={buildBubbleChipStyle(ref.color, activePortalRef?.id === ref.id)}
                       data-testid="planner-mobile-quick-bubble-node-chip"
                     >
-                      {ref.label}
+                      {ref.code} · {ref.label}
                     </button>
                   ))
                 )}
@@ -262,6 +295,7 @@ export function MobileQuickBubbleSheet({
               {activePortalRef && activePortalRef.nodeIds.includes(selectedNode.id) ? (
                 <>
                   <div className="planner-row-label">Edit selected bubble</div>
+                  <span className="planner-subtle">{`Code: ${activePortalRef.code}`}</span>
                   <input
                     ref={mobileQuickBubbleEditInputRef}
                     value={mobileQuickBubbleEditName}

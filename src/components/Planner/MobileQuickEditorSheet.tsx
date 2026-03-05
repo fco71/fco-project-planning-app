@@ -1,6 +1,6 @@
 import { useRef } from "react";
 import type { CrossRef, TaskStatus, TreeNode } from "../../types/planner";
-import { buildNodePath } from "../../utils/treeUtils";
+import { buildNodePath, normalizeCode } from "../../utils/treeUtils";
 import { nextNodeKind } from "../../utils/plannerConfig";
 import { buildBubbleChipStyle } from "../../utils/bubbleChipStyle";
 
@@ -34,7 +34,7 @@ type MobileQuickEditorSheetProps = {
   newRefColor: string;
   onNewRefColorChange: (value: string) => void;
   bubblePrefixSuggestions: CrossRef[];
-  onApplyBubbleSuggestion: (ref: CrossRef) => void;
+  onCreateCrossRefFromLibrary: (ref: CrossRef) => Promise<void> | void;
   onOpenBubblesPanel: (focusInput?: boolean) => void;
   selectedNodeChildrenCount: number;
   selectedNodeCollapsed: boolean;
@@ -76,7 +76,7 @@ export function MobileQuickEditorSheet({
   newRefColor,
   onNewRefColorChange,
   bubblePrefixSuggestions,
-  onApplyBubbleSuggestion,
+  onCreateCrossRefFromLibrary,
   onOpenBubblesPanel,
   selectedNodeChildrenCount,
   selectedNodeCollapsed,
@@ -91,6 +91,11 @@ export function MobileQuickEditorSheet({
 }: MobileQuickEditorSheetProps) {
   const touchStartY = useRef<number | null>(null);
   if (!open) return null;
+  const hasBubbleQuery = newRefLabel.trim().length > 0 || newRefCode.trim().length > 0;
+  const typedCode = newRefCode.trim() ? normalizeCode(newRefCode) : "";
+  const codeMatch = typedCode
+    ? bubblePrefixSuggestions.find((ref) => ref.code === typedCode) || null
+    : null;
   const addButtonLabel = selectedNode?.kind === "story" ? "Add Beat" : "Add Child";
 
   return (
@@ -243,7 +248,7 @@ export function MobileQuickEditorSheet({
                       className="planner-flex-1"
                       value={newRefCode}
                       onChange={(event) => onNewRefCodeChange(event.target.value)}
-                      placeholder={`Code (auto ${nextAutoBubbleCode})`}
+                      placeholder="Paste code to reuse (e.g. B012)"
                     />
                     <input
                       className="planner-color-input-sm"
@@ -260,20 +265,38 @@ export function MobileQuickEditorSheet({
                       Add Bubble
                     </button>
                   </div>
+                  {codeMatch ? (
+                    <p className="planner-subtle">
+                      Reusing style from <strong>{codeMatch.code} · {codeMatch.label}</strong>.
+                    </p>
+                  ) : typedCode ? (
+                    <p className="planner-subtle">
+                      No existing bubble found for code <strong>{typedCode}</strong>.
+                    </p>
+                  ) : (
+                    <p className="planner-subtle">
+                      Leave code empty to auto-assign <strong>{nextAutoBubbleCode}</strong>.
+                    </p>
+                  )}
                   {bubblePrefixSuggestions.length > 0 ? (
-                    <div className="planner-chip-list">
+                    <>
+                      <div className="planner-row-label">{hasBubbleQuery ? "Matching bubble library" : "Recent bubble library"}</div>
+                      <div className="planner-chip-list">
                       {bubblePrefixSuggestions.slice(0, 3).map((ref) => (
                         <button
                           key={`mobile-template:${ref.id}`}
                           className="chip bubble-chip"
-                          onClick={() => onApplyBubbleSuggestion(ref)}
+                          onClick={() => {
+                            void onCreateCrossRefFromLibrary(ref);
+                          }}
                           title={`Use style from ${ref.label} (${ref.code})`}
                           style={buildBubbleChipStyle(ref.color)}
                         >
-                          {ref.label}
+                          {ref.code} · {ref.label}
                         </button>
                       ))}
-                    </div>
+                      </div>
+                    </>
                   ) : null}
                   <button
                     onClick={() => {

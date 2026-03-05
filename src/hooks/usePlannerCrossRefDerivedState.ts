@@ -1,6 +1,7 @@
 import { useCallback, useMemo } from "react";
 import { buildNodePath, normalizeCode } from "../utils/treeUtils";
 import { isPeopleEntityType, type CrossRef, type TreeNode } from "../types/planner";
+import { resolveTemplateFromCodeInput } from "./plannerCrossRefCreationHelpers";
 
 type RefCategoryFilter = "all" | "people" | "other";
 type RefScopeFilter = "view" | "all";
@@ -125,10 +126,8 @@ export function usePlannerCrossRefDerivedState({
   );
 
   const bubbleTemplateFromCode = useMemo(() => {
-    const typedCode = newRefCode.trim();
-    if (!typedCode) return null;
-    const normalized = normalizeCode(typedCode);
-    return refs.find((ref) => ref.code === normalized) || null;
+    const { templateByCode } = resolveTemplateFromCodeInput(newRefCode, refs);
+    return templateByCode;
   }, [newRefCode, refs]);
 
   const canCreateBubbleFromInput = useMemo(
@@ -137,11 +136,15 @@ export function usePlannerCrossRefDerivedState({
   );
 
   const bubblePrefixSuggestions = useMemo(() => {
-    const queryText = newRefLabel.trim().toLowerCase();
-    if (!queryText) return [] as CrossRef[];
+    const labelQueryText = newRefLabel.trim().toLowerCase();
+    const codeQueryText = normalizeCode(newRefCode.trim()).toLowerCase();
+    const queryText = labelQueryText || codeQueryText;
     const dedupe = new Set<string>();
     return refs
-      .filter((ref) => ref.label.toLowerCase().startsWith(queryText) || ref.code.toLowerCase().startsWith(queryText))
+      .filter((ref) => {
+        if (!queryText) return true;
+        return ref.label.toLowerCase().startsWith(queryText) || ref.code.toLowerCase().startsWith(queryText);
+      })
       .sort((a, b) => b.updatedAtMs - a.updatedAtMs || a.label.localeCompare(b.label))
       .filter((ref) => {
         const key = `${ref.label.trim().toLowerCase()}|${ref.color || ""}|${ref.entityType}`;
@@ -150,7 +153,7 @@ export function usePlannerCrossRefDerivedState({
         return true;
       })
       .slice(0, 6);
-  }, [newRefLabel, refs]);
+  }, [newRefCode, newRefLabel, refs]);
 
   const editableRef = useMemo(() => {
     if (!editRefId) return null;

@@ -37,7 +37,7 @@ type UsePlannerMobilePanelsPropsParams = {
   createCrossRef: () => void | Promise<void>;
   openMobileQuickBubble: (nodeId: string, focusInput?: boolean) => void;
   saveSelectedBody: () => void | Promise<void>;
-  applyBubbleSuggestion: (ref: CrossRef) => void;
+  createCrossRefFromTemplate: (ref: CrossRef) => void | Promise<void>;
   openBubblesPanel: (focusInput?: boolean) => void;
   setNodeTaskStatus: (nodeId: string, status: TaskStatus) => void | Promise<void>;
   handleContextChangeType: (nodeId: string) => void | Promise<void>;
@@ -96,7 +96,7 @@ export function usePlannerMobilePanelsProps({
   createCrossRef,
   openMobileQuickBubble,
   saveSelectedBody,
-  applyBubbleSuggestion,
+  createCrossRefFromTemplate,
   openBubblesPanel,
   setNodeTaskStatus,
   handleContextChangeType,
@@ -161,7 +161,7 @@ export function usePlannerMobilePanelsProps({
       newRefColor,
       onNewRefColorChange: setNewRefColor,
       bubblePrefixSuggestions,
-      onApplyBubbleSuggestion: applyBubbleSuggestion,
+      onCreateCrossRefFromLibrary: (ref) => createCrossRefFromTemplate(ref),
       onOpenBubblesPanel: openBubblesPanel,
       selectedNodeChildrenCount,
       selectedNodeCollapsed,
@@ -204,7 +204,7 @@ export function usePlannerMobilePanelsProps({
       nextAutoBubbleCode,
       effectiveNewBubbleCode,
       bubblePrefixSuggestions,
-      applyBubbleSuggestion,
+      onCreateBubbleFromLibrary: (ref) => createCrossRefFromTemplate(ref),
       selectedNodeRefs,
       onSelectRefForEditing: selectRefForEditing,
       activePortalRef,
