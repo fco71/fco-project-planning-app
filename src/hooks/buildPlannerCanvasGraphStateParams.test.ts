@@ -31,6 +31,7 @@ describe("buildPlannerCanvasGraphStateParams", () => {
       selectedNodeId: "node-2",
       dropTargetNodeId: "node-drop",
       setSelectedNodeId: vi.fn(),
+      scheduleHoverUpdate: vi.fn(),
     } as unknown as PlannerState;
 
     const params = buildPlannerCanvasGraphStateParams({
@@ -58,6 +59,7 @@ describe("buildPlannerCanvasGraphStateParams", () => {
     expect(params.treeView.currentRootId).toBe("root-1");
     expect(params.baseGraph.expandedStoryNodeIds).toEqual(new Set(["story-1"]));
     expect(params.flowNodes.persistNodeBody).toBe(persistNodeBody);
+    expect(params.hoverSync.scheduleHoverUpdate).toBe(plannerState.scheduleHoverUpdate);
     expect(params.visiblePortals.chooseAnchorNodeId).toBe(chooseAnchorNodeId);
     expect(params.visiblePortals.bubbleDisplayToken).toBe(bubbleDisplayToken);
     expect(params.visiblePortals.rgbaFromHex).toBe(rgbaFromHex);

@@ -1,3 +1,4 @@
+import { useEffect, useMemo } from "react";
 import { usePlannerTreeViewState } from "./usePlannerTreeViewState";
 import { usePlannerFilteredTreeIdSet } from "./usePlannerFilteredTreeIdSet";
 import { usePlannerBaseGraphData } from "./usePlannerBaseGraphData";
@@ -14,6 +15,11 @@ type UsePlannerCanvasGraphStateParams = {
     "filteredTreeIds" | "treeLayout" | "searchMatchingIds" | "currentRootKind" | "filteredTreeIdSet"
   >;
   edgeHover: Omit<Parameters<typeof usePlannerEdgeHoverState>[0], "baseEdges">;
+  hoverSync: {
+    hoveredNodeId: string | null;
+    hoveredEdgeId: string | null;
+    scheduleHoverUpdate: (nodeId: string | null, edgeId: string | null) => void;
+  };
   flowNodes: Omit<
     Parameters<typeof usePlannerFlowNodes>[0],
     "baseNodes" | "activeLinkedNodeIds" | "hoverNodeIds" | "toggleNodeCollapse"
@@ -26,10 +32,13 @@ export function usePlannerCanvasGraphState({
   treeView,
   baseGraph,
   edgeHover,
+  hoverSync,
   flowNodes: flowNodesParams,
   visiblePortals: visiblePortalsParams,
   flowGraph: flowGraphParams,
 }: UsePlannerCanvasGraphStateParams) {
+  const { hoveredNodeId, hoveredEdgeId, scheduleHoverUpdate } = hoverSync;
+
   const {
     visibleTreeIdSet,
     toggleNodeCollapse,
@@ -81,6 +90,24 @@ export function usePlannerCanvasGraphState({
     flowNodes,
     visiblePortals,
   });
+
+  const renderedNodeIds = useMemo(() => new Set(reactFlowNodes.map((node) => node.id)), [reactFlowNodes]);
+  const renderedEdgeIds = useMemo(() => new Set(flowEdges.map((edge) => edge.id)), [flowEdges]);
+
+  useEffect(() => {
+    const hasInvalidHoveredNode =
+      !!hoveredNodeId && !renderedNodeIds.has(hoveredNodeId);
+    const hasInvalidHoveredEdge =
+      !!hoveredEdgeId && !renderedEdgeIds.has(hoveredEdgeId);
+    if (!hasInvalidHoveredNode && !hasInvalidHoveredEdge) return;
+    scheduleHoverUpdate(null, null);
+  }, [
+    hoveredEdgeId,
+    hoveredNodeId,
+    renderedEdgeIds,
+    renderedNodeIds,
+    scheduleHoverUpdate,
+  ]);
 
   return {
     visibleTreeIdSet,

@@ -87,6 +87,11 @@ export function buildPlannerCanvasGraphStateParams({
       activePortalRefId: plannerState.activePortalRefId,
       refs: plannerState.refs,
     },
+    hoverSync: {
+      hoveredNodeId: plannerState.hoveredNodeId,
+      hoveredEdgeId: plannerState.hoveredEdgeId,
+      scheduleHoverUpdate: plannerState.scheduleHoverUpdate,
+    },
     flowNodes: {
       selectedNodeId: plannerState.selectedNodeId,
       dropTargetNodeId: plannerState.dropTargetNodeId,
